@@ -38,10 +38,7 @@ const FIELD_SET = new Set<string>(FIELDS);
 const ALIASES: Record<string, string> = { older: "before", newer: "after" };
 
 type Tok =
-  | { t: "(" | ")" | "{" | "}" | "-" | "OR" | "AND" }
-  | { t: "field"; v: string }
-  | { t: "word"; v: string; exact?: boolean }
-  | { t: "phrase"; v: string };
+  { t: "(" | ")" | "{" | "}" | "-" | "OR" | "AND" } | { t: "field"; v: string } | { t: "word"; v: string; exact?: boolean } | { t: "phrase"; v: string };
 
 export function tokenize(q: string): Tok[] {
   const out: Tok[] = [];
@@ -79,7 +76,7 @@ export function tokenize(q: string): Tok[] {
     }
     // A word runs until whitespace or a bracket; "field:" splits off when the prefix is a known operator.
     let j = i;
-    while (j < n && !isSpace(q[j]) && !"(){}\"".includes(q[j])) {
+    while (j < n && !isSpace(q[j]) && !'(){}"'.includes(q[j])) {
       if (q[j] === ":") break;
       j++;
     }
@@ -90,7 +87,7 @@ export function tokenize(q: string): Tok[] {
       continue;
     }
     // Not a field: keep the colon and the rest as part of the word.
-    while (j < n && !isSpace(q[j]) && !"(){}\"".includes(q[j])) j++;
+    while (j < n && !isSpace(q[j]) && !'(){}"'.includes(q[j])) j++;
     const full = q.slice(i, j);
     if (full === "OR") out.push({ t: "OR" });
     else if (full === "AND") out.push({ t: "AND" });

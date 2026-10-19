@@ -25,11 +25,7 @@ export function encodeAddressHeader(list: { name: string; email: string }[]): st
   return list
     .map((a) => {
       if (!a.name || a.name === a.email) return a.email;
-      const name = ASCII_PRINTABLE.test(a.name)
-        ? /[()<>[\]:;@\\,."]/.test(a.name)
-          ? `"${a.name.replace(/(["\\])/g, "\\$1")}"`
-          : a.name
-        : encodeWords(a.name);
+      const name = ASCII_PRINTABLE.test(a.name) ? (/[()<>[\]:;@\\,."]/.test(a.name) ? `"${a.name.replace(/(["\\])/g, "\\$1")}"` : a.name) : encodeWords(a.name);
       return `${name} <${a.email}>`;
     })
     .join(",\r\n ");
@@ -153,7 +149,9 @@ function decode2231(val: string, withCharset: boolean): string {
 /** A parameter for Content-Type / Content-Disposition, using RFC 2231 for non-ASCII values. */
 export function formatParam(key: string, value: string): string {
   if (ASCII_PRINTABLE.test(value)) return `${key}="${value.replace(/(["\\])/g, "\\$1")}"`;
-  const enc = [...utf8(value)].map((b) => (/[A-Za-z0-9.\-_~]/.test(String.fromCharCode(b)) ? String.fromCharCode(b) : "%" + b.toString(16).toUpperCase().padStart(2, "0"))).join("");
+  const enc = [...utf8(value)]
+    .map((b) => (/[A-Za-z0-9.\-_~]/.test(String.fromCharCode(b)) ? String.fromCharCode(b) : "%" + b.toString(16).toUpperCase().padStart(2, "0")))
+    .join("");
   return `${key}*=UTF-8''${enc}`;
 }
 

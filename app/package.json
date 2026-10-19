@@ -13,6 +13,7 @@
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml -- --test-threads=4",
     "test:e2e": "bash scripts/e2e.sh",
     "test:all": "npm test && npm run test:rust && npm run test:e2e",
+    "package": "bash scripts/package.sh",
     "format": "prettier --print-width 160 --write"
   },
   "dependencies": {

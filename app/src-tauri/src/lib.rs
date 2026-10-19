@@ -1,11 +1,13 @@
+pub mod commands;
 pub mod db;
 pub mod discovery;
+pub mod e2e;
 pub mod engine;
 pub mod error;
 pub mod gmail;
+pub mod http;
 pub mod imap;
 pub mod macos;
-pub mod http;
 pub mod mailmeta;
 pub mod oauth;
 pub mod search;
@@ -13,9 +15,430 @@ pub mod secrets;
 #[cfg(any(test, debug_assertions))]
 pub mod testsupport;
 
+use commands::AppState;
+use engine::{Engine, EventSink, Notifier, Opener};
+use serde_json::{json, Value};
+use std::sync::Arc;
+use tauri::menu::{AboutMetadataBuilder, CheckMenuItemBuilder, Menu, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
+use tauri::utils::config::BackgroundThrottlingPolicy;
+use tauri::{AppHandle, Emitter, LogicalPosition, Manager, WebviewUrl, WebviewWindowBuilder};
+
+struct TauriEvents(AppHandle);
+impl EventSink for TauriEvents {
+    fn emit(&self, event: &str, payload: Value) {
+        let _ = self.0.emit(event, payload);
+    }
+}
+
+struct TauriNotifier {
+    app: AppHandle,
+    e2e: Option<Arc<e2e::E2e>>,
+}
+impl Notifier for TauriNotifier {
+    fn notify(&self, title: &str, body: &str, account_id: &str, thread_id: &str) {
+        if let Some(e) = &self.e2e {
+            e.notes.lock().push(json!({"title": title, "body": body, "accountId": account_id, "threadId": thread_id}));
+            return;
+        }
+        use tauri_plugin_notification::NotificationExt;
+        let _ = self.app.notification().builder().title(title).body(body).show();
+    }
+}
+
+struct BrowserOpener {
+    http: reqwest::Client,
+    e2e: Option<Arc<e2e::E2e>>,
+}
+impl Opener for BrowserOpener {
+    fn open(&self, url: &str) -> error::Result<()> {
+        if let Some(e) = &self.e2e {
+            // The fake OAuth server approves at once; fetching the URL plays the browser's part.
+            e.opened.lock().push(url.to_string());
+            let http = self.http.clone();
+            let url = url.to_string();
+            tauri::async_runtime::spawn(async move {
+                let _ = http.get(url).send().await;
+            });
+            return Ok(());
+        }
+        tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| error::Error::msg(e.to_string()))
+    }
+}
+
+/// Main and secondary windows: overlay title bar, traffic lights inside the 64 px header.
+pub fn window_builder<'a>(app: &'a AppHandle, label: &str, url: &str, title: &str, e2e: bool) -> WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
+    let b = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
+        .title(title)
+        .inner_size(1280.0, 800.0)
+        .min_inner_size(760.0, 520.0)
+        .focused(!e2e)
+        .background_throttling(if e2e { BackgroundThrottlingPolicy::Disabled } else { BackgroundThrottlingPolicy::Suspend })
+        .disable_drag_drop_handler();
+    #[cfg(target_os = "macos")]
+    let b = b.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true).traffic_light_position(LogicalPosition::new(20.0, 26.0));
+    b
+}
+
+pub fn open_window(app: &AppHandle, kind: &str, id: &str, title: &str, e2e: bool) -> error::Result<()> {
+    let label = format!("{kind}-{id}");
+    let url = format!("index.html?{kind}={id}");
+    let mut b = window_builder(app, &label, &url, title, e2e);
+    if kind == "compose" {
+        b = b.inner_size(640.0, 640.0).min_inner_size(420.0, 360.0);
+    } else if kind == "print" {
+        b = b.inner_size(820.0, 900.0);
+    }
+    b.build().map_err(|e| error::Error::msg(e.to_string()))?;
+    Ok(())
+}
+
+fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let item = |id: &str, text: &str, acc: Option<&str>| {
+        let b = MenuItemBuilder::with_id(id, text);
+        match acc {
+            Some(a) => b.accelerator(a).build(app),
+            None => b.build(app),
+        }
+    };
+    let about = AboutMetadataBuilder::new().name(Some("Courier")).version(Some(env!("CARGO_PKG_VERSION"))).copyright(Some("© 2026 Milap Patel")).build();
+    let app_menu = SubmenuBuilder::new(app, "Courier")
+        .item(&PredefinedMenuItem::about(app, Some("About Courier"), Some(about))?)
+        .separator()
+        .item(&item("settings", "Settings…", Some("CmdOrCtrl+,"))?)
+        .item(&item("default-mail", "Make Courier the Default Mail App", None)?)
+        .separator()
+        .item(&PredefinedMenuItem::services(app, None)?)
+        .separator()
+        .item(&PredefinedMenuItem::hide(app, None)?)
+        .item(&PredefinedMenuItem::hide_others(app, None)?)
+        .item(&PredefinedMenuItem::show_all(app, None)?)
+        .separator()
+        .item(&PredefinedMenuItem::quit(app, None)?)
+        .build()?;
+    let file = SubmenuBuilder::new(app, "File")
+        .item(&item("compose", "New Message", Some("CmdOrCtrl+N"))?)
+        .item(&item("open-eml", "Open Message File…", Some("CmdOrCtrl+O"))?)
+        .separator()
+        .item(&item("save-eml", "Save Message As…", Some("CmdOrCtrl+S"))?)
+        .item(&item("print", "Print…", Some("CmdOrCtrl+P"))?)
+        .separator()
+        .item(&PredefinedMenuItem::close_window(app, None)?)
+        .build()?;
+    let edit = SubmenuBuilder::new(app, "Edit")
+        .item(&PredefinedMenuItem::undo(app, None)?)
+        .item(&PredefinedMenuItem::redo(app, None)?)
+        .separator()
+        .item(&PredefinedMenuItem::cut(app, None)?)
+        .item(&PredefinedMenuItem::copy(app, None)?)
+        .item(&PredefinedMenuItem::paste(app, None)?)
+        .item(&item("paste-plain", "Paste and Match Style", Some("CmdOrCtrl+Alt+Shift+V"))?)
+        .item(&PredefinedMenuItem::select_all(app, None)?)
+        .separator()
+        .item(&item("find", "Search Mail", Some("CmdOrCtrl+F"))?)
+        .item(&item("advanced-search", "Advanced Search…", Some("CmdOrCtrl+Alt+F"))?)
+        .separator()
+        .item(&item("spelling", "Check Spelling", Some("CmdOrCtrl+;"))?)
+        .build()?;
+    let reading = SubmenuBuilder::new(app, "Reading Pane").item(&item("pane-none", "No Split", None)?).item(&item("pane-right", "Right of Inbox", None)?).item(&item("pane-below", "Below Inbox", None)?).build()?;
+    let density = SubmenuBuilder::new(app, "Density").item(&item("density-default", "Default", None)?).item(&item("density-comfortable", "Comfortable", None)?).item(&item("density-compact", "Compact", None)?).build()?;
+    let view = SubmenuBuilder::new(app, "View")
+        .item(&item("toggle-nav", "Show/Hide Main Menu", Some("CmdOrCtrl+Ctrl+S"))?)
+        .item(&reading)
+        .item(&density)
+        .item(&CheckMenuItemBuilder::with_id("conversation-view", "Conversation View").checked(true).build(app)?)
+        .separator()
+        .item(&item("theme-light", "Light Theme", None)?)
+        .item(&item("theme-dark", "Dark Theme", None)?)
+        .item(&item("themes", "Themes…", None)?)
+        .separator()
+        .item(&item("refresh", "Get New Mail", Some("CmdOrCtrl+Shift+N"))?)
+        .item(&PredefinedMenuItem::fullscreen(app, None)?)
+        .build()?;
+    let mut mailbox = SubmenuBuilder::new(app, "Mailbox")
+        .item(&item("go-inbox", "Inbox", None)?)
+        .item(&item("go-starred", "Starred", None)?)
+        .item(&item("go-snoozed", "Snoozed", None)?)
+        .item(&item("go-sent", "Sent", None)?)
+        .item(&item("go-drafts", "Drafts", None)?)
+        .item(&item("go-all", "All Mail", None)?)
+        .separator()
+        .item(&item("all-inboxes", "All Inboxes", Some("CmdOrCtrl+0"))?);
+    for i in 1..=9 {
+        mailbox = mailbox.item(&item(&format!("account-{i}"), &format!("Account {i}"), Some(&format!("CmdOrCtrl+{i}")))?);
+    }
+    let mailbox = mailbox.separator().item(&item("empty-trash", "Empty Trash", None)?).build()?;
+    let message = SubmenuBuilder::new(app, "Message")
+        .item(&item("reply", "Reply", Some("CmdOrCtrl+R"))?)
+        .item(&item("reply-all", "Reply All", Some("CmdOrCtrl+Shift+R"))?)
+        .item(&item("forward", "Forward", Some("CmdOrCtrl+Shift+F"))?)
+        .item(&item("forward-attachment", "Forward as Attachment", None)?)
+        .separator()
+        .item(&item("archive", "Archive", Some("CmdOrCtrl+Ctrl+A"))?)
+        .item(&item("delete", "Delete", Some("CmdOrCtrl+Backspace"))?)
+        .item(&item("spam", "Report Spam", Some("CmdOrCtrl+Shift+J"))?)
+        .item(&item("mark-unread", "Mark as Unread", Some("CmdOrCtrl+Shift+U"))?)
+        .item(&item("mark-read", "Mark as Read", None)?)
+        .item(&item("star", "Add Star", Some("CmdOrCtrl+Shift+L"))?)
+        .item(&item("important", "Mark as Important", None)?)
+        .item(&item("snooze", "Snooze…", None)?)
+        .item(&item("mute", "Mute", None)?)
+        .separator()
+        .item(&item("show-original", "Show Original", Some("CmdOrCtrl+Alt+U"))?)
+        .item(&item("unsubscribe", "Unsubscribe", None)?)
+        .item(&item("share", "Share…", None)?)
+        .build()?;
+    let window = SubmenuBuilder::new(app, "Window").item(&PredefinedMenuItem::minimize(app, None)?).item(&PredefinedMenuItem::maximize(app, None)?).separator().item(&item("bring-front", "Bring All to Front", None)?).build()?;
+    let help = SubmenuBuilder::new(app, "Help").item(&item("shortcuts", "Keyboard Shortcuts", Some("CmdOrCtrl+/"))?).item(&item("help", "Courier Help", None)?).build()?;
+    MenuBuilder::new(app).items(&[&app_menu, &file, &edit, &view, &mailbox, &message, &window, &help]).build()
+}
+
+fn focused_or_main(app: &AppHandle) -> Option<tauri::WebviewWindow> {
+    let windows = app.webview_windows();
+    windows.values().find(|w| w.is_focused().unwrap_or(false)).cloned().or_else(|| app.get_webview_window("main"))
+}
+
+/// mailto: links and .eml files, from the OS or a second launch.
+fn handle_open(app: &AppHandle, url: &str) {
+    let item = if url.starts_with("mailto:") {
+        json!({"kind": "mailto", "url": url})
+    } else if url.starts_with("file://") || url.ends_with(".eml") {
+        json!({"kind": "eml", "path": url})
+    } else {
+        return;
+    };
+    if let Some(st) = app.try_state::<Arc<AppState>>() {
+        st.pending_open.lock().push(item.clone());
+    }
+    let _ = app.emit("open-item", item);
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .run(tauri::generate_context!())
-        .expect("error while running Courier");
+    let e2e_report = e2e::report_path();
+    let builder = tauri::Builder::default();
+    // End-to-end runs stay in the background instead of taking focus, and macOS mustn't nap them.
+    #[cfg(target_os = "macos")]
+    let builder = builder.activate_ignoring_other_apps(e2e_report.is_none());
+    #[cfg(target_os = "macos")]
+    if e2e_report.is_some() {
+        macos::disable_app_nap("Courier end-to-end tests");
+    }
+    let builder = if e2e_report.is_none() {
+        builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            for a in argv.iter().skip(1) {
+                handle_open(app, a);
+            }
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
+    } else {
+        builder
+    };
+    let app = builder
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_drag::init())
+        .menu(build_menu)
+        .on_menu_event(|app, event| {
+            let id = event.id().as_ref().to_string();
+            if id == "bring-front" {
+                for w in app.webview_windows().values() {
+                    let _ = w.show();
+                }
+                return;
+            }
+            if let Some(w) = focused_or_main(app) {
+                let _ = w.emit("menu", json!({"id": id}));
+            }
+        })
+        .setup(move |app| {
+            let handle = app.handle().clone();
+            let e2e_state: Option<Arc<e2e::E2e>> = match &e2e_report {
+                #[cfg(debug_assertions)]
+                Some(path) => Some(Arc::new(tauri::async_runtime::block_on(e2e::E2e::start(path.clone())))),
+                _ => None,
+            };
+            let data_dir = match &e2e_report {
+                Some(path) => std::path::Path::new(path).parent().map(|p| p.join("data")).unwrap_or_else(std::env::temp_dir),
+                None => handle.path().app_data_dir()?,
+            };
+            std::fs::create_dir_all(&data_dir)?;
+            let db = Arc::new(db::Db::open(&data_dir.join("courier.db"))?);
+            let store: Arc<dyn secrets::SecretStore> = if e2e_state.is_some() {
+                Arc::new(secrets::MemoryStore::default())
+            } else {
+                #[cfg(target_os = "macos")]
+                {
+                    Arc::new(secrets::KeychainStore::new(secrets::SERVICE))
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    Arc::new(secrets::MemoryStore::default())
+                }
+            };
+            let http = reqwest::Client::new();
+            let h2 = handle.clone();
+            let engine = Engine::new(
+                db,
+                store,
+                Arc::new(TauriEvents(handle.clone())),
+                Arc::new(TauriNotifier { app: handle.clone(), e2e: e2e_state.clone() }),
+                Arc::new(BrowserOpener { http, e2e: e2e_state.clone() }),
+                Arc::new(move |n| macos::set_badge(&h2, n)),
+            );
+            if let Some(e) = &e2e_state {
+                #[cfg(debug_assertions)]
+                {
+                    *engine.google_endpoints.write() = e.gmail.endpoints();
+                    *engine.sync_interval.write() = std::time::Duration::from_secs(2);
+                }
+                let _ = e;
+            } else if let Some(n) = engine.db.kv_get("syncSeconds").ok().flatten().and_then(|v| v.as_u64()) {
+                *engine.sync_interval.write() = std::time::Duration::from_secs(n.clamp(10, 3600));
+            }
+            #[cfg(target_os = "macos")]
+            if let Some(e) = &e2e_state {
+                let e = e.clone();
+                macos::yield_focus_when_activated(move || {
+                    e.activations.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    eprintln!("[e2e] macOS made Courier the active app; handing focus back");
+                });
+            }
+            let state = Arc::new(AppState { engine: engine.clone(), data_dir: data_dir.clone(), e2e: e2e_state.clone(), handoff: Default::default(), pending_open: Default::default() });
+            app.manage(state);
+            {
+                let e = engine.clone();
+                tauri::async_runtime::spawn(async move { e.start() });
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let e = engine.clone();
+                macos::on_wake(move || e.on_wake());
+            }
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let h = handle.clone();
+                app.deep_link().on_open_url(move |event| {
+                    for u in event.urls() {
+                        handle_open(&h, u.as_str());
+                    }
+                });
+            }
+            let main = window_builder(&handle, "main", "index.html", "Courier", e2e_state.is_some());
+            let main = if e2e_state.is_some() { main.position(40.0, 60.0) } else { main };
+            let main = main.build()?;
+            #[cfg(target_os = "macos")]
+            if e2e_state.is_some() {
+                macos::order_back(&main);
+            }
+            let _ = main;
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::app_info,
+            commands::accounts_list,
+            commands::google_client_status,
+            commands::google_client_set,
+            commands::google_client_clear,
+            commands::account_add_gmail,
+            commands::account_discover,
+            commands::account_test_imap,
+            commands::account_add_imap,
+            commands::account_update,
+            commands::account_remove,
+            commands::labels_list,
+            commands::label_create,
+            commands::label_update,
+            commands::label_delete,
+            commands::list_threads,
+            commands::thread_get,
+            commands::message_raw,
+            commands::modify_threads,
+            commands::modify_messages,
+            commands::delete_forever,
+            commands::empty_label,
+            commands::snooze_threads,
+            commands::unsnooze_threads,
+            commands::mute_threads,
+            commands::star_message,
+            commands::block_sender,
+            commands::unblock_sender,
+            commands::blocked_list,
+            commands::send_message,
+            commands::outbox_cancel,
+            commands::outbox_list,
+            commands::outbox_send_now,
+            commands::outbox_raw,
+            commands::draft_save,
+            commands::draft_delete,
+            commands::contacts_search,
+            commands::templates_list,
+            commands::template_save,
+            commands::template_delete,
+            commands::signatures_list,
+            commands::signature_save,
+            commands::signature_delete,
+            commands::signature_defaults_set,
+            commands::settings_all,
+            commands::settings_set,
+            commands::filters_list,
+            commands::filter_create,
+            commands::filter_delete,
+            commands::server_settings_get,
+            commands::server_settings_set,
+            commands::sendas_list,
+            commands::sendas_save,
+            commands::sendas_delete,
+            commands::forwarding_list,
+            commands::forwarding_add,
+            commands::forwarding_remove,
+            commands::unsubscribe_one_click,
+            commands::sync_now,
+            commands::temp_file,
+            commands::write_file,
+            commands::read_file,
+            commands::quick_look,
+            commands::open_external,
+            commands::spell_check,
+            commands::share,
+            commands::default_mail_app,
+            commands::set_default_mail_app,
+            commands::badge_refresh,
+            commands::window_open,
+            commands::window_take,
+            commands::pending_opens,
+            commands::print_window,
+            commands::e2e_info,
+            commands::e2e_control,
+            commands::e2e_log,
+            commands::e2e_finish,
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while building Courier");
+    app.run(|app, event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Opened { urls } = &event {
+            for u in urls {
+                handle_open(app, u.as_str());
+            }
+        }
+        if let tauri::RunEvent::Reopen { has_visible_windows, .. } = &event {
+            if !has_visible_windows {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+        }
+        let _ = (app, &event);
+    });
 }

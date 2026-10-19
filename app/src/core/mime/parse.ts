@@ -198,7 +198,8 @@ function collect(root: MimePart) {
       return;
     }
     const name = filenameOf(p);
-    const isAttachment = p.disposition === "attachment" || (!!name && p.disposition !== "inline" && !p.contentType.startsWith("text/")) || p.contentType === "message/rfc822";
+    const isAttachment =
+      p.disposition === "attachment" || (!!name && p.disposition !== "inline" && !p.contentType.startsWith("text/")) || p.contentType === "message/rfc822";
     const inlineImage = p.contentType.startsWith("image/") && (p.disposition === "inline" || !!p.contentId) && !isAttachmentDisposition(p);
     if (!isAttachment && !inlineImage && p.contentType === "text/html") {
       htmlParts.push(partText(p));
@@ -232,7 +233,14 @@ function collect(root: MimePart) {
 const isAttachmentDisposition = (p: MimePart) => p.disposition === "attachment";
 const escapeForPre = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-const EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "application/pdf": "pdf", "text/calendar": "ics", "text/plain": "txt" };
+const EXT: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "application/pdf": "pdf",
+  "text/calendar": "ics",
+  "text/plain": "txt",
+};
 const extFor = (t: string) => EXT[t] ?? "bin";
 
 export function parseDate(s: string | null): Date | null {

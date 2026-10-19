@@ -287,3 +287,14 @@ async fn snooze_mute_block_filters_and_notifications() {
     assert_eq!(w.imap.folder("Junk").unwrap().msgs.len(), 1);
     assert!(w.imap.folder("INBOX").unwrap().msgs.is_empty());
 }
+
+#[tokio::test]
+async fn one_click_unsubscribe_posts_and_refuses_plain_http() {
+    let w = world().await;
+    // RFC 8058: a POST with the one-click body to the sender's HTTPS link (the local fake stands in for it).
+    w.engine.unsubscribe_one_click(&format!("{}/unsubscribe/deals", w.gmail.base())).await.unwrap();
+    assert_eq!(w.gmail.state.lock().unsubscribed, vec!["deals".to_string()]);
+    // Anything else that isn't HTTPS is refused.
+    assert!(w.engine.unsubscribe_one_click("http://deals.example/u/1").await.is_err());
+    assert!(w.engine.unsubscribe_one_click("ftp://deals.example/u/1").await.is_err());
+}

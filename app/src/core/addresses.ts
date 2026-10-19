@@ -57,7 +57,7 @@ function stripComments(s: string): { text: string; comment: string } {
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     if (c === "\\" && i + 1 < s.length) {
-      (depth ? (comment += s[i + 1]) : (text += c + s[i + 1])), i++;
+      (depth ? (comment += s[i + 1]) : (text += c + s[i + 1]), i++);
       continue;
     }
     if (c === '"' && !depth) quote = !quote;
@@ -81,7 +81,10 @@ export function parseAddress(raw: string): Address | null {
   const lt = s.lastIndexOf("<");
   const gt = s.lastIndexOf(">");
   if (lt >= 0 && gt > lt) {
-    const email = s.slice(lt + 1, gt).trim().replace(/^mailto:/i, "");
+    const email = s
+      .slice(lt + 1, gt)
+      .trim()
+      .replace(/^mailto:/i, "");
     const { text, comment } = stripComments(s.slice(0, lt));
     return { name: unquote(text) || comment, email };
   }
@@ -125,7 +128,13 @@ export function shortName(a: Address): string {
   const n = displayName(a);
   if (!a.name) return n;
   const comma = n.indexOf(",");
-  if (comma > 0) return n.slice(comma + 1).trim().split(/\s+/)[0] || n; // "Smith, Alice"
+  if (comma > 0)
+    return (
+      n
+        .slice(comma + 1)
+        .trim()
+        .split(/\s+/)[0] || n
+    ); // "Smith, Alice"
   return n.split(/\s+/)[0];
 }
 

@@ -63,9 +63,10 @@ export function fromAdvanced(f: AdvancedFields): string {
     const unit = f.sizeUnit === "MB" ? "M" : f.sizeUnit === "KB" ? "K" : "";
     parts.push(`${f.sizeOp}:${f.size.trim()}${unit}`);
   }
-  if (f.dateWithin && f.date) {
+  if (f.date) {
+    // The form shows "1 day" until another span is picked.
     const d = parseSearchDate(f.date);
-    const n = DATE_WITHIN[f.dateWithin];
+    const n = DATE_WITHIN[f.dateWithin || "1 day"];
     if (d && n) {
       const after = new Date(d);
       after.setDate(after.getDate() - n);
@@ -274,7 +275,13 @@ export function describeActions(a: FilterAction, labelName: (id: string) => stri
   if (add.includes("IMPORTANT")) out.push("Always mark it as important");
   if (remove.includes("IMPORTANT")) out.push("Never mark it as important");
   for (const id of add) {
-    if (id.startsWith("CATEGORY_")) out.push(`Categorize as ${id.slice(9).toLowerCase().replace(/^personal$/, "primary")}`);
+    if (id.startsWith("CATEGORY_"))
+      out.push(
+        `Categorize as ${id
+          .slice(9)
+          .toLowerCase()
+          .replace(/^personal$/, "primary")}`,
+      );
     else if (!["STARRED", "TRASH", "IMPORTANT", "INBOX", "UNREAD"].includes(id)) out.push(`Apply label "${labelName(id)}"`);
   }
   if (a.forward) out.push(`Forward to ${a.forward}`);

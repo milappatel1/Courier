@@ -29,6 +29,16 @@ pub fn disable_app_nap(reason: &str) {
     std::mem::forget(activity);
 }
 
+/// Whether Courier is the frontmost (active) app. The end-to-end run checks this to prove it never took focus.
+#[cfg(target_os = "macos")]
+pub fn app_is_active() -> bool {
+    objc2_app_kit::NSRunningApplication::currentApplication().isActive()
+}
+#[cfg(not(target_os = "macos"))]
+pub fn app_is_active() -> bool {
+    false
+}
+
 /// Unread count on the Dock icon (None or 0 clears it).
 #[cfg(target_os = "macos")]
 pub fn set_badge(app: &tauri::AppHandle, count: i64) {
@@ -139,6 +149,40 @@ pub fn on_wake(f: impl Fn() + Send + Sync + 'static) {
     let token = unsafe { center.addObserverForName_object_queue_usingBlock(Some(NSWorkspaceDidWakeNotification), None, None, &block) };
     std::mem::forget(token);
     std::mem::forget(block);
+}
+
+/// End-to-end runs only: if macOS makes Courier the active app anyway, hand the focus straight back (hiding the
+/// app returns activation to the app the user was in), show the window again without activating, and report it
+/// so the run fails.
+#[cfg(target_os = "macos")]
+pub fn yield_focus_when_activated(on_activated: impl Fn() + 'static) {
+    use objc2_app_kit::{NSApplication, NSApplicationDidBecomeActiveNotification};
+    use objc2_foundation::{NSNotification, NSNotificationCenter};
+    let block = block2::RcBlock::new(move |_n: std::ptr::NonNull<NSNotification>| {
+        on_activated();
+        if let Some(mtm) = objc2::MainThreadMarker::new() {
+            let app = NSApplication::sharedApplication(mtm);
+            app.hide(None);
+            app.unhideWithoutActivation();
+            for w in app.windows().iter() {
+                w.orderBack(None);
+            }
+        }
+    });
+    let center = NSNotificationCenter::defaultCenter();
+    let token = unsafe { center.addObserverForName_object_queue_usingBlock(Some(NSApplicationDidBecomeActiveNotification), None, None, &block) };
+    std::mem::forget(token);
+    std::mem::forget(block);
+}
+
+/// End-to-end runs only: put the window behind every other window, so it can't be clicked by accident.
+#[cfg(target_os = "macos")]
+pub fn order_back(window: &tauri::WebviewWindow) {
+    if let Ok(ptr) = window.ns_window() {
+        // Called on the main thread from setup; the pointer is the live NSWindow.
+        let w = unsafe { &*(ptr as *const objc2_app_kit::NSWindow) };
+        w.orderBack(None);
+    }
 }
 
 /// Quick Look a file (the system preview panel, in its own process).

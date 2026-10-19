@@ -898,6 +898,12 @@ impl Db {
         Ok(())
     }
 
+    /// Back online: mail that failed for lack of a connection goes again now instead of after its backoff.
+    /// Scheduled mail keeps its time unless that time has already passed.
+    pub fn outbox_retry_now(&self, now: i64) -> Result<usize> {
+        self.with(|c| c.execute("UPDATE outbox SET send_at=? WHERE status='pending' AND attempts > 0 AND send_at > ? AND (scheduled = 0 OR error IS NOT NULL)", params![now, now]))
+    }
+
     pub fn outbox_fail(&self, id: i64, err: &str) -> Result<()> {
         self.with(|c| c.execute("UPDATE outbox SET status='failed', attempts=attempts+1, error=? WHERE id=?", params![err, id]))?;
         Ok(())
@@ -1108,15 +1114,24 @@ impl Db {
         })
     }
 
-    /// Total unread in inboxes across accounts (Dock badge).
-    pub fn unread_inbox_total(&self, primary_only: bool) -> Result<i64> {
-        self.with(|c| {
-            let sql = if primary_only {
-                "SELECT COUNT(DISTINCT account_id || ' ' || thread_id) FROM messages WHERE labels LIKE '% INBOX %' AND labels LIKE '% UNREAD %' AND labels NOT LIKE '% CATEGORY_SOCIAL %' AND labels NOT LIKE '% CATEGORY_PROMOTIONS %' AND labels NOT LIKE '% CATEGORY_UPDATES %' AND labels NOT LIKE '% CATEGORY_FORUMS %' AND thread_id NOT IN (SELECT thread_id FROM snoozes)"
-            } else {
-                "SELECT COUNT(DISTINCT account_id || ' ' || thread_id) FROM messages WHERE labels LIKE '% INBOX %' AND labels LIKE '% UNREAD %' AND thread_id NOT IN (SELECT thread_id FROM snoozes)"
-            };
-            c.query_row(sql, [], |r| r.get(0))
+    /// Unread conversations in the Inbox (one account, or all of them for the Dock badge), leaving out
+    /// conversations in the given category labels: with tabs on, the Inbox count covers Primary only.
+    pub fn inbox_unread(&self, account: Option<&str>, skip_categories: &[&str]) -> Result<i64> {
+        let mut sql = String::from(
+            "SELECT COUNT(DISTINCT m.account_id || ' ' || m.thread_id) FROM messages m WHERE m.labels LIKE '% INBOX %' AND m.labels LIKE '% UNREAD %' \
+             AND NOT EXISTS (SELECT 1 FROM snoozes s WHERE s.account_id = m.account_id AND s.thread_id = m.thread_id)",
+        );
+        for cat in skip_categories {
+            // Category ids are fixed constants (CATEGORY_*), never user input.
+            debug_assert!(cat.chars().all(|ch| ch.is_ascii_uppercase() || ch == '_'));
+            sql.push_str(&format!(" AND m.labels NOT LIKE '% {cat} %'"));
+        }
+        if account.is_some() {
+            sql.push_str(" AND m.account_id = ?1");
+        }
+        self.with(|c| match account {
+            Some(a) => c.query_row(&sql, [a], |r| r.get(0)),
+            None => c.query_row(&sql, [], |r| r.get(0)),
         })
     }
 }
@@ -1171,6 +1186,21 @@ mod tests {
     }
 
     #[test]
+    fn inbox_count_covers_primary_only() {
+        let db = Db::open_in_memory().unwrap();
+        db.upsert_message(&msg("1", "t1", &["INBOX", "UNREAD", "CATEGORY_PERSONAL"], 1000, "Lunch"), None).unwrap();
+        db.upsert_message(&msg("2", "t2", &["INBOX", "UNREAD", "CATEGORY_PROMOTIONS"], 1001, "Sale"), None).unwrap();
+        db.upsert_message(&msg("3", "t3", &["INBOX", "UNREAD", "CATEGORY_FORUMS"], 1002, "Forum"), None).unwrap();
+        db.upsert_message(&msg("4", "t4", &["INBOX", "CATEGORY_PERSONAL"], 1003, "Read"), None).unwrap();
+        db.upsert_message(&msg("5", "t1", &["INBOX", "UNREAD", "CATEGORY_PERSONAL"], 1004, "Re: Lunch"), None).unwrap();
+        assert_eq!(db.inbox_unread(Some("a"), &[]).unwrap(), 3);
+        // Tabs for promotions/social/updates: forums mail stays in Primary.
+        assert_eq!(db.inbox_unread(Some("a"), &["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES"]).unwrap(), 2);
+        assert_eq!(db.inbox_unread(None, &["CATEGORY_PROMOTIONS", "CATEGORY_FORUMS"]).unwrap(), 1);
+        assert_eq!(db.inbox_unread(Some("other"), &[]).unwrap(), 0);
+    }
+
+    #[test]
     fn outbox_undo_and_claim() {
         let db = Db::open_in_memory().unwrap();
         let id = db.outbox_add("a", b"raw", 1000, false, None, None, "Hi", &["b@x.io".into()], "a@x.io", "hello").unwrap();
@@ -1183,6 +1213,10 @@ mod tests {
         assert!(db.outbox_take(id2).unwrap().is_none()); // already sending: can't undo
         db.outbox_retry(id2, 5000, "offline").unwrap();
         assert_eq!(db.outbox_item(id2).unwrap().unwrap().attempts, 1);
+        // Back online: the retry is due at once.
+        assert!(db.outbox_claim_due(1200).unwrap().is_empty());
+        assert_eq!(db.outbox_retry_now(1200).unwrap(), 1);
+        assert_eq!(db.outbox_claim_due(1200).unwrap().len(), 1);
     }
 
     #[test]

@@ -31,7 +31,10 @@ export interface SearchableMessage {
 
 const lc = (s: string) => s.toLowerCase();
 const addrText = (list: Address[]) => list.map((a) => `${a.name} ${a.email}`.toLowerCase()).join(" ");
-const tokensOf = (s: string) => lc(s).split(/[^\p{L}\p{N}@._+-]+/u).filter(Boolean);
+const tokensOf = (s: string) =>
+  lc(s)
+    .split(/[^\p{L}\p{N}@._+-]+/u)
+    .filter(Boolean);
 
 function textMatch(hay: string, needle: string, exact: boolean): boolean {
   const h = lc(hay);
@@ -43,7 +46,20 @@ function textMatch(hay: string, needle: string, exact: boolean): boolean {
   return tokensOf(n).every((w) => words.some((x) => x.startsWith(w)) || h.includes(w));
 }
 
-const STAR_NAMES = ["yellow-star", "orange-star", "red-star", "purple-star", "blue-star", "green-star", "red-bang", "orange-guillemet", "yellow-bang", "green-check", "blue-info", "purple-question"];
+const STAR_NAMES = [
+  "yellow-star",
+  "orange-star",
+  "red-star",
+  "purple-star",
+  "blue-star",
+  "green-star",
+  "red-bang",
+  "orange-guillemet",
+  "yellow-bang",
+  "green-check",
+  "blue-info",
+  "purple-question",
+];
 
 const labelKey = (s: string) => lc(s).replace(/[\s/_]+/g, "-");
 
@@ -87,7 +103,8 @@ function term(field: string | null, value: string, exact: boolean, m: Searchable
     case "filename":
       return m.attachmentNames.some((n) => lc(n).includes(v) || lc(n).endsWith(`.${v}`));
     case "label":
-      return labels.includes(labelKey(value)) || labels.some((l) => l.startsWith(labelKey(value) + "-"));
+      // Exact label only: `label:projects` leaves out Projects/Alpha, as in the web client.
+      return labels.includes(labelKey(value));
     case "category": {
       const c = v === "personal" ? "primary" : v;
       return (m.category ?? "primary") === c;

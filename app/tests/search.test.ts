@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import cases from "./fixtures/search-cases.json";
-import { chipState, criteriaFromAdvanced, criteriaToQuery, describeActions, EMPTY_ADVANCED, fromAdvanced, setChip, toAdvanced } from "../src/core/search/advanced";
+import {
+  chipState,
+  criteriaFromAdvanced,
+  criteriaToQuery,
+  describeActions,
+  EMPTY_ADVANCED,
+  fromAdvanced,
+  setChip,
+  toAdvanced,
+} from "../src/core/search/advanced";
 import { highlightTerms, matches, type SearchableMessage } from "../src/core/search/evaluate";
 import { parseQuery, parseRelative, parseSearchDate, parseSize, serialize } from "../src/core/search/parser";
 
@@ -63,7 +72,8 @@ describe("evaluate", () => {
     expect(t('subject:"planning notes"')).toBe(true);
     expect(t('subject:"notes planning"')).toBe(false);
     expect(t("label:projects-alpha")).toBe(true);
-    expect(t("label:projects")).toBe(true);
+    // Exact labels only: the parent does not match mail filed under Projects/Alpha.
+    expect(t("label:projects")).toBe(false);
     expect(t("in:inbox is:unread")).toBe(true);
     expect(t("is:read")).toBe(false);
     expect(t("has:attachment filename:pdf")).toBe(true);
@@ -96,7 +106,18 @@ describe("evaluate", () => {
 
 describe("advanced search form", () => {
   it("builds the query from the form", () => {
-    const q = fromAdvanced({ ...EMPTY_ADVANCED, from: "alice", to: "bob carol", subject: "plan", hasWords: "budget", doesntHave: "draft memo", size: "5", sizeUnit: "MB", hasAttachment: true, searchIn: "Projects" });
+    const q = fromAdvanced({
+      ...EMPTY_ADVANCED,
+      from: "alice",
+      to: "bob carol",
+      subject: "plan",
+      hasWords: "budget",
+      doesntHave: "draft memo",
+      size: "5",
+      sizeUnit: "MB",
+      hasAttachment: true,
+      searchIn: "Projects",
+    });
     expect(q).toBe("from:alice to:(bob carol) subject:plan budget -{draft memo} larger:5M label:Projects has:attachment");
   });
   it("date within expands around the date and maps back", () => {
@@ -136,6 +157,11 @@ describe("chips and filters", () => {
     const c = criteriaFromAdvanced({ ...EMPTY_ADVANCED, from: "news@shop.example", hasWords: "sale", size: "1", sizeUnit: "MB", hasAttachment: true });
     expect(c).toEqual({ from: "news@shop.example", query: "sale", hasAttachment: true, size: 1048576, sizeComparison: "larger" });
     expect(criteriaToQuery(c)).toBe("from:news@shop.example sale has:attachment larger:1048576");
-    expect(describeActions({ addLabelIds: ["Label_1", "STARRED"], removeLabelIds: ["INBOX", "UNREAD"] }, () => "Receipts")).toEqual(["Skip Inbox", "Mark as read", "Star it", 'Apply label "Receipts"']);
+    expect(describeActions({ addLabelIds: ["Label_1", "STARRED"], removeLabelIds: ["INBOX", "UNREAD"] }, () => "Receipts")).toEqual([
+      "Skip Inbox",
+      "Mark as read",
+      "Star it",
+      'Apply label "Receipts"',
+    ]);
   });
 });

@@ -169,7 +169,10 @@ export class ShortcutMatcher {
   private pending: string | null = null;
   private pendingAt = 0;
   private readonly byKeys = new Map<string, ShortcutAction>();
-  constructor(defs: ShortcutDef[] = SHORTCUTS, private timeoutMs = 2000) {
+  constructor(
+    defs: ShortcutDef[] = SHORTCUTS,
+    private timeoutMs = 2000,
+  ) {
     for (const d of defs) this.byKeys.set(d.keys, d.action);
   }
   /** Returns the action for this key, "pending" inside a sequence, or null. */

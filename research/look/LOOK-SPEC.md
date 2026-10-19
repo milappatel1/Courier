@@ -218,3 +218,21 @@ Filled variants (FILL 1) for the active nav item and starred stars.
   General ▸ Keyboard shortcuts turns them off).
 - Settings tabs present: General, Labels, Inbox, Accounts (and Import), Filters and Blocked Addresses, Forwarding and
   POP/IMAP, Add-ons (Google-only), Chat and Meet (Google-only), Advanced, Offline, Themes.
+- The default toolbar is the *simplified* one: with a selection it shows Archive, Report spam, Delete | Mark as
+  read/unread, Move to | More; Snooze and Label as live in More, which ends with "Switch to advanced toolbar"
+  (the advanced toolbar adds Snooze after Mark as read and Labels after Move to). Icons sit 44 px apart
+  (20 px + 12 px margins), More 40 px after its neighbour; refresh at x = 332, more at 372 with nothing selected.
+- Menus hang from the 20 px icon box (top = icon bottom, left = icon left), not from the 40 px hover circle;
+  submenus open level with the item that opened them.
+- Label as (200 wide): "Label as:" at 8 px, a search field with a magnifier, then user labels by full name
+  ("Projects/Alpha", no indent) and, on Gmail accounts, Social, Updates, Forums, Promotions; checkboxes at 22 px,
+  names at 48 px; Create new / Manage labels below a divider (Apply when something changed).
+- `label:projects` matches the Projects label only, not Projects/Alpha (the search golden shows 2 results).
+- The Inbox count is unread conversations in Primary when category tabs are on.
+- Search results show an "Inbox" chip on rows that are in the Inbox; running a search closes the search options.
+- Advanced search: panel top = search bar bottom − 1 (y = 55), padding 13 24 20 25; "Has attachment" checkbox
+  in the label column (x + 28), text at x + 61; buttons 40 tall, 7 px below the checkbox row.
+- Lists keep a 16 px gutter on the right (rows, tabs and footer are 992 wide in a 1008 panel; the tab strip has
+  another 16 px inside it, so tabs are 244); the conversation keeps 32 px (message dividers stop at x = 1232,
+  the message action buttons hang 10 px into the gutter).
+- Search box: 624 wide at 1280 (it is `flex: 1` with a 720 max and shares the row with the right-hand buttons).

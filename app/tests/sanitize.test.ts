@@ -41,7 +41,9 @@ describe("sanitiser", () => {
   });
 
   it("cleans CSS: no @import, expressions or remote url() before allowing", () => {
-    const r = clean(`<style>@import url(https://e.vil/a.css); .a{background:url(https://e.vil/bg.png)} .b{width:expression(alert(1))} .c{position:fixed}</style><div style="background-image:url('https://e.vil/x.png');color:red" background="https://e.vil/t.png">x</div>`);
+    const r = clean(
+      `<style>@import url(https://e.vil/a.css); .a{background:url(https://e.vil/bg.png)} .b{width:expression(alert(1))} .c{position:fixed}</style><div style="background-image:url('https://e.vil/x.png');color:red" background="https://e.vil/t.png">x</div>`,
+    );
     expect(r.html).not.toMatch(/@import|expression\(|e\.vil|position:fixed/);
     expect(r.html).toContain("color:red");
     expect(r.remoteBlocked).toBe(3);
@@ -56,7 +58,9 @@ describe("sanitiser", () => {
   });
 
   it("folds trailing quoted history but not interleaved quotes", () => {
-    const reply = clean(`<div>Sounds good.</div><div class="gmail_quote"><div>On Sun, Oct 18, 2026 at 8:06 PM Ana wrote:</div><blockquote>Lunch?</blockquote></div>`);
+    const reply = clean(
+      `<div>Sounds good.</div><div class="gmail_quote"><div>On Sun, Oct 18, 2026 at 8:06 PM Ana wrote:</div><blockquote>Lunch?</blockquote></div>`,
+    );
     expect(reply.quoted).toBe(true);
     expect(reply.html).toMatch(/<div class="courier-quoted"><div class="gmail_quote">/);
     const plain = clean(textToHtml("Yes!\n\nOn Sun, Oct 18, 2026 at 8:06 PM Ana wrote:\n> Lunch?\n> Friday?"));

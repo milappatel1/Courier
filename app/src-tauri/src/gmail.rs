@@ -50,8 +50,7 @@ impl Gmail {
             let status = resp.status().as_u16();
             if status == 401 && !refreshed {
                 refreshed = true;
-                self.tokens.invalidate();
-                self.tokens.force_refresh().await?;
+                self.tokens.force_refresh(Some(&token)).await?;
                 continue;
             }
             if (status == 429 || status >= 500) && attempt < 4 {
@@ -67,6 +66,9 @@ impl Gmail {
             return Err(match status {
                 401 => Error::Auth(msg),
                 404 => Error::NotFound(msg),
+                // Still busy or down after the retries above: treat like no connection, so sends wait in the
+                // outbox and sync backs off, instead of failing for good.
+                429 | 500..=599 => Error::Offline(format!("server unavailable ({status})")),
                 _ => Error::Server(format!("{status}: {msg}")),
             });
         }
@@ -551,7 +553,7 @@ pub async fn list_page(g: &Gmail, db: &Db, account: &str, label_ids: &[String], 
         }
     }
     use futures::stream::{self, StreamExt};
-    let fetched: Vec<Result<Value>> = stream::iter(need.iter().map(|id| g.thread_metadata(id))).buffer_unordered(8).collect().await;
+    let fetched: Vec<Result<Value>> = stream::iter(need.into_iter().map(|id| async move { g.thread_metadata(&id).await })).buffer_unordered(8).collect().await;
     for t in fetched {
         let t = t?;
         for m in t["messages"].as_array().cloned().unwrap_or_default() {

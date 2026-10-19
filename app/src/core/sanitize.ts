@@ -48,7 +48,24 @@ const DROP = new Set([
   "set",
 ]);
 const UNWRAP = new Set(["form", "html", "body", "head"]);
-const URL_ATTRS = ["href", "src", "background", "action", "formaction", "poster", "cite", "xlink:href", "srcset", "dynsrc", "lowsrc", "longdesc", "usemap", "data", "codebase", "ping"];
+const URL_ATTRS = [
+  "href",
+  "src",
+  "background",
+  "action",
+  "formaction",
+  "poster",
+  "cite",
+  "xlink:href",
+  "srcset",
+  "dynsrc",
+  "lowsrc",
+  "longdesc",
+  "usemap",
+  "data",
+  "codebase",
+  "ping",
+];
 
 /** Hosts and paths used for open tracking (our own list of well-known patterns). */
 const TRACKER_PATTERNS = [
@@ -136,7 +153,16 @@ export function sanitizeHtml(html: string, opts: SanitizeOptions, parser: DomPar
     const tag = el.tagName.toLowerCase();
     for (const attr of [...el.attributes]) {
       const name = attr.name.toLowerCase();
-      if (name.startsWith("on") || name === "srcdoc" || name === "formaction" || name === "action" || name === "ping" || name === "autofocus" || name === "contenteditable" || name === "http-equiv") {
+      if (
+        name.startsWith("on") ||
+        name === "srcdoc" ||
+        name === "formaction" ||
+        name === "action" ||
+        name === "ping" ||
+        name === "autofocus" ||
+        name === "contenteditable" ||
+        name === "http-equiv"
+      ) {
         el.removeAttribute(attr.name);
         continue;
       }
@@ -216,7 +242,8 @@ export function sanitizeHtml(html: string, opts: SanitizeOptions, parser: DomPar
   if (bs) bodyStyle.push(cssSanitize(bs, opts, counters));
   const inner = body.innerHTML;
   const out =
-    (styles.length ? `<style>${styles.join("\n")}</style>` : "") + (bodyStyle.length ? `<div class="courier-body" style="${bodyStyle.join(";").replace(/"/g, "'")}">${inner}</div>` : inner);
+    (styles.length ? `<style>${styles.join("\n")}</style>` : "") +
+    (bodyStyle.length ? `<div class="courier-body" style="${bodyStyle.join(";").replace(/"/g, "'")}">${inner}</div>` : inner);
   return { html: out, remoteBlocked: counters.blocked, trackersRemoved: trackers, hasRemote: counters.remote, quoted };
 }
 
@@ -237,7 +264,7 @@ export function markQuoted(doc: Document, body: Element): boolean {
   let start: Element | null = null;
   for (const sel of QUOTE_SELECTORS) {
     const found = body.querySelector(sel);
-    if (found && (!start || (start.compareDocumentPosition(found) & 2) /* PRECEDING */)) start = found;
+    if (found && (!start || start.compareDocumentPosition(found) & 2) /* PRECEDING */) start = found;
   }
   // "On <date>, <name> wrote:" line directly before a blockquote.
   if (!start) {

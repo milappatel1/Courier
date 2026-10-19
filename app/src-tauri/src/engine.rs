@@ -2,7 +2,7 @@
 //! views from the cache (or the server for API accounts), runs a sync loop per account (history / UID
 //! sync, IMAP IDLE), and runs the outbox (undo send, scheduled send, offline retry) and snooze workers.
 
-use crate::db::{AccountRow, Db, ListFilter, OutboxRow, ThreadSummary};
+use crate::db::{AccountRow, Db, LabelRow, ListFilter, OutboxRow, ThreadSummary};
 use crate::error::{now_ms, Error, Result};
 use crate::gmail::{self, Gmail};
 use crate::imap::{self, ImapAccountConfig, Session};
@@ -147,8 +147,8 @@ impl search::LabelResolver for Labels {
         self.0
             .iter()
             .filter(|l| {
-                let k = search::label_key(&l.name);
-                k == key || k.starts_with(&format!("{key}-")) || search::label_key(&l.id) == key
+                // Exact label only: as in the web client, `label:projects` leaves out Projects/Alpha.
+                search::label_key(&l.name) == key || search::label_key(&l.id) == key
             })
             .map(|l| l.id.clone())
             .collect()
@@ -189,8 +189,39 @@ impl Engine {
 
     pub fn refresh_badge(&self) {
         let cfg = self.db.kv_get("badge").ok().flatten().unwrap_or(json!({"enabled": true, "primaryOnly": true}));
-        let n = if cfg["enabled"].as_bool().unwrap_or(true) { self.db.unread_inbox_total(cfg["primaryOnly"].as_bool().unwrap_or(true)).unwrap_or(0) } else { 0 };
+        let skip = if cfg["primaryOnly"].as_bool().unwrap_or(true) { self.tab_categories() } else { vec![] };
+        let n = if cfg["enabled"].as_bool().unwrap_or(true) { self.db.inbox_unread(None, &skip).unwrap_or(0) } else { 0 };
         (self.badge)(n);
+    }
+
+    /// Category labels shown as their own Inbox tabs (Settings ▸ Inbox; Forums is off by default).
+    pub fn tab_categories(&self) -> Vec<&'static str> {
+        let cfg = self.db.kv_get("categories").ok().flatten().unwrap_or(Value::Null);
+        let on = |k: &str, def: bool| cfg.get(k).and_then(Value::as_bool).unwrap_or(def);
+        let mut out = vec![];
+        for (key, label, def) in [("promotions", "CATEGORY_PROMOTIONS", true), ("social", "CATEGORY_SOCIAL", true), ("updates", "CATEGORY_UPDATES", true), ("forums", "CATEGORY_FORUMS", false)] {
+            if on(key, def) {
+                out.push(label);
+            }
+        }
+        out
+    }
+
+    /// Labels with the Inbox count Gmail shows: unread conversations in Primary when tabs are on.
+    pub fn labels_for_nav(&self, account: &str) -> Result<Vec<LabelRow>> {
+        let mut labels = self.db.labels(account)?;
+        let gmail = self.db.account(account).map(|a| a.kind == "gmail").unwrap_or(false);
+        let inbox_type = self.db.kv_get("inboxType").ok().flatten().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "default".into());
+        if gmail && inbox_type == "default" {
+            let skip = self.tab_categories();
+            if !skip.is_empty() {
+                let n = self.db.inbox_unread(Some(account), &skip)?;
+                if let Some(l) = labels.iter_mut().find(|l| l.id == "INBOX") {
+                    l.threads_unread = n;
+                }
+            }
+        }
+        Ok(labels)
     }
 
     fn set_online(&self, on: bool) {
@@ -198,6 +229,7 @@ impl Engine {
         if was != on {
             self.emit("online", json!({"online": on}));
             if on {
+                let _ = self.db.outbox_retry_now(now_ms());
                 self.outbox_kick.notify_one();
             }
         }
@@ -1341,7 +1373,9 @@ impl Engine {
 
     /// RFC 8058 one-click (POST) when offered; otherwise the caller handles mailto/link.
     pub async fn unsubscribe_one_click(&self, url: &str) -> Result<()> {
-        if !url.starts_with("https://") && !url.starts_with("http://127.0.0.1") {
+        // RFC 8058 one-click needs HTTPS. Debug and test builds also accept the local fake server.
+        let local_fake = cfg!(debug_assertions) && url.starts_with("http://127.0.0.1:");
+        if !url.starts_with("https://") && !local_fake {
             return Err(Error::msg("Only https unsubscribe links can be used."));
         }
         let r = self.http.post(url).header("Content-Type", "application/x-www-form-urlencoded").body("List-Unsubscribe=One-Click").send().await?;

@@ -29,3 +29,7 @@ client_secret*.json
 *.swp
 .vscode/
 .idea/
+
+# Local agent settings
+.claude/
+app/.claude/

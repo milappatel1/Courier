@@ -5,7 +5,23 @@ Google branding, Google's assets and Google-only services, with multiple account
 
 ## Status
 
-_(updated at the end of every phase — see the bottom of this file)_
+**1.0.0 released (2026-10-19)** — https://github.com/milappatel1/courier/releases/tag/v1.0.0 (`Courier-1.0.0-arm64.dmg` and `.zip`, ad-hoc signed; SHA-256 in the release notes).
+
+| Phase | State | Notes |
+| --- | --- | --- |
+| Recon | done | Look measured into `research/look/LOOK-SPEC.md`; 21 redacted goldens (local only). The recon account's display settings (Chat, Meet, side panel, density, theme, reading pane) were put back afterwards; its test mail and labels remain. |
+| P0 foundations | done | `research/VERIFY-P0.md` |
+| P1 main window + look | done | `research/VERIFY-P1.md` — measured boxes match the reference to 0–3 px at 1280 × 728 |
+| P2 compose | done | `research/VERIFY-P2.md` |
+| P3 search + filters | done | `research/VERIFY-P3.md` |
+| P4 settings, themes, shortcuts | done | `research/VERIFY-P4.md` |
+| P5 Mac integration | done | `research/VERIFY-P5.md` — the e2e run never takes focus (checked by the app and the script) |
+| P6 snooze, schedule, unsubscribe… | done | `research/VERIFY-P6.md` |
+| Tests | passing | Vitest 82, Rust 25 (unit + fake-server integration), end to end 24 steps in ~45 s |
+| Real-account check | waiting | Read-only, after the user creates their OAuth client and signs in (`SETUP-GOOGLE.md`). |
+
+Open items: the real-account check; things not driven automatically (mailto/.eml/Quick Look/Share/drag-out,
+pop-out compose, templates, multiple inboxes) are listed under "Known gaps" in the VERIFY notes.
 
 ## Ground rules
 

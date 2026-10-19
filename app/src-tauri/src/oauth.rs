@@ -251,15 +251,17 @@ impl TokenManager {
         if t.expires_at - 60 > unix_now() && !t.access_token.is_empty() {
             return Ok(t.access_token);
         }
-        self.force_refresh().await
+        self.force_refresh(None).await
     }
 
-    pub async fn force_refresh(&self) -> Result<String> {
+    /// Refreshes the access token. `failed` is the token a request was just refused with (a 401): if another
+    /// request already replaced it while this one waited for the lock, that newer token is used instead.
+    pub async fn force_refresh(&self, failed: Option<&str>) -> Result<String> {
         let _g = self.refresh_lock.lock().await;
         let t = self.load()?;
-        // Someone else refreshed while we waited.
-        if t.expires_at - 60 > unix_now() && !t.access_token.is_empty() && self.cached.lock().as_ref().map(|c| c.access_token != "").unwrap_or(false) {
-            // Only reuse if it's not the token that just failed (callers pass through force_refresh on 401).
+        let still_valid = t.expires_at - 60 > unix_now() && !t.access_token.is_empty();
+        if still_valid && failed.is_none_or(|f| f != t.access_token) {
+            return Ok(t.access_token);
         }
         let rt = t.refresh_token.clone().ok_or_else(|| Error::Auth("Sign in again.".into()))?;
         let fresh = refresh(&self.http, &self.endpoints, &self.creds, &rt).await?;

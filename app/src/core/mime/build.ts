@@ -115,12 +115,10 @@ export function buildMime(input: ComposeInput, opts: BuildOptions = {}): Built {
   } else {
     body = textPart("plain", input.text ?? "");
   }
-  const forwarded = (input.forwarded ?? []).map(
-    (f): Part => ({
-      headers: [`Content-Type: message/rfc822; ${formatParam("name", f.filename)}`, `Content-Disposition: attachment; ${formatParam("filename", f.filename)}`],
-      body: f.raw,
-    }),
-  );
+  const forwarded = (input.forwarded ?? []).map((f): Part => ({
+    headers: [`Content-Type: message/rfc822; ${formatParam("name", f.filename)}`, `Content-Disposition: attachment; ${formatParam("filename", f.filename)}`],
+    body: f.raw,
+  }));
   if (regular.length || forwarded.length) body = multipart("mixed", [body, ...regular.map(attachmentPart), ...forwarded], boundary());
 
   const h: string[] = [];

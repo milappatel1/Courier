@@ -59,7 +59,10 @@ describe("headers", () => {
 
 describe("build → parse round trips", () => {
   it("plain text", () => {
-    const built = buildMime({ from: me, to: [{ name: "Ana", email: "ana@example.org" }], subject: "Hi there", text: "Line one\nLine two — ünïcode" }, { seed: "t1" });
+    const built = buildMime(
+      { from: me, to: [{ name: "Ana", email: "ana@example.org" }], subject: "Hi there", text: "Line one\nLine two — ünïcode" },
+      { seed: "t1" },
+    );
     const raw = latin1(built.raw);
     expect(raw).toContain("Content-Type: text/plain");
     expect(raw).toMatch(/\r\n\r\n/);
@@ -117,7 +120,17 @@ describe("build → parse round trips", () => {
 
   it("keeps Bcc when asked (Gmail API sends) and forwards a message as an attachment", () => {
     const inner = buildMime({ from: me, to: [me], subject: "Inner", text: "inside" }, { seed: "in" });
-    const built = buildMime({ from: me, to: [me], bcc: [{ name: "", email: "b@example.com" }], subject: "Fwd: Inner", text: "see attached", forwarded: [{ filename: "Inner.eml", raw: inner.raw }] }, { includeBcc: true, seed: "t3" });
+    const built = buildMime(
+      {
+        from: me,
+        to: [me],
+        bcc: [{ name: "", email: "b@example.com" }],
+        subject: "Fwd: Inner",
+        text: "see attached",
+        forwarded: [{ filename: "Inner.eml", raw: inner.raw }],
+      },
+      { includeBcc: true, seed: "t3" },
+    );
     const p = parseMessage(built.raw);
     expect(p.bcc[0].email).toBe("b@example.com");
     const eml = p.attachments.find((a) => a.mimeType === "message/rfc822")!;

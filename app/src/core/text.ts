@@ -167,13 +167,10 @@ export function textToHtml(text: string, opts: { linkify?: boolean } = {}): stri
   for (const raw of lines) {
     const q = raw.match(/^(>\s?)+/);
     const d = q ? (q[0].match(/>/g) ?? []).length : 0;
-    while (depth < d) (html += '<blockquote class="courier_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">'), depth++;
-    while (depth > d) (html += "</blockquote>"), depth--;
+    while (depth < d) ((html += '<blockquote class="courier_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">'), depth++);
+    while (depth > d) ((html += "</blockquote>"), depth--);
     let line = escapeHtml(q ? raw.slice(q[0].length) : raw);
-    if (linkify)
-      line = line.replace(URL_RE, (m, url, email) =>
-        url ? `<a href="${url}">${url}</a>` : `<a href="mailto:${email}">${email}</a>`,
-      );
+    if (linkify) line = line.replace(URL_RE, (_m, url, email) => (url ? `<a href="${url}">${url}</a>` : `<a href="mailto:${email}">${email}</a>`));
     html += `${line || "<br>"}`.replace(/^ /, "&nbsp;").replace(/  /g, " &nbsp;") + (line ? "<br>" : "");
   }
   while (depth-- > 0) html += "</blockquote>";

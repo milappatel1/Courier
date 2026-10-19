@@ -2,7 +2,19 @@ import { describe, expect, it } from "vitest";
 import { avatarColor, dedupeAddresses, formatAddress, initialOf, isValidEmail, parseAddressList, shortName } from "../src/core/addresses";
 import { buildReply, forwardSubject, mentionsAttachment, pickFromAlias, replyRecipients, replySubject, type SourceMessage } from "../src/core/compose";
 import { fullDate, headerDate, listDate, quoteDate, relativeAgo, schedulePresets, snoozePresets } from "../src/core/dates";
-import { CATEGORIES, chipStyle, decodeModifiedUtf7, encodeModifiedUtf7, folderLabelName, folderSystemLabel, labelTextColor, labelTree, LABEL_BG, rowChips, validateLabelName } from "../src/core/labels";
+import {
+  CATEGORIES,
+  chipStyle,
+  decodeModifiedUtf7,
+  encodeModifiedUtf7,
+  folderLabelName,
+  folderSystemLabel,
+  labelTextColor,
+  labelTree,
+  LABEL_BG,
+  rowChips,
+  validateLabelName,
+} from "../src/core/labels";
 import { keyName, ShortcutMatcher, SHORTCUTS } from "../src/core/shortcuts";
 import { decodeEntities, htmlToText, snippetOf, textToHtml } from "../src/core/text";
 import { conversationLayout, normalizeSubject, participants, participantsText, threadMessages } from "../src/core/threading";
@@ -27,7 +39,16 @@ describe("addresses", () => {
     expect(shortName({ name: "Alice Smith", email: "a@x" })).toBe("Alice");
     expect(isValidEmail("a@b.co")).toBe(true);
     expect(isValidEmail("a@b")).toBe(false);
-    expect(dedupeAddresses([{ name: "", email: "A@x.io" }, { name: "A", email: "a@x.io" }, { name: "", email: "me@x.io" }], ["ME@x.io"]).map((a) => a.email)).toEqual(["A@x.io"]);
+    expect(
+      dedupeAddresses(
+        [
+          { name: "", email: "A@x.io" },
+          { name: "A", email: "a@x.io" },
+          { name: "", email: "me@x.io" },
+        ],
+        ["ME@x.io"],
+      ).map((a) => a.email),
+    ).toEqual(["A@x.io"]);
     expect(initialOf({ name: "élan", email: "e@x" })).toBe("É");
     expect(avatarColor("a@x.io")).toBe(avatarColor("A@X.IO"));
   });
@@ -114,7 +135,13 @@ describe("threading", () => {
     expect(participantsText(p)).toBe("me, Ana 3");
     expect(p.parts.find((x) => x.text === "Ana")?.bold).toBe(true);
     expect(participantsText(participants([{ from: { name: "Me", email: "me@x.io" }, unread: false }], self))).toBe("me");
-    const d = participants([{ from: { name: "Bo", email: "bo@x.io" }, unread: false }, { from: { name: "Me", email: "me@x.io" }, unread: false, isDraft: true }], self);
+    const d = participants(
+      [
+        { from: { name: "Bo", email: "bo@x.io" }, unread: false },
+        { from: { name: "Me", email: "me@x.io" }, unread: false, isDraft: true },
+      ],
+      self,
+    );
     expect(d.parts.map((x) => x.text)).toEqual(["Bo", "Draft"]);
   });
 });
@@ -190,8 +217,14 @@ describe("shortcuts", () => {
 describe("compose helpers", () => {
   const src: SourceMessage = {
     from: [{ name: "Ana", email: "ana@x.io" }],
-    to: [{ name: "Me", email: "me@x.io" }, { name: "Bo", email: "bo@x.io" }],
-    cc: [{ name: "Cy", email: "cy@x.io" }, { name: "Me alias", email: "me+work@x.io" }],
+    to: [
+      { name: "Me", email: "me@x.io" },
+      { name: "Bo", email: "bo@x.io" },
+    ],
+    cc: [
+      { name: "Cy", email: "cy@x.io" },
+      { name: "Me alias", email: "me+work@x.io" },
+    ],
     replyTo: [],
     subject: "Lunch",
     date: new Date(2026, 9, 18, 20, 6).getTime(),
@@ -231,7 +264,9 @@ describe("compose helpers", () => {
 
 describe("text", () => {
   it("html → text keeps structure", () => {
-    const t = htmlToText(`<style>p{}</style><h1>Title</h1><p>Hello <a href="https://x.io/a">link</a>&nbsp;&amp; more</p><ul><li>one</li><li>two</li></ul><ol><li>first</li></ol><blockquote><p>quoted</p></blockquote><p>a<br>b</p>`);
+    const t = htmlToText(
+      `<style>p{}</style><h1>Title</h1><p>Hello <a href="https://x.io/a">link</a>&nbsp;&amp; more</p><ul><li>one</li><li>two</li></ul><ol><li>first</li></ol><blockquote><p>quoted</p></blockquote><p>a<br>b</p>`,
+    );
     expect(t).toBe("Title\nHello link <https://x.io/a> & more\n- one\n- two\n1. first\n> quoted\na\nb");
     expect(decodeEntities("&lt;&#x41;&#66;&hellip;&unknown;")).toBe("<AB…&unknown;");
   });
@@ -250,12 +285,21 @@ describe("text", () => {
 
 describe("unsubscribe and mailto", () => {
   it("prefers RFC 8058 one-click, then mailto, then a link", () => {
-    expect(parseListUnsubscribe("<mailto:u@x.io?subject=stop>, <https://x.io/u>", "List-Unsubscribe=One-Click")).toEqual({ kind: "one-click", url: "https://x.io/u" });
+    expect(parseListUnsubscribe("<mailto:u@x.io?subject=stop>, <https://x.io/u>", "List-Unsubscribe=One-Click")).toEqual({
+      kind: "one-click",
+      url: "https://x.io/u",
+    });
     expect(parseListUnsubscribe("<mailto:u@x.io?subject=stop>, <https://x.io/u>", null)).toEqual({ kind: "mailto", to: "u@x.io", subject: "stop", body: "" });
     expect(parseListUnsubscribe("<https://x.io/u>", null)).toEqual({ kind: "link", url: "https://x.io/u" });
     expect(parseListUnsubscribe(null, null)).toBeNull();
   });
   it("parses mailto URLs", () => {
-    expect(parseMailto("mailto:a@x.io,b@x.io?cc=c@x.io&Subject=Hi%20there&body=Line%201")).toEqual({ to: ["a@x.io", "b@x.io"], cc: ["c@x.io"], bcc: [], subject: "Hi there", body: "Line 1" });
+    expect(parseMailto("mailto:a@x.io,b@x.io?cc=c@x.io&Subject=Hi%20there&body=Line%201")).toEqual({
+      to: ["a@x.io", "b@x.io"],
+      cc: ["c@x.io"],
+      bcc: [],
+      subject: "Hi there",
+      body: "Line 1",
+    });
   });
 });

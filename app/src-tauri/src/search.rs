@@ -375,7 +375,7 @@ const STAR_NAMES: &[&str] = &[
 
 // ---- SQL over the local cache ----
 
-/// Label resolution for `label:` (by name, "-" for spaces/slashes) → ids, including nested children.
+/// Label resolution for `label:` (by name, "-" for spaces/slashes) → ids. Nested labels are not included.
 pub trait LabelResolver {
     fn resolve(&self, key: &str) -> Vec<String>;
 }
@@ -659,10 +659,7 @@ pub fn eval(n: &Node, m: &Searchable, now_ms: i64) -> bool {
                 Some("filename") => m.attachment_names.iter().any(|a| a.to_lowercase().contains(&lv)),
                 Some("label") => {
                     let k = label_key(value);
-                    m.label_names.iter().any(|n| {
-                        let nk = label_key(n);
-                        nk == k || nk.starts_with(&format!("{k}-"))
-                    }) || m.labels.iter().any(|id| label_key(id) == k)
+                    m.label_names.iter().any(|n| label_key(n) == k) || m.labels.iter().any(|id| label_key(id) == k)
                 }
                 Some("category") => {
                     let c = if lv == "personal" { "primary".to_string() } else { lv.clone() };
@@ -764,7 +761,8 @@ mod tests {
             ("from:alice", true),
             ("from:bob", false),
             ("subject:\"planning notes\"", true),
-            ("label:projects", true),
+            // Exact labels only: the parent does not match mail filed under Projects/Alpha.
+            ("label:projects", false),
             ("label:projects-alpha has:attachment", true),
             ("is:unread in:inbox", true),
             ("is:read", false),
