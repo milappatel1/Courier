@@ -1,0 +1,31 @@
+# Build output
+node_modules/
+app/dist/
+app/src-tauri/target/
+app/src-tauri/gen/
+release/
+*.dmg
+*.zip
+*.app
+
+# Recon captures and anything with personal data — local only
+research/goldens/
+research/captures/
+research/look/raw/
+research/app-shots/
+*.eml
+*.mbox
+
+# Secrets: OAuth clients, tokens, local config
+client_secret*.json
+*.token
+.env
+.env.*
+*.pem
+*.p12
+
+# OS / editor
+.DS_Store
+*.swp
+.vscode/
+.idea/

@@ -1,0 +1,63 @@
+[package]
+name = "courier"
+version = "1.0.0"
+description = "A mail client"
+authors = ["Milap Patel"]
+edition = "2024"
+
+[lib]
+# The `_lib` suffix keeps the library name distinct from the binary.
+name = "courier_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-drag = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.13", features = ["json", "form", "query"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+mail-parser = "0.11"
+async-imap = { version = "0.12", default-features = false, features = ["runtime-tokio"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls", "ring", "webpki-roots", "hostname"] }
+roxmltree = "0.21"
+hickory-resolver = "0.26"
+base64 = "0.22"
+sha2 = "0.10"
+getrandom = "0.3"
+url = "2"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+futures = "0.3"
+parking_lot = "0.12"
+percent-encoding = "2"
+log = "0.4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSURL", "NSDictionary", "NSGeometry", "NSObject", "NSArray", "NSError", "NSUserDefaults", "NSValue", "NSTextCheckingResult", "NSRange", "NSOrthography", "NSProcessInfo", "NSNotification", "NSOperation", "NSSpellServer", "block2"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSDockTile", "NSView", "NSWindow", "NSResponder", "NSSharingService", "NSSharingServicePickerToolbarItem", "NSWorkspace", "NSSpellChecker", "NSRunningApplication", "NSGraphics", "NSPasteboard", "block2"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
