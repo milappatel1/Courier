@@ -53,7 +53,7 @@ impl Gmail {
                 self.tokens.force_refresh(Some(&token)).await?;
                 continue;
             }
-            if (status == 429 || status >= 500) && attempt < 4 {
+            if status >= 500 && attempt < 4 {
                 tokio::time::sleep(Duration::from_millis(400 * attempt as u64)).await;
                 continue;
             }
@@ -63,12 +63,19 @@ impl Gmail {
             }
             let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
             let msg = v["error"]["message"].as_str().unwrap_or(&text).to_string();
+            // Gmail slows a busy app down with 429, or with 403 "User-rate limit exceeded": wait and retry.
+            let limited = status == 429 || (status == 403 && is_rate_limit(&v));
+            if limited && attempt < 6 {
+                tokio::time::sleep(rate_limit_wait(attempt)).await;
+                continue;
+            }
             return Err(match status {
                 401 => Error::Auth(msg),
                 404 => Error::NotFound(msg),
-                // Still busy or down after the retries above: treat like no connection, so sends wait in the
-                // outbox and sync backs off, instead of failing for good.
-                429 | 500..=599 => Error::Offline(format!("server unavailable ({status})")),
+                // Still limited, busy or down after the retries above: treat like no connection, so sends wait in
+                // the outbox and sync backs off, instead of failing for good.
+                _ if limited => Error::RateLimited(format!("Gmail is limiting requests ({status}); Courier will try again shortly")),
+                500..=599 => Error::Offline(format!("server unavailable ({status})")),
                 _ => Error::Server(format!("{status}: {msg}")),
             });
         }
@@ -381,22 +388,34 @@ pub async fn refresh_labels(g: &Gmail, db: &Db, account: &str) -> Result<()> {
 }
 
 /// Fetch full messages we don't have yet, a few at a time.
+/// Fetch and cache messages in full. A message that keeps failing is skipped (it's fetched again when opened),
+/// so one bad message can't hold up a whole sync; no connection or a needed sign-in still stops it.
 pub async fn fetch_raw_many(g: &Gmail, db: &Db, account: &str, ids: Vec<String>) -> Result<Vec<MessageRow>> {
     use futures::stream::{self, StreamExt};
+    // A few at a time: Gmail rate-limits bursts per user.
     let results: Vec<Result<MessageRow>> = stream::iter(ids.into_iter().map(|id| async move {
         let v = g.message_raw(&id).await?;
         ingest_raw(db, account, &v)
     }))
-    .buffer_unordered(8)
+    .buffer_unordered(4)
     .collect()
     .await;
     let mut out = Vec::new();
+    let mut skipped = 0usize;
+    let mut last_skip = String::new();
     for r in results {
         match r {
             Ok(m) => out.push(m),
             Err(Error::NotFound(_)) => {}
-            Err(e) => return Err(e),
+            Err(e) if e.is_offline() || e.is_auth() || e.is_rate_limited() => return Err(e),
+            Err(e) => {
+                skipped += 1;
+                last_skip = e.to_string();
+            }
         }
+    }
+    if skipped > 0 {
+        crate::applog::warn(&format!("{account}: skipped {skipped} message(s) while syncing: {last_skip}"));
     }
     Ok(out)
 }
@@ -666,4 +685,23 @@ pub async fn sync_people(g: &Gmail, db: &Db, account: &str) -> Result<usize> {
         }
     }
     Ok(n)
+}
+
+/// Whether a Gmail error body is a rate limit (403 `userRateLimitExceeded` / `rateLimitExceeded`, or
+/// `RESOURCE_EXHAUSTED`) rather than a real permission problem.
+pub fn is_rate_limit(v: &Value) -> bool {
+    let e = &v["error"];
+    let reasons = e["errors"].as_array().map(|a| a.iter().filter_map(|x| x["reason"].as_str()).any(|r| r.ends_with("ateLimitExceeded") || r == "quotaExceeded")).unwrap_or(false);
+    reasons || e["status"].as_str() == Some("RESOURCE_EXHAUSTED") || e["message"].as_str().is_some_and(|m| m.to_lowercase().contains("rate limit"))
+}
+
+/// One unit of rate-limit backoff in ms (tests shorten it).
+pub static RETRY_UNIT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1000);
+
+/// Backoff between rate-limited retries: 1, 2, 4, 8, 16 units (with a little jitter so parallel requests spread out).
+pub fn rate_limit_wait(attempt: u32) -> Duration {
+    let unit = RETRY_UNIT_MS.load(std::sync::atomic::Ordering::Relaxed);
+    let base = unit << (attempt.saturating_sub(1)).min(4);
+    let jitter = crate::error::now_ms() as u64 % (unit / 4 + 1);
+    Duration::from_millis(base + jitter)
 }

@@ -248,6 +248,9 @@ async fn drafts_on_both_kinds() {
 #[tokio::test]
 async fn snooze_mute_block_filters_and_notifications() {
     let w = world().await;
+    // Finish the IMAP account's first sync before the background loops start below: a first sync files existing
+    // mail as it is, without filters, so it mustn't be the one that sees the blocked sender's message.
+    w.engine.sync_account("i1").await.unwrap();
     let id = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Lunch", "noodles", ""), &["INBOX", "UNREAD"]);
     w.engine.sync_account("g1").await.unwrap();
     let t = w.engine.db.message("g1", &id).unwrap().unwrap().thread_id;
@@ -342,4 +345,38 @@ async fn new_mail_cached_early_still_notifies() {
     assert!(w.engine.db.has_message("g1", &id).unwrap());
     w.engine.sync_account("g1").await.unwrap();
     assert!(w.rec.notes.lock().iter().any(|(t, _)| t == "Gil"), "new mail notified even though it was already cached");
+}
+
+#[tokio::test]
+async fn first_sync_rides_out_rate_limits_and_skips_a_broken_message() {
+    courier_lib::gmail::RETRY_UNIT_MS.store(5, std::sync::atomic::Ordering::Relaxed);
+    let w = world().await;
+    let ok: Vec<String> = (0..3).map(|i| w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", &format!("Note {i}"), "hi", ""), &["INBOX"])).collect();
+    let bad = w.gmail.deliver(&sample_mail("Bo <bo@x.io>", "pat@example.com", "Broken", "x", ""), &["INBOX"]);
+    {
+        let mut s = w.gmail.state.lock();
+        s.rate_limit_next = 3; // Gmail's 403 "User-rate limit exceeded", three times
+        s.forbidden_ids.push(bad.clone());
+    }
+    w.engine.sync_account("g1").await.unwrap();
+    for id in &ok {
+        assert!(w.engine.db.has_message("g1", id).unwrap(), "cached despite the rate limit");
+    }
+    assert!(!w.engine.db.has_message("g1", &bad).unwrap(), "the broken one is skipped, not fatal");
+    let state = w.engine.db.account("g1").unwrap().state;
+    assert_eq!(state["initialSyncDone"], serde_json::json!(true));
+    assert!(state["historyId"].is_string());
+    assert_eq!(w.gmail.state.lock().rate_limit_next, 0);
+}
+
+#[tokio::test]
+async fn a_lasting_rate_limit_is_reported_as_such_not_offline() {
+    courier_lib::gmail::RETRY_UNIT_MS.store(1, std::sync::atomic::Ordering::Relaxed);
+    let w = world().await;
+    w.gmail.state.lock().rate_limit_next = 1000;
+    let err = w.engine.sync_account("g1").await.unwrap_err();
+    assert!(err.is_rate_limited(), "{err}");
+    assert!(!err.is_offline());
+    assert!(courier_lib::gmail::is_rate_limit(&serde_json::json!({"error": {"errors": [{"reason": "userRateLimitExceeded"}]}})));
+    assert!(!courier_lib::gmail::is_rate_limit(&serde_json::json!({"error": {"errors": [{"reason": "forbidden"}], "message": "Forbidden"}})));
 }

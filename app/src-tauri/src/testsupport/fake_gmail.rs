@@ -53,6 +53,10 @@ pub struct GState {
     pub unsubscribed: Vec<String>,
     pub offline: bool,
     pub refresh_count: u32,
+    /// The next N API calls get Gmail's 403 "User-rate limit exceeded".
+    pub rate_limit_next: u32,
+    /// Message ids whose fetch always fails with a plain 403.
+    pub forbidden_ids: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -133,6 +137,19 @@ impl FakeGmail {
         self.state.lock().log.push(format!("{} {}", req.method, path));
         if self.state.lock().offline {
             return Response::status(503);
+        }
+        if path.starts_with("/gmail/") {
+            let mut s = self.state.lock();
+            if s.rate_limit_next > 0 {
+                s.rate_limit_next -= 1;
+                return Response::json(
+                    403,
+                    &json!({"error": {"code": 403, "message": "User-rate limit exceeded.  Retry after 2026-10-19T19:51:40.000Z", "errors": [{"message": "User-rate limit exceeded.", "domain": "usageLimits", "reason": "userRateLimitExceeded"}], "status": "PERMISSION_DENIED"}}),
+                );
+            }
+            if s.forbidden_ids.iter().any(|id| path.contains(&format!("/messages/{id}"))) {
+                return Response::json(403, &json!({"error": {"code": 403, "message": "Forbidden", "errors": [{"reason": "forbidden"}], "status": "PERMISSION_DENIED"}}));
+            }
         }
         if path == "/o/oauth2/v2/auth" {
             return self.authorize(&req);

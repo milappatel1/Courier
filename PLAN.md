@@ -5,7 +5,7 @@ Google branding, Google's assets and Google-only services, with multiple account
 
 ## Status
 
-**1.0.1 released (2026-10-19)** — https://github.com/milappatel1/courier/releases/tag/v1.0.1 (`Courier-1.0.1-arm64.dmg` and `.zip`, ad-hoc signed; SHA-256 in the release notes). Fixes from the real-account check: first-run Gmail setup, Inbox count, Keychain prompts, notifications, the long-thread fold. 1.0.0: https://github.com/milappatel1/courier/releases/tag/v1.0.0
+**1.0.2 released (2026-10-19)** — https://github.com/milappatel1/Courier/releases/tag/v1.0.2 (`Courier-1.0.2-arm64.dmg` and `.zip`, ad-hoc signed; SHA-256 in the release notes). Gmail rate limits no longer stall a first sync; an app log file. 1.0.1 (real-account fixes: first-run Gmail setup, Inbox count, Keychain prompts, notifications, the long-thread fold) and 1.0.0 are on the releases page.
 
 | Phase | State | Notes |
 | --- | --- | --- |
@@ -17,7 +17,7 @@ Google branding, Google's assets and Google-only services, with multiple account
 | P4 settings, themes, shortcuts | done | `research/VERIFY-P4.md` |
 | P5 Mac integration | done | `research/VERIFY-P5.md` — the e2e run never takes focus (checked by the app and the script) |
 | P6 snooze, schedule, unsubscribe… | done | `research/VERIFY-P6.md` |
-| Tests | passing | Vitest 82, Rust 33 (+2 opt-in live TLS checks), end to end 32 steps in ~60 s with an app-error trap |
+| Tests | passing | Vitest 82, Rust 36 (+2 opt-in live TLS checks), end to end 32 steps in ~60 s with an app-error trap |
 | Real-account check | done (read-only) | 2026-10-19 with the user's own OAuth client; found bugs (first-run client setup unreachable, Inbox count from a partial cache, endless Keychain prompts after an update), fixed in 1.0.1. See `research/VERIFY-P0.md`. |
 
 Open items: things not driven automatically (mailto/.eml/Quick Look/Share/drag-out,

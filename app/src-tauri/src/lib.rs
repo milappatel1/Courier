@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod db;
 pub mod discovery;
+pub mod applog;
 pub mod e2e;
 pub mod engine;
 pub mod error;
@@ -272,6 +273,12 @@ pub fn run() {
                 None => handle.path().app_data_dir()?,
             };
             std::fs::create_dir_all(&data_dir)?;
+            let log_path = match &e2e_report {
+                Some(_) => data_dir.join("courier.log"),
+                None => handle.path().app_log_dir().unwrap_or_else(|_| data_dir.clone()).join("courier.log"),
+            };
+            applog::init(log_path);
+            applog::info(&format!("Courier {} started", env!("CARGO_PKG_VERSION")));
             let db = Arc::new(db::Db::open(&data_dir.join("courier.db"))?);
             let store: Arc<dyn secrets::SecretStore> = if e2e_state.is_some() {
                 Arc::new(secrets::MemoryStore::default())

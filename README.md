@@ -29,6 +29,9 @@ Both downloads are checked against the SHA-256 sums listed in the release notes.
 - **Any other provider**: choose **Add account ▸ Other mail**, type your address, and Courier finds the server
   settings. Use an app password (iCloud, Outlook, Yahoo and Fastmail all have them in their account settings).
 
+If something looks wrong, Courier's log is at `~/Library/Logs/com.milappatel.courier/courier.log` (sync and sign-in
+events only, never message content).
+
 Sign-ins live in your macOS Keychain, in a single Courier entry. After an update, macOS may ask once for your
 Keychain password to let the new version read it (choose **Always Allow**); if you'd rather not, choose **Deny** and
 sign in again. **Sign out** (avatar menu) removes that account's Keychain entries and its

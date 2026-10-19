@@ -345,6 +345,7 @@ impl Engine {
     async fn sync_loop(self: Arc<Self>, account: String, trigger: Arc<Notify>, mut stop: watch::Receiver<bool>) {
         let mut first = true;
         let mut backoff = Duration::from_secs(15);
+        let mut last_logged = String::new();
         loop {
             if !first {
                 let wait = if self.online.load(Ordering::SeqCst) { *self.sync_interval.read() } else { backoff };
@@ -359,7 +360,22 @@ impl Engine {
                 return;
             }
             self.emit("sync-status", json!({"accountId": account, "state": "syncing"}));
-            match self.sync_account(&account).await {
+            let result = self.sync_account(&account).await;
+            // Log changes of state, not every cycle.
+            let now_state = match &result {
+                Ok(()) => "ok".to_string(),
+                Err(e) => e.to_string(),
+            };
+            if now_state != last_logged {
+                match &result {
+                    Ok(()) if !last_logged.is_empty() => crate::applog::info(&format!("{account}: syncing again")),
+                    Ok(()) => {}
+                    Err(e) if e.is_offline() || e.is_rate_limited() => crate::applog::warn(&format!("{account}: {e}")),
+                    Err(e) => crate::applog::error(&format!("{account}: sync failed: {e}")),
+                }
+                last_logged = if result.is_ok() { String::new() } else { now_state };
+            }
+            match result {
                 Ok(()) => {
                     self.set_online(true);
                     backoff = Duration::from_secs(15);
@@ -369,6 +385,10 @@ impl Engine {
                     self.set_online(false);
                     backoff = (backoff * 2).min(Duration::from_secs(120));
                     self.emit("sync-status", json!({"accountId": account, "state": "offline"}));
+                }
+                Err(e) if e.is_rate_limited() => {
+                    // Still online; the next cycle carries on where this one stopped.
+                    self.emit("sync-status", json!({"accountId": account, "state": "busy", "error": e.to_string()}));
                 }
                 Err(e) if e.is_auth() => {
                     let _ = self.db.set_needs_reauth(&account, true);
@@ -426,7 +446,9 @@ impl Engine {
         let new_messages = if a.kind == "gmail" {
             let g = self.gmail(account)?;
             let new = if a.state["initialSyncDone"].as_bool() != Some(true) {
+                crate::applog::info(&format!("{account}: first sync starting (last {days} days)"));
                 gmail::initial_sync(&g, &self.db, account, days, 2000).await?;
+                crate::applog::info(&format!("{account}: first sync done"));
                 self.changed(account, "sync");
                 self.refresh_aliases(account).await.ok();
                 if gmail::sync_people(&g, &self.db, account).await.is_ok() {
@@ -454,7 +476,7 @@ impl Engine {
             match gmail::backfill_unread_inbox(&g, &self.db, account, &self.tab_categories()).await {
                 Ok(n) if n > 0 => self.changed(account, "sync"),
                 Ok(_) => {}
-                Err(e) if e.is_offline() => return Err(e),
+                Err(e) if e.is_offline() || e.is_rate_limited() => return Err(e),
                 Err(_) => {}
             }
             new
@@ -1330,6 +1352,12 @@ impl Engine {
                         self.changed(&row.account_id, "sent");
                         self.trigger(&row.account_id);
                     }
+                    Err(e) if e.is_rate_limited() => {
+                        // Try again in a minute; not a reason to call the app offline.
+                        let _ = self.db.outbox_retry(row.id, now_ms() + 60_000, &e.to_string());
+                        crate::applog::warn(&format!("{}: send postponed: {e}", row.account_id));
+                        self.emit("outbox-changed", json!({"accountId": row.account_id, "error": e.to_string()}));
+                    }
                     Err(e) if e.is_offline() || matches!(e, Error::Network(_)) => {
                         self.set_online(false);
                         let delay = 15_000 * (1i64 << row.attempts.min(5));
@@ -1342,6 +1370,7 @@ impl Engine {
                         self.emit("accounts-changed", json!({}));
                     }
                     Err(e) => {
+                        crate::applog::error(&format!("{}: send failed: {e}", row.account_id));
                         let _ = self.db.outbox_fail(row.id, &e.to_string());
                         self.emit("outbox-changed", json!({"accountId": row.account_id, "error": e.to_string()}));
                     }

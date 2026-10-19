@@ -595,9 +595,13 @@ function ListFooter() {
   const states = Object.values(sync);
   const text = !online
     ? "Offline · showing mail saved on this Mac"
-    : states.includes("syncing")
-      ? "Syncing…"
-      : `${accounts.length} account${accounts.length === 1 ? "" : "s"} · up to date`;
+    : states.includes("error")
+      ? "An account couldn't sync · see Settings ▸ Accounts"
+      : states.includes("busy")
+        ? "Catching up · Gmail is pacing requests"
+        : states.includes("syncing")
+          ? "Syncing…"
+          : `${accounts.length} account${accounts.length === 1 ? "" : "s"} · up to date`;
   return (
     <div className="list-footer">
       <span>{text}</span>

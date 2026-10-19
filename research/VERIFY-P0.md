@@ -56,6 +56,14 @@ Found and fixed:
   in again, which writes a new item without touching the unreadable one; 1.0 items are migrated. Commands that touch
   secrets left the main thread, so a prompt can't freeze the window. Tests: five vault cases with a fake Keychain
   that prompts like macOS, plus a live round trip under a throwaway service name.
+- **A second, larger account never finished its first sync** (the user saw "403"): Gmail answers a burst of
+  requests with 403 "User-rate limit exceeded", which Courier treated as fatal, so the first sync restarted and hit
+  the limit again every cycle. Now 403/429 rate limits back off (1–16 s) and retry, a lasting limit is its own
+  error ("catching up", not offline), one failing message is skipped instead of failing the sync, downloads run 4
+  at a time, and Settings ▸ Accounts shows each account's sync state and error. Tests:
+  `first_sync_rides_out_rate_limits_and_skips_a_broken_message`, `a_lasting_rate_limit_is_reported_as_such_not_offline`
+  (the fake server returns Gmail's real 403 body). Courier also writes a log
+  (`~/Library/Logs/com.milappatel.courier/courier.log`: sync, sign-in and Keychain events, never mail content).
 - Opt-in network test (`cargo test --lib live_tls -- --ignored`): TLS and greeting from iCloud, Yahoo, Fastmail and
   Microsoft IMAP; SMTP STARTTLS (587) and SSL (465) without logging in. All pass.
 

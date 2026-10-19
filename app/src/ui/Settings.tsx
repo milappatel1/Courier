@@ -20,6 +20,7 @@ import {
   SYSTEM_DISPLAY,
   labelName,
   NO_LABELS,
+  SYNC_TEXT,
 } from "../state/store";
 import { themeById } from "../state/themes";
 import { Avatar, Icon } from "./common";
@@ -1034,6 +1035,7 @@ const COLORS = ["#1a73e8", "#0b8043", "#d93025", "#9334e6", "#e37400", "#007b83"
 function AccountRow({ a, index }: { a: Account; index: number }) {
   const [name, setName] = useState(a.name);
   const sync = useMail((s) => s.sync[a.id]);
+  const syncError = useMail((s) => s.syncError[a.id]);
   return (
     <div
       style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--settings-border)" }}
@@ -1051,7 +1053,8 @@ function AccountRow({ a, index }: { a: Account; index: number }) {
         />
         <div className="desc">
           {a.email} · {a.kind === "gmail" ? "Gmail (mail API)" : "IMAP/SMTP"} · ⌘{index + 1}
-          {a.needsReauth ? " · needs signing in again" : sync ? ` · ${sync}` : ""}
+          {a.needsReauth ? " · needs signing in again" : sync ? ` · ${SYNC_TEXT[sync] ?? sync}` : ""}
+          {!a.needsReauth && syncError && (sync === "error" || sync === "busy") && <div className="hint">{syncError}</div>}
         </div>
       </div>
       <div style={{ display: "flex", gap: 4 }}>

@@ -10,6 +10,9 @@ pub enum Error {
     Offline(String),
     #[error("network: {0}")]
     Network(String),
+    /// The provider is limiting requests: try again later (not "offline").
+    #[error("{0}")]
+    RateLimited(String),
     /// The account needs signing in again (expired/revoked tokens, bad password).
     #[error("auth: {0}")]
     Auth(String),
@@ -35,6 +38,9 @@ impl Error {
     }
     pub fn is_offline(&self) -> bool {
         matches!(self, Error::Offline(_))
+    }
+    pub fn is_rate_limited(&self) -> bool {
+        matches!(self, Error::RateLimited(_))
     }
     pub fn is_auth(&self) -> bool {
         matches!(self, Error::Auth(_))

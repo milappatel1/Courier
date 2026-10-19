@@ -223,6 +223,7 @@ impl VaultStore {
                 }
             }
             if skipped {
+                crate::applog::info("Keychain: some 1.0 sign-ins couldn't move without a prompt; those accounts will sign in again");
                 v.notice = Some("Courier now keeps its saved sign-ins in one place in your Keychain. Some couldn't be moved without asking for your Keychain password, so those accounts will ask you to sign in again.".into());
             }
             if !v.map.is_empty() && self.persist(v).is_ok() {
@@ -234,6 +235,7 @@ impl VaultStore {
     }
 
     fn refused(&self, v: &mut Vault, why: &str) {
+        crate::applog::warn(&format!("Keychain: couldn't open the saved sign-ins ({why}); accounts will ask to sign in again"));
         v.unreadable = true;
         v.map.clear();
         v.notice = Some(format!(

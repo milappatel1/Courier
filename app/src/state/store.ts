@@ -69,7 +69,17 @@ export interface ComposeData {
   createdAt: number;
 }
 
-type Sync = "syncing" | "idle" | "offline" | "error" | "auth";
+type Sync = "syncing" | "idle" | "offline" | "error" | "auth" | "busy";
+
+/** How an account's sync state reads in Settings ▸ Accounts. */
+export const SYNC_TEXT: Record<Sync, string> = {
+  syncing: "syncing…",
+  idle: "up to date",
+  offline: "offline",
+  error: "couldn't sync",
+  auth: "needs signing in again",
+  busy: "catching up (Gmail is pacing requests)",
+};
 
 interface UI {
   quickSettings: boolean;
@@ -106,6 +116,8 @@ export interface MailState {
   ui: UI;
   online: boolean;
   sync: Record<string, Sync>;
+  /** The last sync error per account (server text, shown in Settings ▸ Accounts). */
+  syncError: Record<string, string>;
   hiddenThreads: string[]; // optimistic removals from the current list
 }
 
@@ -164,6 +176,7 @@ export const useMail = create<MailState>(() => ({
   },
   online: true,
   sync: {},
+  syncError: {},
   hiddenThreads: [],
 }));
 
@@ -582,7 +595,13 @@ export async function init() {
     }, 250);
   };
   void on<{ accountId: string }>("mail-changed", (p) => refreshSoon(p.accountId));
-  void on<{ accountId: string; state: Sync }>("sync-status", (p) => set((s) => ({ sync: { ...s.sync, [p.accountId]: p.state } })));
+  void on<{ accountId: string; state: Sync; error?: string }>("sync-status", (p) =>
+    set((s) => ({
+      sync: { ...s.sync, [p.accountId]: p.state },
+      // Keep the error through the next "syncing" so it stays readable; clear it once a sync succeeds.
+      syncError: p.error ? { ...s.syncError, [p.accountId]: p.error } : p.state === "idle" ? { ...s.syncError, [p.accountId]: "" } : s.syncError,
+    })),
+  );
   void on<{ online: boolean }>("online", (p) => set({ online: p.online }));
   void on("accounts-changed", () => void loadAccounts().then(() => loadLabels()));
   void on<{ accountId: string; outboxId: number; scheduled: boolean }>("message-sent", (p) => onMessageSent(p));
