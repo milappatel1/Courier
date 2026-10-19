@@ -155,6 +155,9 @@ impl search::LabelResolver for Labels {
     }
 }
 
+/// More new messages than this at once get one summary notification.
+const MAX_NOTIFICATIONS: usize = 4;
+
 const CATEGORY_LABELS: &[(&str, &str)] = &[("social", "CATEGORY_SOCIAL"), ("promotions", "CATEGORY_PROMOTIONS"), ("updates", "CATEGORY_UPDATES"), ("forums", "CATEGORY_FORUMS")];
 
 impl Engine {
@@ -236,7 +239,8 @@ impl Engine {
     }
 
     pub fn google_client(&self) -> Result<ClientCreds> {
-        let raw = self.secrets.get(secrets::GOOGLE_CLIENT_KEY)?.ok_or_else(|| Error::msg("Set up Google sign-in first (Settings ▸ Accounts)."))?;
+        // Missing (never set up, or the Keychain refused): the account asks to sign in again, which sets it up.
+        let raw = self.secrets.get(secrets::GOOGLE_CLIENT_KEY)?.ok_or_else(|| Error::Auth("Set up Google sign-in (Settings ▸ Accounts) and sign in again.".into()))?;
         Ok(serde_json::from_str(&raw)?)
     }
 
@@ -421,7 +425,7 @@ impl Engine {
         let days = self.db.kv_get("offline").ok().flatten().and_then(|v| v["days"].as_u64()).unwrap_or(30) as u32;
         let new_messages = if a.kind == "gmail" {
             let g = self.gmail(account)?;
-            if a.state["initialSyncDone"].as_bool() != Some(true) {
+            let new = if a.state["initialSyncDone"].as_bool() != Some(true) {
                 gmail::initial_sync(&g, &self.db, account, days, 2000).await?;
                 self.changed(account, "sync");
                 self.refresh_aliases(account).await.ok();
@@ -445,7 +449,15 @@ impl Engine {
                     }
                     Err(e) => return Err(e),
                 }
+            };
+            // Older unread conversations count toward the Inbox badge too; cache any that are missing.
+            match gmail::backfill_unread_inbox(&g, &self.db, account, &self.tab_categories()).await {
+                Ok(n) if n > 0 => self.changed(account, "sync"),
+                Ok(_) => {}
+                Err(e) if e.is_offline() => return Err(e),
+                Err(_) => {}
             }
+            new
         } else {
             let acc = self.imap_account(account)?;
             let first = a.state["initialSyncDone"].as_bool() != Some(true);
@@ -509,15 +521,26 @@ impl Engine {
             return;
         }
         let label_rules = settings["labels"][account].as_object().cloned().unwrap_or_default();
-        for m in notify {
-            let primary = !m.labels.iter().any(|l| CATEGORY_LABELS.iter().any(|(_, id)| id == l));
-            let important = m.has("IMPORTANT");
-            let by_label = m.labels.iter().any(|l| label_rules.get(l).and_then(|v| v.as_bool()).unwrap_or(false));
-            let ok = match mode {
-                "important" => important || by_label,
-                _ => primary || by_label,
-            };
-            if ok {
+        // Primary = not in a category that has its own tab (Forums mail stays in Primary while its tab is off).
+        let tabs = if a.kind == "gmail" { self.tab_categories() } else { vec![] };
+        let chosen: Vec<_> = notify
+            .into_iter()
+            .filter(|m| {
+                let primary = !m.labels.iter().any(|l| tabs.contains(&l.as_str()));
+                let important = m.has("IMPORTANT");
+                let by_label = m.labels.iter().any(|l| label_rules.get(l).and_then(|v| v.as_bool()).unwrap_or(false));
+                match mode {
+                    "important" => important || by_label,
+                    _ => primary || by_label,
+                }
+            })
+            .collect();
+        if chosen.len() > MAX_NOTIFICATIONS {
+            // Back after a while offline: one summary instead of a pile of banners.
+            let who: Vec<String> = chosen.iter().map(|m| if m.from_name.is_empty() { m.from_email.clone() } else { m.from_name.clone() }).collect::<std::collections::BTreeSet<_>>().into_iter().take(3).collect();
+            self.notifier.notify(&format!("{} new messages", chosen.len()), &format!("From {}{}", who.join(", "), if chosen.len() > who.len() { " and others" } else { "" }), account, "");
+        } else {
+            for m in chosen {
                 let who = if m.from_name.is_empty() { m.from_email.clone() } else { m.from_name.clone() };
                 let body = if m.subject.is_empty() { m.snippet.clone() } else { format!("{}\n{}", m.subject, m.snippet) };
                 self.notifier.notify(&who, &body, account, &m.thread_id);

@@ -88,6 +88,37 @@ impl E2e {
         gmail.deliver(&mail("Billing <billing@shop.example>", me, "Invoice #1042 for October", &d(3, 11), "Your invoice #1042 is ready. Amount due: $240.00.", ""), &["INBOX", "CATEGORY_UPDATES"]);
         gmail.deliver(&mail(me, "Ana Lima <ana@friends.example>", "Photos from the trip", &d(4, 18), "Here are the photos.", ""), &["SENT"]);
         gmail.deliver(&mail("Old Friend <old@friends.example>", me, "Catching up", &d(40, 9), "Long time no see!", ""), &[]);
+        // Real-world shapes: encoded headers, no subject, a long thread, a styled newsletter, an accented file name.
+        gmail.deliver(
+            format!("From: =?UTF-8?Q?Jos=C3=A9_=C3=91=C3=BA=C3=B1ez?= <jose@example.net>\r\nTo: {me}\r\nSubject: =?UTF-8?B?Q2Fmw6kg4piVIG1lZXRpbmcg4oCUIHLDqXN1bcOp?=\r\nDate: {}\r\nMessage-ID: <u1@seed.example>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nOn se voit =C3=A0 10h au caf=C3=A9 ?\r\n", d(2, 9)).as_bytes(),
+            &["INBOX", "CATEGORY_PERSONAL"],
+        );
+        gmail.deliver(&mail("Quiet Person <quiet@example.net>", me, "", &d(2, 10), "A message with no subject line.", ""), &["INBOX", "CATEGORY_PERSONAL"]);
+        let mut prev = String::new();
+        for i in 0..12 {
+            let id = format!("<offsite{i}@seed.example>");
+            let refs = if prev.is_empty() { String::new() } else { format!("In-Reply-To: {prev}\r\nReferences: {prev}\r\n") };
+            let subject = if i == 0 { "Planning the offsite".to_string() } else { "Re: Planning the offsite".to_string() };
+            let from = if i % 2 == 0 { "Ana Lima <ana@friends.example>" } else { "Bo Chen <bo@work.example>" };
+            let raw = format!("From: {from}\r\nTo: {me}\r\nSubject: {subject}\r\nDate: {}\r\nMessage-ID: {id}\r\n{refs}MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nOffsite note number {}.\r\n", (now - chrono::Duration::days(3) + chrono::Duration::minutes(i * 7)).to_rfc2822(), i + 1);
+            gmail.deliver(raw.as_bytes(), if i < 10 { &["INBOX", "CATEGORY_PERSONAL"][..] } else { &["INBOX", "UNREAD", "CATEGORY_PERSONAL"][..] });
+            prev = id;
+        }
+        gmail.deliver(
+            &html_mail(
+                "Weekly Digest <digest@news.example>",
+                me,
+                "This week in gardening",
+                &d(1, 7),
+                "<style>.hero{color:#0a0} body{font-family:Georgia}</style><table width=\"600\"><tr><td class=\"hero\"><h2>Spring planting</h2><p>Five easy herbs for a sunny window.</p><img src=\"https://img.news.example/herbs.jpg\" width=\"560\"></td></tr></table><script>alert(1)</script><a href=\"https://news.example/read\" onclick=\"steal()\">Read more</a><img src=\"https://px.news.example/open.gif\" width=\"1\" height=\"1\">",
+                "",
+            ),
+            &["INBOX", "CATEGORY_PERSONAL"],
+        );
+        gmail.deliver(
+            format!("From: Recruiter <jobs@example.net>\r\nTo: {me}\r\nSubject: Your application\r\nDate: {}\r\nMessage-ID: <cv1@seed.example>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"b2\"\r\n\r\n--b2\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nThanks, we received it.\r\n--b2\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename*=UTF-8''R%C3%A9sum%C3%A9%202026.pdf\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQKJSByZXN1bWUK\r\n--b2--\r\n", d(1, 16)).as_bytes(),
+            &["INBOX", "CATEGORY_PERSONAL"],
+        );
         // Fix the unsubscribe URL to point at the fake.
         {
             let mut s = gmail.state.lock();

@@ -126,9 +126,12 @@ function setFiles(input: Element, files: File[]) {
 const rows = () => qa("thread-row");
 const row = (subject: string) => rows().find((r) => r.textContent?.includes(subject));
 const toastWith = (re: RegExp) => qa("toast").find((t) => re.test(t.textContent ?? ""));
+/** A menu item by its label (the label's own span, so icons and submenu arrows don't get in the way). */
 const menuItem = (label: string | RegExp) =>
   [...document.querySelectorAll<HTMLElement>(".menu .menu-item")].find((b) =>
-    typeof label === "string" ? b.textContent?.trim().endsWith(label) : label.test(b.textContent ?? ""),
+    [...b.querySelectorAll(":scope > span:not(.ic)")].some((sp) =>
+      typeof label === "string" ? sp.textContent?.trim() === label : label.test(sp.textContent ?? ""),
+    ),
   );
 let activeSeen = false;
 let activations = 0;
@@ -199,14 +202,19 @@ step("starts in end-to-end mode with no accounts", async () => {
   check(!(await server()).appActive, "Courier is the frontmost app (it must stay in the background)");
 });
 
-step("Google sign-in setup stores the client (Settings ▸ Accounts form)", async () => {
-  await api.googleClientSet({ clientId: info.clientId, clientSecret: info.clientSecret });
-  check((await api.googleClientStatus()).configured, "client not stored");
+step("first run: Google sign-in setup inside the Add Gmail dialog", async () => {
+  // With no account yet, Settings can't open, so the dialog itself takes the client (test values for the fake).
+  click(await el("welcome-gmail"));
+  await el("client-setup");
+  check((q<HTMLButtonElement>("gmail-signin")?.disabled ?? false) === true, "sign-in enabled without a client");
+  type(await el("add-client-id"), info.clientId);
+  type(await el("add-client-secret"), info.clientSecret);
+  click(await el("add-client-save"));
+  await until("client stored", async () => (await api.googleClientStatus()).configured && !q("client-setup"));
 });
 
 step("adds the Gmail account (OAuth with PKCE through the fake server)", async () => {
-  click(await el("welcome-gmail"));
-  click(await el("gmail-signin"));
+  click(await until("sign-in enabled", () => (q<HTMLButtonElement>("gmail-signin")?.disabled ? null : q("gmail-signin"))));
   await until("the Gmail account", () => getState().accounts.length === 1, 30_000);
   check(getState().accounts[0].kind === "gmail" && getState().accounts[0].email === info.gmailEmail, "wrong account");
   await until("seeded Gmail inbox", () => row("Lunch on Friday?"), 30_000);
@@ -455,6 +463,161 @@ step("keyboard: g then l asks for a label and opens it", async () => {
   await backToInbox();
 });
 
+step("keyboard: c composes, / searches, j/k move, s stars, e archives, z undoes", async () => {
+  await backToInbox();
+  const blur = () => (document.activeElement as HTMLElement | null)?.blur?.();
+  blur();
+  const before = qa("compose-window").length;
+  key(document.body, "c");
+  const w = await until("compose from c", () => (qa("compose-window").length > before ? qa("compose-window")[0] : null));
+  click(await el("compose-discard", w));
+  await until("compose closed", () => qa("compose-window").length === before);
+  blur();
+  key(document.body, "/");
+  await until("search focused by /", () => document.activeElement === q("search-input"));
+  blur();
+  const focused = () => document.querySelector<HTMLElement>(".row.focused");
+  const start = getState().cursor;
+  key(document.body, "j");
+  await until("cursor moved down by j", () => getState().cursor === start + 1 && focused() === rows()[start + 1]);
+  key(document.body, "j");
+  await until("cursor moved down again", () => getState().cursor === start + 2 && focused() === rows()[start + 2]);
+  key(document.body, "k");
+  await until("cursor moved back up by k", () => getState().cursor === start + 1 && focused() === rows()[start + 1]);
+  const subject = focused()!.querySelector(".subj")!.textContent!;
+  key(document.body, "s");
+  await until("starred by s", async () => (await server()).gmailMessages.some((m) => m.subject.endsWith(subject) && m.labels.includes("STARRED")));
+  key(document.body, "s");
+  await until("unstarred by s", async () => !(await server()).gmailMessages.some((m) => m.subject.endsWith(subject) && m.labels.includes("STARRED")));
+  key(document.body, "e");
+  await until("archived by e", () => !rows().some((r) => r.querySelector(".subj")?.textContent === subject));
+  key(document.body, "z");
+  await until("undone by z", () => rows().some((r) => r.querySelector(".subj")?.textContent === subject));
+});
+
+step("reading pane: right of inbox shows the conversation beside the list", async () => {
+  click(await el("settings-gear"));
+  click(await el("qs-pane-right"));
+  click(await el("settings-gear"));
+  click(await until("a row", () => row("Lunch on Friday?")));
+  await until("list and conversation side by side", () => document.querySelector(".split") && q("thread-list") && q("conversation"));
+  const list = q("thread-list")!.getBoundingClientRect();
+  const conv = q("conversation")!.getBoundingClientRect();
+  check(conv.left >= list.right - 2, "conversation isn't to the right of the list");
+  click(await el("settings-gear"));
+  click(await el("qs-pane-none"));
+  click(await el("settings-gear"));
+  await until("back to no split", () => !document.querySelector(".split"));
+  await backToInbox();
+});
+
+step("inbox type: unread first shows its sections", async () => {
+  click(await el("settings-gear"));
+  click(await el("qs-inbox-unread"));
+  click(await el("settings-gear"));
+  await until("Unread and Everything else sections", () => {
+    const t = [...document.querySelectorAll(".list-section-title")].map((x) => x.textContent ?? "");
+    return t.some((x) => x.includes("Unread")) && t.some((x) => x.includes("Everything else"));
+  });
+  click(await el("settings-gear"));
+  click(await el("qs-inbox-default"));
+  click(await el("settings-gear"));
+  await until("default inbox again", () => !document.querySelector(".list-section-title") && q("thread-list"));
+});
+
+step("templates: save a draft as a template and insert it into a new message", async () => {
+  // Off by default, as on the web: Settings ▸ Advanced ▸ Templates ▸ Enable, then Save Changes.
+  click(await el("settings-gear"));
+  click(await el("see-all-settings"));
+  click(await el("settings-tab-advanced"));
+  click(await el("templates-on"));
+  click(await el("settings-save"));
+  await until("templates enabled", async () => (await api.settings()).templates === true);
+  click(await el("settings-close"));
+  const w = await newCompose();
+  await fill(w, "", "Weekly update", "<div>Template body text for the week.</div>");
+  click(await el("compose-more", w));
+  click(await until("Templates", () => menuItem("Templates")));
+  click(await until("Save draft as template", () => menuItem("Save draft as template")));
+  click(await until("Save as new template", () => menuItem("Save as new template")));
+  const name = await el("ask-input");
+  check((name as HTMLInputElement).value === "Weekly update", "template name not prefilled from the subject");
+  click(await el("ask-ok"));
+  await until("template saved", async () => (await api.templates()).some((t) => t.name === "Weekly update"));
+  click(await el("compose-discard", w));
+  await until("compose closed", () => !qa("compose-window").includes(w));
+  const w2 = await newCompose();
+  click(await el("compose-more", w2));
+  click(await until("Templates", () => menuItem("Templates")));
+  click(await until("the saved template", () => menuItem("Weekly update")));
+  await until("template inserted", () => q("compose-body", w2)?.textContent?.includes("Template body text for the week."));
+  click(await el("compose-discard", w2));
+  await until("compose closed", () => !qa("compose-window").includes(w2));
+});
+
+step("plain text mode sends text only", async () => {
+  const w = await newCompose();
+  await fill(w, "bo@work.example", "Plain and simple", "<div>Just <b>words</b> here.</div>");
+  click(await el("compose-more", w));
+  click(await until("Plain text mode", () => menuItem("Plain text mode")));
+  click(await el("compose-send", w));
+  const sent = await until("sent on the server", () => sentWith("Plain and simple"), 30_000);
+  const { p } = parsedSent(sent.raw);
+  check(!p.html, "an HTML part was sent in plain text mode");
+  check((p.text ?? "").includes("Just words here."), "text part missing the body");
+});
+
+step("compose: minimise and full screen", async () => {
+  const w = await newCompose();
+  click(await el("compose-minimize", w));
+  await until("minimised", () => q("compose-window")?.closest(".compose")?.classList.contains("min") || w.classList.contains("min"));
+  click(await el("compose-minimize", w));
+  await until("restored", () => !(w.classList.contains("min") || w.closest(".compose")?.classList.contains("min")));
+  click(await el("compose-fullscreen", w));
+  await until("full screen", () => w.classList.contains("full") || w.closest(".compose")?.classList.contains("full"));
+  click(await el("compose-fullscreen", w));
+  await until("out of full screen", () => !(w.classList.contains("full") || w.closest(".compose")?.classList.contains("full")));
+  click(await el("compose-discard", w));
+  await until("compose closed", () => !qa("compose-window").includes(w));
+});
+
+step("real-world mail: encoded names, no subject, long threads, newsletters, accented file names", async () => {
+  await backToInbox();
+  const frameText = () => q<HTMLIFrameElement>("message-frame")?.srcdoc ?? "";
+  // RFC 2047 subject and sender, quoted-printable UTF-8 body.
+  const r1 = await until("encoded subject decoded", () => row("Café ☕ meeting — résumé"));
+  check(r1.textContent?.includes("José Ñúñez"), "sender name not decoded");
+  click(r1);
+  await until("decoded body", () => q("conv-subject")?.textContent?.includes("Café ☕ meeting") && frameText().includes("On se voit à 10h au café ?"));
+  await backToInbox();
+  // No subject.
+  click(await until("no-subject row", () => rows().find((r) => r.textContent?.includes("Quiet Person") && r.textContent.includes("(no subject)"))));
+  await until("no-subject conversation", () => q("conv-subject")?.textContent?.startsWith("(no subject)"));
+  await backToInbox();
+  // A 12-message thread folds the older read messages; the fold opens them all.
+  click(await until("long thread", () => row("Planning the offsite")));
+  await el("conversation");
+  const shown = () => qa("message").length + qa("message-collapsed").length;
+  const fold = await until("folded older messages", () => document.querySelector<HTMLElement>(".collapsed-group button"));
+  check(shown() < 12, "nothing folded in a 12-message thread");
+  click(fold);
+  await until("all 12 messages after opening the fold", () => shown() === 12);
+  await backToInbox();
+  // Styled newsletter: scripts, handlers and the tracking pixel never reach the frame; remote images wait.
+  click(await until("newsletter", () => row("This week in gardening")));
+  await until("newsletter body", () => frameText().includes("Spring planting"));
+  const doc = frameText();
+  check(!/<script/i.test(doc) && !/onclick/i.test(doc), "script or handler kept");
+  check(!doc.includes("px.news.example/open.gif"), "tracking pixel kept");
+  check(!/\ssrc="https:\/\/img\.news\.example/.test(doc), "remote image loaded without asking");
+  await el("images-banner");
+  await backToInbox();
+  // RFC 2231 file name.
+  click(await until("attachment mail", () => row("Your application")));
+  await until("accented file name", () => qa("attachment-card").some((c) => c.textContent?.includes("Résumé 2026.pdf")));
+  await backToInbox();
+});
+
 step("notifications: new Primary mail notifies, Promotions doesn't", async () => {
   await api.e2eControl("deliver-gmail", {
     from: "Promo Shop <hello@promo.example>",
@@ -549,10 +712,18 @@ step("signs out of the IMAP account (removes it and its cache)", async () => {
 
 // ---- runner ----
 
+/** Uncaught errors and unhandled promise rejections anywhere in the app during the run (each one fails it). */
+const appErrors: string[] = [];
+
 let started = false;
 export async function runE2E() {
   if (started) return;
   started = true;
+  window.addEventListener("error", (e) => appErrors.push(`${e.message} (${e.filename?.split("/").pop()}:${e.lineno})`));
+  window.addEventListener("unhandledrejection", (e) => {
+    const r = e.reason as { message?: string } | string | undefined;
+    appErrors.push(`unhandled rejection: ${typeof r === "string" ? r : (r?.message ?? JSON.stringify(r))}`);
+  });
   const t0 = Date.now();
   const results: StepResult[] = [];
   log(`starting ${steps.length} steps`);
@@ -586,11 +757,24 @@ export async function runE2E() {
     results.push(r);
     log(`${r.ok ? "  ok" : "  FAILED"} (${r.ms} ms)${error ? `: ${error}` : ""}`);
     if (!r.ok) {
-      // Leave the UI in a known state for the next step.
+      // Leave the UI in a known state for the next step: menus and dialogs closed, back on the Inbox list.
       key(document.body, "Escape");
       await sleep(200);
+      if (q("conv-back")) click(q("conv-back")!);
+      if (q("settings-close")) click(q("settings-close")!);
+      await openList("INBOX").catch(() => {});
     }
   }
+  // The app itself must not have thrown anywhere along the way.
+  results.push({
+    name: "no uncaught errors or unhandled rejections in the app",
+    ok: appErrors.length === 0,
+    ms: 0,
+    error: appErrors.length ? appErrors.slice(0, 10).join(" | ") : undefined,
+  });
+  log(
+    `${appErrors.length ? "  FAILED" : "  ok"} no uncaught errors or unhandled rejections${appErrors.length ? `: ${appErrors.slice(0, 5).join(" | ")}` : ""}`,
+  );
   const failed = results.filter((r) => !r.ok).length;
   const report = {
     app: getState().info?.version ?? "dev",

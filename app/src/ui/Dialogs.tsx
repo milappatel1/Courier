@@ -50,6 +50,76 @@ function Confirm({ title, body, ok, run, onClose }: { title: string; body: strin
   );
 }
 
+/**
+ * Google sign-in setup inside the Add Gmail step, so a first account can be added before any other exists (the
+ * same control as Settings ▸ Accounts): import the client JSON, or paste the client ID and secret.
+ */
+function ClientSetup({ onDone }: { onDone: () => void }) {
+  const [cid, setCid] = useState("");
+  const [secret, setSecret] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const save = async (jsonText?: string) => {
+    setErr(null);
+    try {
+      await api.googleClientSet(jsonText ? { jsonText } : { clientId: cid.trim(), clientSecret: secret.trim() });
+      setCid("");
+      setSecret("");
+      toast("Google sign-in is set up.");
+      onDone();
+    } catch (e) {
+      setErr(errorText(e));
+    }
+  };
+  return (
+    <div className="client-setup" data-testid="client-setup">
+      <p style={{ marginTop: 0 }}>
+        First, give Courier your Google sign-in client (made once in Google Cloud; SETUP-GOOGLE.md has the steps). It's stored in your Keychain.
+      </p>
+      <label className="btn outline sm" style={{ cursor: "pointer" }}>
+        <Icon name="upload_file" /> Import JSON…
+        <input
+          type="file"
+          accept="application/json,.json"
+          hidden
+          data-testid="client-json-file"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void f.text().then((t) => save(t));
+            e.target.value = "";
+          }}
+        />
+      </label>
+      <div className="hint" style={{ margin: "10px 0 4px" }}>
+        or paste them:
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <input
+          type="text"
+          placeholder="Client ID"
+          value={cid}
+          onChange={(e) => setCid(e.target.value)}
+          style={{ flex: "1 1 220px" }}
+          aria-label="Client ID"
+          data-testid="add-client-id"
+        />
+        <input
+          type="password"
+          placeholder="Client secret"
+          value={secret}
+          onChange={(e) => setSecret(e.target.value)}
+          style={{ flex: "1 1 140px" }}
+          aria-label="Client secret"
+          data-testid="add-client-secret"
+        />
+        <button className="btn filled sm" disabled={!cid.trim()} onClick={() => void save()} data-testid="add-client-save">
+          Save
+        </button>
+      </div>
+      {err && <div className="error-box">{err}</div>}
+    </div>
+  );
+}
+
 function Ask({
   title,
   label,
@@ -382,14 +452,7 @@ function AddAccount({ kind, reauth, onClose }: { kind?: "gmail" | "imap"; reauth
       )}
       {step === "gmail" && (
         <>
-          {client === false && (
-            <div className="error-box">
-              Google sign-in isn't set up yet. Add your client ID in Settings ▸ Accounts ▸ Google sign-in setup first.{" "}
-              <button className="linkbtn" onClick={() => (onClose(), useMail.setState((s) => ({ route: { ...s.route, settings: "accounts" } })))}>
-                Open settings
-              </button>
-            </div>
-          )}
+          {client === false && <ClientSetup onDone={() => setClient(true)} />}
           <p>Your browser opens to sign in. When you've allowed access, come back here. Courier keeps the sign-in in your Keychain.</p>
           {!reauth && (
             <div className="field">

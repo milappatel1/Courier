@@ -27,6 +27,14 @@ didn't notice because it mis-parsed `lsappinfo` output (the app's own `isActive`
 
 After these changes the run reports zero activations and the watch never sees Courier in front.
 
+## Fixed after the release
+
+- New mail that something else cached first (the unread backfill, a list page) didn't notify; history's
+  `messagesAdded` now decides what's new (`tests/engine.rs::new_mail_cached_early_still_notifies`).
+- Forums mail didn't notify while Forums had no tab (it's in Primary then); a burst of more than 4 new messages
+  now gives one summary instead of a pile of banners.
+- See VERIFY-P0 for the Keychain vault.
+
 ## Fixed in this pass
 
 - Gmail 429/5xx responses that outlast the retries are treated as "no connection", so the outbox keeps the message.

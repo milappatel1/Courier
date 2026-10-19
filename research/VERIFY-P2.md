@@ -29,5 +29,5 @@ send, reply / reply all / forward (inline and as attachment).
 
 - Spell check uses the macOS checker (`NSSpellChecker`) through a dialog; WebKit's own underline-as-you-type is on
   in the editor. Neither is exercised by the automated run.
-- Pop-out windows, full-screen compose, templates, plain-text mode and aliases are built and typecheck but aren't
-  exercised by the automated run or measured against a golden.
+- Templates (save a draft as one, insert it), plain-text mode (sends text only) and minimise / full screen are now
+  in the end-to-end run; pop-out windows and aliases still aren't.

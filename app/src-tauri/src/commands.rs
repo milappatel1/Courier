@@ -70,7 +70,7 @@ pub struct GoogleClientStatus {
 }
 
 #[tauri::command]
-pub fn google_client_status(st: S) -> Result<GoogleClientStatus> {
+pub async fn google_client_status(st: S<'_>) -> Result<GoogleClientStatus> {
     Ok(match st.engine.google_client() {
         Ok(c) => GoogleClientStatus { configured: true, client_id_hint: Some(format!("{}…", c.client_id.chars().take(12).collect::<String>())) },
         Err(_) => GoogleClientStatus { configured: false, client_id_hint: None },
@@ -79,7 +79,7 @@ pub fn google_client_status(st: S) -> Result<GoogleClientStatus> {
 
 /// Save the cloud-console client (either the downloaded JSON, or an ID + secret) in the Keychain.
 #[tauri::command]
-pub fn google_client_set(st: S, json_text: Option<String>, client_id: Option<String>, client_secret: Option<String>) -> Result<()> {
+pub async fn google_client_set(st: S<'_>, json_text: Option<String>, client_id: Option<String>, client_secret: Option<String>) -> Result<()> {
     let creds = match json_text.filter(|s| !s.trim().is_empty()) {
         Some(j) => ClientCreds::from_json(&j)?,
         None => ClientCreds { client_id: client_id.unwrap_or_default().trim().to_string(), client_secret: client_secret.unwrap_or_default().trim().to_string() },
@@ -92,7 +92,7 @@ pub fn google_client_set(st: S, json_text: Option<String>, client_id: Option<Str
 }
 
 #[tauri::command]
-pub fn google_client_clear(st: S) -> Result<()> {
+pub async fn google_client_clear(st: S<'_>) -> Result<()> {
     st.engine.secrets.delete(secrets::GOOGLE_CLIENT_KEY)
 }
 
@@ -242,9 +242,15 @@ pub fn account_update(st: S, id: String, name: Option<String>, color: Option<Str
     Ok(account_info(&a))
 }
 
+/// Whether saved sign-ins couldn't be opened this launch (a message for the user, shown once).
+#[tauri::command]
+pub async fn secrets_notice(st: S<'_>) -> Result<Option<String>> {
+    Ok(st.engine.secrets.notice())
+}
+
 /// Sign out: tokens/passwords out of the Keychain, the account's cache deleted.
 #[tauri::command]
-pub fn account_remove(st: S, id: String) -> Result<()> {
+pub async fn account_remove(st: S<'_>, id: String) -> Result<()> {
     st.engine.stop_account(&id);
     secrets::forget_account(&*st.engine.secrets, &id)?;
     st.engine.db.delete_account(&id)?;

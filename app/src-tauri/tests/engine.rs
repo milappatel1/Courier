@@ -298,3 +298,48 @@ async fn one_click_unsubscribe_posts_and_refuses_plain_http() {
     assert!(w.engine.unsubscribe_one_click("http://deals.example/u/1").await.is_err());
     assert!(w.engine.unsubscribe_one_click("ftp://deals.example/u/1").await.is_err());
 }
+
+#[tokio::test]
+async fn old_unread_primary_mail_counts_toward_the_inbox() {
+    let w = world().await;
+    // Older than the window the first sync caches (30 days), still unread in Primary: Gmail counts it.
+    let old = b"From: Old Friend <old@x.io>\r\nTo: pat@example.com\r\nSubject: From last spring\r\nDate: Mon, 4 May 2026 09:00:00 -0400\r\nMessage-ID: <old1@test.example>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nhello\r\n";
+    let id = w.gmail.deliver(old, &["INBOX", "UNREAD", "CATEGORY_PERSONAL"]);
+    let promo = b"From: Deals <d@x.io>\r\nTo: pat@example.com\r\nSubject: Old sale\r\nDate: Mon, 4 May 2026 09:00:00 -0400\r\nMessage-ID: <old2@test.example>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nsale\r\n";
+    let promo_id = w.gmail.deliver(promo, &["INBOX", "UNREAD", "CATEGORY_PROMOTIONS"]);
+    w.engine.sync_account("g1").await.unwrap();
+    assert!(w.engine.db.has_message("g1", &id).unwrap(), "old unread Primary mail cached");
+    assert!(!w.engine.db.has_message("g1", &promo_id).unwrap(), "old Promotions mail isn't needed for the count");
+    let inbox = w.engine.labels_for_nav("g1").unwrap().into_iter().find(|l| l.id == "INBOX").unwrap();
+    assert_eq!(inbox.threads_unread, 1);
+}
+
+#[tokio::test]
+async fn a_burst_of_new_mail_gets_one_summary_and_forums_mail_notifies_while_its_tab_is_off() {
+    let w = world().await;
+    w.engine.sync_account("g1").await.unwrap(); // first sync: no notifications
+    for i in 0..6 {
+        w.gmail.deliver(&sample_mail(&format!("P{i} <p{i}@x.io>"), "pat@example.com", &format!("Hello {i}"), "hi", ""), &["INBOX", "UNREAD", "CATEGORY_PERSONAL"]);
+    }
+    w.engine.sync_account("g1").await.unwrap();
+    let notes = w.rec.notes.lock().clone();
+    assert_eq!(notes.len(), 1, "one summary, not six banners: {notes:?}");
+    assert_eq!(notes[0].0, "6 new messages");
+    // Forums has no tab by default, so its mail is in Primary and notifies.
+    w.gmail.deliver(&sample_mail("Club <club@x.io>", "pat@example.com", "Meetup", "Thursday", ""), &["INBOX", "UNREAD", "CATEGORY_FORUMS"]);
+    w.engine.sync_account("g1").await.unwrap();
+    assert!(w.rec.notes.lock().iter().any(|(t, _)| t == "Club"), "Forums mail notified");
+}
+
+#[tokio::test]
+async fn new_mail_cached_early_still_notifies() {
+    let w = world().await;
+    w.engine.sync_account("g1").await.unwrap();
+    let id = w.gmail.deliver(&sample_mail("Gil <gil@x.io>", "pat@example.com", "Dinner tonight?", "Around at 7?", ""), &["INBOX", "UNREAD", "CATEGORY_PERSONAL"]);
+    // Something else caches it before the history check runs (the unread backfill of a sync already under way).
+    let g = w.engine.gmail("g1").unwrap();
+    courier_lib::gmail::backfill_unread_inbox(&g, &w.engine.db, "g1", &[]).await.unwrap();
+    assert!(w.engine.db.has_message("g1", &id).unwrap());
+    w.engine.sync_account("g1").await.unwrap();
+    assert!(w.rec.notes.lock().iter().any(|(t, _)| t == "Gil"), "new mail notified even though it was already cached");
+}

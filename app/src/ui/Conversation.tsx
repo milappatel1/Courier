@@ -62,7 +62,7 @@ export function Conversation({ split }: { split?: boolean }) {
   const msgs = (detail?.messages ?? []).filter((m) => !m.labels.includes("TRASH") || (detail?.messages ?? []).every((x) => x.labels.includes("TRASH")));
   const layout = conversationLayout(
     msgs.map((m) => ({ id: m.id, unread: m.labels.includes("UNREAD"), isDraft: m.labels.includes("DRAFT"), date: m.internalDate })),
-    { expandAll: expandAll === true },
+    { expandAll: expandAll === true, unfold: !!open.__showall },
   );
   const isOpen = (id: string, def: boolean) => (expandAll === false ? (open[id] ?? false) : (open[id] ?? def));
   const last = msgs.filter((m) => !m.labels.includes("DRAFT")).at(-1);

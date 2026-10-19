@@ -587,6 +587,10 @@ const handlers: Record<string, (a: Args) => unknown> = {
   google_client_status: () => ({ configured: !!settings.__client, clientIdHint: settings.__client ? "preview…" : null }),
   google_client_set: () => ((settings.__client = true), null),
   google_client_clear: () => (delete settings.__client, null),
+  secrets_notice: () =>
+    preview.get("keychain") === "refused"
+      ? "Courier couldn't open its saved sign-ins in your Keychain (denied). Accounts that need them will ask you to sign in again."
+      : null,
   account_add_gmail: () => accounts[0],
   account_discover: (a) => [
     { kind: String(a.email).endsWith("gmail.com") ? "gmail" : "imap", provider: "Example", config: accounts[1].config, source: "preview", help: null },

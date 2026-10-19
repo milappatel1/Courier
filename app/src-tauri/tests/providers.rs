@@ -273,19 +273,31 @@ fn keychain_wrapper_round_trip() {
     assert_eq!(mem.get("k").unwrap(), None);
     #[cfg(target_os = "macos")]
     {
-        // Real Keychain, under a throwaway service name; cleaned up at the end.
+        // Real Keychain through the vault, under a throwaway service name (made and removed by this test binary,
+        // so macOS never asks); the vault's state file goes to a temp folder.
+        use courier_lib::secrets::{LoginKeychain, SecretStore, VaultStore};
         let service = format!("com.milappatel.courier.test.{}", courier_lib::error::random_token(6));
-        let kc = courier_lib::secrets::KeychainStore::new(service);
-        match kc.set("oauth:test", "{\"refresh_token\":\"x\"}") {
+        let dir = std::env::temp_dir().join(format!("courier-vault-live-{}", courier_lib::error::random_token(6)));
+        let open = || VaultStore::new(Box::new(LoginKeychain::new(service.clone())), dir.join("vault.json"), "test-build", vec![]);
+        let v = open();
+        match v.set("oauth:test", "{\"refresh_token\":\"x\"}") {
             Ok(()) => {
-                assert_eq!(kc.get("oauth:test").unwrap().as_deref(), Some("{\"refresh_token\":\"x\"}"));
-                kc.set("oauth:test", "updated").unwrap();
-                assert_eq!(kc.get("oauth:test").unwrap().as_deref(), Some("updated"));
-                kc.delete("oauth:test").unwrap();
-                assert_eq!(kc.get("oauth:test").unwrap(), None);
-                kc.delete("oauth:test").unwrap(); // deleting twice is fine
+                v.set("google-client", "client").unwrap();
+                // Its own item reads fine with prompts switched off.
+                use courier_lib::secrets::RawKeychain;
+                assert!(LoginKeychain::new(service.clone()).read_quiet("vault-1").is_ok());
+                let again = open();
+                assert_eq!(again.get("oauth:test").unwrap().as_deref(), Some("{\"refresh_token\":\"x\"}"));
+                assert_eq!(again.get("google-client").unwrap().as_deref(), Some("client"));
+                assert_eq!(again.notice(), None);
+                again.delete("oauth:test").unwrap();
+                again.delete("google-client").unwrap();
+                assert_eq!(open().get("oauth:test").unwrap(), None);
+                // Clean up the (now empty) vault item.
+                LoginKeychain::new(service.clone()).remove("vault-1").unwrap();
             }
             Err(e) => eprintln!("Keychain not available in this environment, skipped the live part: {e}"),
         }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -401,6 +401,48 @@ pub async fn fetch_raw_many(g: &Gmail, db: &Db, account: &str, ids: Vec<String>)
     Ok(out)
 }
 
+/// The Inbox count (and Dock badge) is computed from the cache, which otherwise holds only the recent window:
+/// make sure every unread Inbox conversation outside the category tabs (`skip_categories`) is cached, however old.
+/// One list request per sync; only missing conversations are fetched (as metadata). Returns how many were added.
+pub async fn backfill_unread_inbox(g: &Gmail, db: &Db, account: &str, skip_categories: &[&str]) -> Result<usize> {
+    use futures::stream::{self, StreamExt};
+    let mut q = String::from("in:inbox is:unread -in:chats");
+    for c in skip_categories {
+        q.push_str(&format!(" -category:{}", c.trim_start_matches("CATEGORY_").to_lowercase()));
+    }
+    let mut missing: Vec<String> = Vec::new();
+    let mut page: Option<String> = None;
+    let mut seen = 0usize;
+    loop {
+        let r = g.messages_list(Some(&q), &[], page.as_deref(), 500).await?;
+        for m in r["messages"].as_array().cloned().unwrap_or_default() {
+            seen += 1;
+            let (Some(id), Some(tid)) = (m["id"].as_str(), m["threadId"].as_str()) else { continue };
+            if !db.has_message(account, id).unwrap_or(false) && !missing.iter().any(|t| t == tid) {
+                missing.push(tid.to_string());
+            }
+        }
+        page = r["nextPageToken"].as_str().map(str::to_string);
+        if page.is_none() || seen >= 2000 {
+            break;
+        }
+    }
+    let n = missing.len();
+    let fetched: Vec<Result<Value>> = stream::iter(missing.into_iter().map(|id| async move { g.thread_metadata(&id).await })).buffer_unordered(8).collect().await;
+    for t in fetched {
+        match t {
+            Ok(t) => {
+                for m in t["messages"].as_array().cloned().unwrap_or_default() {
+                    ingest_metadata(db, account, &m)?;
+                }
+            }
+            Err(Error::NotFound(_)) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(n)
+}
+
 /// First sync: labels, then the offline window (newest first, capped).
 pub async fn initial_sync(g: &Gmail, db: &Db, account: &str, window_days: u32, max_messages: usize) -> Result<SyncReport> {
     let profile = g.profile().await?;
@@ -483,10 +525,17 @@ pub async fn incremental_sync(g: &Gmail, db: &Db, account: &str) -> Result<SyncR
     }
     added.retain(|id| !deleted.contains(id));
     added.dedup();
-    let fresh: Vec<String> = added.iter().filter(|id| !db.has_message(account, id).unwrap_or(false)).cloned().collect();
+    let (cached, fresh): (Vec<String>, Vec<String>) = added.iter().cloned().partition(|id| db.has_message(account, id).unwrap_or(false));
     if !fresh.is_empty() {
         report.new_messages = fetch_raw_many(g, db, account, fresh).await?;
         report.changed = true;
+    }
+    // New since the last check even if already cached (the unread backfill or a list page may have fetched it
+    // first): it still counts as new mail, so it still notifies.
+    for id in cached {
+        if let Some(m) = db.message(account, &id)? {
+            report.new_messages.push(m);
+        }
     }
     for (id, _thread, labels) in relabel {
         if deleted.contains(&id) {

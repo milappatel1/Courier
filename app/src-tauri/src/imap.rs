@@ -704,3 +704,36 @@ mod tests {
         assert_eq!(parse_message_id(&id), Some(("INBOX/Sub:folder".into(), 7, 42)));
     }
 }
+
+#[cfg(test)]
+mod live_tls {
+    //! Opt-in (needs the network): `cargo test --lib live_tls -- --ignored`. TLS handshake with real providers'
+    //! IMAP servers and their greeting only — no login, no credentials.
+    use super::*;
+    use tokio::io::AsyncReadExt;
+
+    #[tokio::test]
+    #[ignore]
+    async fn real_providers_accept_our_tls_and_greet() {
+        for host in ["imap.mail.me.com", "imap.mail.yahoo.com", "imap.fastmail.com", "outlook.office365.com"] {
+            let tcp = tokio::time::timeout(Duration::from_secs(10), TcpStream::connect((host, 993))).await.expect("connect timed out").expect("connect");
+            let mut tls = tls_wrap(host, tcp).await.unwrap_or_else(|e| panic!("{host}: TLS failed: {e}"));
+            let mut buf = vec![0u8; 512];
+            let n = tokio::time::timeout(Duration::from_secs(10), tls.read(&mut buf)).await.expect("greeting timed out").expect("read");
+            let greeting = String::from_utf8_lossy(&buf[..n]);
+            assert!(greeting.starts_with("* OK"), "{host}: unexpected greeting {greeting:?}");
+            eprintln!("{host}: TLS ok, greeting starts {:?}", &greeting[..greeting.len().min(40)]);
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn real_providers_smtp_tls_and_starttls_without_login() {
+        for email in ["someone@icloud.com", "someone@yahoo.com", "someone@fastmail.com", "someone@outlook.com"] {
+            let mut cfg = crate::discovery::builtin(email).and_then(|d| d.config).expect("built-in settings").smtp;
+            cfg.username.clear(); // no AUTH: connect, EHLO, (STARTTLS), NOOP, QUIT
+            smtp_test(&cfg, "").await.unwrap_or_else(|e| panic!("{}:{} {:?}: {e}", cfg.host, cfg.port, cfg.security));
+            eprintln!("{}:{} {:?}: ok", cfg.host, cfg.port, cfg.security);
+        }
+    }
+}

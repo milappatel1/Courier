@@ -278,7 +278,22 @@ pub fn run() {
             } else {
                 #[cfg(target_os = "macos")]
                 {
-                    Arc::new(secrets::KeychainStore::new(secrets::SERVICE))
+                    let mut legacy = vec![secrets::GOOGLE_CLIENT_KEY.to_string()];
+                    for a in db.accounts().unwrap_or_default() {
+                        legacy.extend([secrets::oauth_key(&a.id), secrets::password_key(&a.id), secrets::smtp_password_key(&a.id)]);
+                    }
+                    let vault: Arc<dyn secrets::SecretStore> = Arc::new(secrets::VaultStore::new(
+                        Box::new(secrets::LoginKeychain::new(secrets::SERVICE)),
+                        data_dir.join("vault.json"),
+                        secrets::current_build_id(),
+                        legacy,
+                    ));
+                    // Open the vault off the main thread: if macOS asks for the Keychain password, the window stays usable.
+                    let warm = vault.clone();
+                    std::thread::spawn(move || {
+                        let _ = warm.get("");
+                    });
+                    vault
                 }
                 #[cfg(not(target_os = "macos"))]
                 {
@@ -349,6 +364,7 @@ pub fn run() {
             commands::google_client_status,
             commands::google_client_set,
             commands::google_client_clear,
+            commands::secrets_notice,
             commands::account_add_gmail,
             commands::account_discover,
             commands::account_test_imap,

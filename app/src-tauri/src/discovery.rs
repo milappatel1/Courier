@@ -38,7 +38,7 @@ pub fn builtin(email: &str) -> Option<Discovered> {
         "outlook.com" | "hotmail.com" | "live.com" | "msn.com" | "outlook.co.uk" | "hotmail.co.uk" => d(
             "Outlook.com",
             cfg(("outlook.office365.com", 993, Tls), ("smtp-mail.outlook.com", 587, Starttls), email, false),
-            "Outlook.com needs an app password (account.microsoft.com ▸ Security ▸ Advanced security options). Some accounts only allow modern sign-in.",
+            "Microsoft has moved most Outlook.com mailboxes to its own sign-in for mail apps, which Courier doesn't support yet. An app password (account.microsoft.com ▸ Security) only works on accounts that still allow one.",
         ),
         "yahoo.com" | "ymail.com" | "rocketmail.com" | "yahoo.co.uk" | "yahoo.fr" | "yahoo.de" => d("Yahoo Mail", cfg(("imap.mail.yahoo.com", 993, Tls), ("smtp.mail.yahoo.com", 465, Tls), email, true), "Generate an app password in Yahoo Account Security."),
         "aol.com" => d("AOL Mail", cfg(("imap.aol.com", 993, Tls), ("smtp.aol.com", 465, Tls), email, true), "Generate an app password in AOL Account Security."),

@@ -35,7 +35,15 @@ export function Header() {
           align="right"
           items={() => [
             { label: "Keyboard shortcuts", icon: "keyboard", run: () => ui({ shortcutsHelp: true }) },
-            { label: "Set up Google sign-in", icon: "key", run: () => useMail.setState((s) => ({ route: { ...s.route, settings: "accounts" } })) },
+            {
+              label: "Set up Google sign-in",
+              icon: "key",
+              // Settings needs an account to open; before the first one, the Add Gmail dialog has the same setup.
+              run: () =>
+                useMail.getState().accounts.length
+                  ? useMail.setState((s) => ({ route: { ...s.route, settings: "accounts" } }))
+                  : ui({ addAccount: { kind: "gmail" } }),
+            },
             {
               label: "About Courier",
               icon: "info",

@@ -27,8 +27,8 @@ BUNDLE="$PWD/src-tauri/target/debug/bundle/macos/Courier.app"
 BIN="$BUNDLE/Contents/MacOS/Courier"
 [ -x "$BIN" ] || { echo "no debug build at $BUNDLE"; exit 1; }
 
-# Name of the frontmost app ("Claude" ASN:… (in front) → Claude).
-front() { lsappinfo info "$(lsappinfo front)" 2>/dev/null | head -1 | sed -E 's/^"([^"]*)".*/\1/'; }
+# Process ID of the frontmost app (by PID, so a Courier you have open yourself doesn't count).
+front_pid() { lsappinfo info "$(lsappinfo front)" 2>/dev/null | sed -nE 's/.*pid = ([0-9]+).*/\1/p' | head -1; }
 
 echo "running in the background (report: $REPORT)"
 : >"$OUT/app.log"
@@ -51,7 +51,7 @@ for _ in $(seq 1 "$LIMIT"); do
     grep '^\[e2e\]' "$OUT/app.log" | sed -n "$((SHOWN + 1)),${N}p"
     SHOWN=$N
   fi
-  [ "$(front)" = "Courier" ] && STOLE=1
+  [ "$(front_pid)" = "$PID" ] && STOLE=1
   kill -0 "$PID" 2>/dev/null || break
 done
 if kill -0 "$PID" 2>/dev/null; then
@@ -74,6 +74,6 @@ for (const s of r.steps) {
 }
 const stole = process.env.STOLE === "1";
 console.log(`\n${r.passed} passed, ${r.failed} failed in ${Math.round(r.durationMs / 1000)} s`);
-console.log(`focus: app reported ${r.focusTaken ? "ACTIVE during a step" : "never active"}; frontmost-app watch ${stole ? "SAW COURIER IN FRONT" : "never saw Courier in front"}`);
+console.log(`focus: app reported ${r.focusTaken ? "ACTIVE during a step" : "never active"}; frontmost-app watch ${stole ? "SAW THE TEST APP IN FRONT" : "never saw the test app in front"}`);
 process.exit(r.failed || r.focusTaken || stole ? 1 : 0);
 ' "$REPORT"

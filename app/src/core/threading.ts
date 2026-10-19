@@ -84,7 +84,11 @@ export type ConversationItem = { kind: "message"; id: string; expanded: boolean 
  * Which messages start expanded: every unread one, any draft, and the last; the rest collapse to a one-line
  * summary. A run of more than three collapsed messages in the middle folds into a single "N more" pill.
  */
-export function conversationLayout(messages: ConversationMessage[], opts: { expandAll?: boolean; focusId?: string } = {}): ConversationItem[] {
+/** `unfold`: the fold was opened, so every message is listed (still collapsed unless it would be expanded). */
+export function conversationLayout(
+  messages: ConversationMessage[],
+  opts: { expandAll?: boolean; focusId?: string; unfold?: boolean } = {},
+): ConversationItem[] {
   if (!messages.length) return [];
   const last = messages[messages.length - 1].id;
   const items: ConversationItem[] = messages.map((m) => ({
@@ -92,7 +96,7 @@ export function conversationLayout(messages: ConversationMessage[], opts: { expa
     id: m.id,
     expanded: !!opts.expandAll || m.unread || !!m.isDraft || m.id === last || m.id === opts.focusId,
   }));
-  if (opts.expandAll) return items;
+  if (opts.expandAll || opts.unfold) return items;
   const out: ConversationItem[] = [];
   let run: string[] = [];
   const flushRun = (atStart: boolean) => {

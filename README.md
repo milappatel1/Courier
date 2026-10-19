@@ -10,7 +10,7 @@ icons (Material Symbols) under Apache 2.0; both licences are in `app/src/styles/
 
 ## Install
 
-1. Download `Courier-1.0.0-arm64.dmg` (or the `.zip`) from the
+1. Download `Courier-<version>-arm64.dmg` (or the `.zip`) from the
    [latest release](https://github.com/milappatel1/courier/releases/latest). It runs on Apple silicon Macs with
    macOS 13 or later.
 2. Open the `.dmg` and drag **Courier** onto **Applications**.
@@ -29,7 +29,9 @@ Both downloads are checked against the SHA-256 sums listed in the release notes.
 - **Any other provider**: choose **Add account ▸ Other mail**, type your address, and Courier finds the server
   settings. Use an app password (iCloud, Outlook, Yahoo and Fastmail all have them in their account settings).
 
-Sign-ins live in your macOS Keychain. **Sign out** (avatar menu) removes that account's Keychain entries and its
+Sign-ins live in your macOS Keychain, in a single Courier entry. After an update, macOS may ask once for your
+Keychain password to let the new version read it (choose **Always Allow**); if you'd rather not, choose **Deny** and
+sign in again. **Sign out** (avatar menu) removes that account's Keychain entries and its
 local copy of your mail; nothing changes on the server. ⌘1…⌘9 switch accounts, and **All inboxes** shows them
 together.
 

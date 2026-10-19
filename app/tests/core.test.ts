@@ -121,6 +121,9 @@ describe("threading", () => {
       { kind: "message", id: "7", expanded: true },
     ]);
     expect(conversationLayout([m("1"), m("2")], { expandAll: true }).every((x) => x.kind === "message" && x.expanded)).toBe(true);
+    // Opening the fold lists every message; only the unread and the last stay expanded.
+    const unfolded = conversationLayout([m("1"), m("2"), m("3"), m("4"), m("5"), m("6", true), m("7")], { unfold: true });
+    expect(unfolded.map((x) => (x.kind === "message" ? `${x.id}${x.expanded ? "+" : ""}` : "fold"))).toEqual(["1", "2", "3", "4", "5", "6+", "7+"]);
   });
   it("participants column", () => {
     const self = ["me@x.io"];

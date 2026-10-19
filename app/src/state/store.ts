@@ -545,6 +545,11 @@ export async function init() {
   document.documentElement.dataset.density = settings.density;
   set({ info, settings, online: info.online });
   const accounts = await loadAccounts();
+  // If macOS refused Courier its saved sign-ins, say so once (the accounts then ask to sign in again).
+  void api
+    .secretsNotice()
+    .then((n) => n && toast(n, { sticky: true }))
+    .catch(() => {});
   const { account, route } = hashToRoute(location.hash || "#inbox");
   if (account != null) {
     const id = account === "all" ? "all" : accounts[Number(account)]?.id;

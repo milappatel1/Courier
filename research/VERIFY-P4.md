@@ -28,4 +28,5 @@
 
 - Theme photos ("Your image") and the colour themes other than Default and Dark aren't compared against goldens
   (only the picker itself has one); their colours come from the measured theme layers.
-- The shortcut matcher is unit-tested; the full shortcut set isn't driven key by key end to end.
+- End to end now also drives `c`, `/`, `j`/`k`, `s`, `e`, `z` and `g` `l`, the reading pane on the right, and the
+  "Unread first" inbox type; the rest of the shortcut set is covered by the matcher's unit tests only.

@@ -32,8 +32,34 @@ FTS5 cache, sync engine (Gmail history IDs, IMAP UIDs + IDLE), fake servers, tes
 - A 401 while another request was already refreshing the token refreshed it a second time (the "reuse" check was
   an empty block); the newer token is now reused.
 
+## Real account (read-only, 2026-10-19)
+
+The user's own OAuth client (project "Courier", desktop client, Testing mode, one test user) and a real Gmail
+account signed in through the browser. Checked without reading any message content: one Gmail account, no
+re-auth needed, history ID stored (incremental sync running), 130 recent messages indexed, labels synced, outbox
+empty, no snoozes/mutes/filters created, Keychain entries under `com.milappatel.courier`; over 30 s of sampling
+every connection went to Google (`2001:4860::/32`, Google LLC).
+
+Found and fixed:
+- **First run couldn't set up Gmail**: with no accounts the app shows only the welcome screen, so Settings ▸ Accounts
+  (where the client is entered) was unreachable. The Add Gmail dialog now takes the client itself (Import JSON or
+  paste); the end-to-end run goes through it.
+- **Inbox count too low on a real mailbox** (1 vs the web client's 3): the count comes from the cache, which holds
+  only the last 30 days. Each sync now asks Gmail for the unread Inbox conversations outside the tabs (one request)
+  and caches any that are missing (`tests/engine.rs::old_unread_primary_mail_counts_toward_the_inbox`).
+- The end-to-end frontmost-app watch compared app *names*, so a Courier the user had open counted as the test app;
+  it now compares process IDs.
+- **Keychain prompts that never stopped** after an update: each secret was its own item, re-read on every sync, and
+  an ad-hoc-signed update counts as a new app to macOS, so prompts kept coming (and a refusal was retried every
+  minute). Secrets now live in one vault item read once per launch under a lock; after an update the vault is
+  re-saved by the new build (at most one prompt per update); a refusal is remembered and the accounts ask to sign
+  in again, which writes a new item without touching the unreadable one; 1.0 items are migrated. Commands that touch
+  secrets left the main thread, so a prompt can't freeze the window. Tests: five vault cases with a fake Keychain
+  that prompts like macOS, plus a live round trip under a throwaway service name.
+- Opt-in network test (`cargo test --lib live_tls -- --ignored`): TLS and greeting from iCloud, Yahoo, Fastmail and
+  Microsoft IMAP; SMTP STARTTLS (587) and SSL (465) without logging in. All pass.
+
 ## Known gaps
 
-- A read-only check against a real Gmail account waits until the user has created their OAuth client and signed in
-  (SETUP-GOOGLE.md). Automated tests never touch a real mailbox.
+- Automated tests never touch a real mailbox; the real-account check above was read-only.
 - Ad-hoc signed rebuilds make macOS ask again for Keychain access the first time; expected for unsigned builds.

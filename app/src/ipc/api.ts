@@ -35,6 +35,8 @@ export const api = {
   googleClientStatus: () => call<{ configured: boolean; clientIdHint: string | null }>("google_client_status"),
   googleClientSet: (a: { jsonText?: string; clientId?: string; clientSecret?: string }) => call<void>("google_client_set", a),
   googleClientClear: () => call<void>("google_client_clear"),
+  /** Set when saved sign-ins couldn't be opened from the Keychain this launch. */
+  secretsNotice: () => call<string | null>("secrets_notice"),
   addGmail: (loginHint?: string, reauthId?: string) => call<Account>("account_add_gmail", { loginHint: loginHint ?? null, reauthId: reauthId ?? null }),
   discover: (email: string) => call<Discovered[]>("account_discover", { email }),
   testImap: (config: ImapAccountConfig, password: string, smtpPassword?: string) =>

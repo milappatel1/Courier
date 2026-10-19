@@ -19,6 +19,11 @@
   builds (the UI already refused non-HTTPS one-click links).
 - The end-to-end check compared the fake's `to` list as a string; it now matches the address.
 
+## Fixed after the release
+
+- Opening the "N older messages" fold in a long conversation did nothing (the flag it set was never read); it now
+  lists every message (unit test + end-to-end step with a 12-message thread).
+
 ## Known gaps
 
 - Multiple inboxes and Priority Inbox are built on the same list queries but weren't driven end to end or compared
