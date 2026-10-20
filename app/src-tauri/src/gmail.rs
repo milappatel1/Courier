@@ -374,7 +374,9 @@ pub struct SyncReport {
 pub async fn refresh_label_counts(g: &Gmail, db: &Db, account: &str, ids: &[String]) -> Result<()> {
     use futures::stream::{self, StreamExt};
     let known: HashSet<String> = db.labels(account)?.into_iter().map(|l| l.id).collect();
-    let mut want: Vec<String> = ids.iter().filter(|i| known.contains(*i)).cloned().collect();
+    // The server's count for a label a pending change touches is about to change: keep ours until it has.
+    let pending = db.pending_labels(account);
+    let mut want: Vec<String> = ids.iter().filter(|i| known.contains(*i) && !pending.contains(*i)).cloned().collect();
     want.sort();
     want.dedup();
     let got: Vec<Result<Value>> = stream::iter(want.into_iter().map(|id| async move { g.label(&id).await })).buffer_unordered(4).collect().await;
@@ -410,13 +412,15 @@ pub async fn refresh_labels(g: &Gmail, db: &Db, account: &str) -> Result<()> {
     .collect()
     .await;
     let mut keep = Vec::new();
+    let pending = db.pending_labels(account);
     for (l, full) in got {
         let id = l["id"].as_str().unwrap_or("").to_string();
         match full {
-            Ok(full) => db.upsert_label(&label_row(account, &full))?,
+            Ok(full) if !pending.contains(&id) => db.upsert_label(&label_row(account, &full))?,
             Err(e) if e.is_offline() || e.is_auth() => return Err(e),
-            // Couldn't read the counts this time (rate limit, a hiccup): keep the ones we have, not zeros.
-            Err(_) => {
+            // Couldn't read the counts this time (rate limit, a hiccup), or a pending change is about to move
+            // them: keep the ones we have, not zeros.
+            _ => {
                 let mut row = label_row(account, &l);
                 if let Some(old) = db.label(account, &id)? {
                     (row.threads_total, row.threads_unread, row.messages_total, row.messages_unread) = (old.threads_total, old.threads_unread, old.messages_total, old.messages_unread);

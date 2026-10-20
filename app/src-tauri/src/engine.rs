@@ -865,10 +865,12 @@ impl Engine {
         let add = expand_label_rules(add, remove);
         let (add, remove) = (add.0, add.1);
         let gmail = self.kind(account)? == "gmail";
-        // Optimistic local change first so the UI updates immediately, counts included.
+        // Optimistic local change first so the UI updates immediately, counts included. It holds until the server
+        // answers, whatever a sync reads from the server meanwhile.
         let threads = self.thread_ids_of(account, ids);
         let before = self.db.label_thread_stats(account, &threads)?;
-        self.db.modify_labels(account, ids, &add, &remove)?;
+        let had: HashMap<String, Vec<String>> = ids.iter().filter_map(|id| self.db.message(account, id).ok().flatten().map(|m| (id.clone(), m.labels))).collect();
+        let change = self.db.begin_change(account, ids, &add, &remove)?;
         let after = self.db.label_thread_stats(account, &threads)?;
         if gmail {
             self.db.apply_label_deltas(account, &before, &after)?;
@@ -891,6 +893,7 @@ impl Engine {
         } else {
             self.imap_modify(account, ids, &add, &remove).await
         };
+        self.db.end_change(account, ids, change, result.is_ok(), &had)?;
         match result {
             Ok(()) => {
                 if gmail {
@@ -907,8 +910,7 @@ impl Engine {
                 Ok(())
             }
             Err(e) => {
-                // Roll back the optimistic change.
-                self.db.modify_labels(account, ids, &remove, &add)?;
+                // end_change undid the optimistic change; now its counts.
                 if gmail {
                     self.db.apply_label_deltas(account, &after, &before)?;
                 } else {

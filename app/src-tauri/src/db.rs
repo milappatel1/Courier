@@ -190,6 +190,16 @@ pub struct Contact {
 
 pub struct Db {
     conn: Mutex<Connection>,
+    /// Label changes made here that the server hasn't confirmed yet, per (account, message), in order. Labels
+    /// read from the server meanwhile describe the message before the change, so these are applied on top.
+    pending: Mutex<HashMap<(String, String), Vec<PendingChange>>>,
+    next_change: std::sync::atomic::AtomicU64,
+}
+
+struct PendingChange {
+    token: u64,
+    add: Vec<String>,
+    remove: Vec<String>,
 }
 
 const SCHEMA: &str = r#"
@@ -245,6 +255,16 @@ CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS local_filters (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, criteria TEXT NOT NULL, action TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS blocked (account_id TEXT NOT NULL, email TEXT NOT NULL, filter_id TEXT, PRIMARY KEY (account_id, email));
 "#;
+
+fn apply_change(labels: Vec<String>, add: &[String], remove: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = labels.into_iter().filter(|l| !remove.contains(l)).collect();
+    for a in add {
+        if !out.contains(a) {
+            out.push(a.clone());
+        }
+    }
+    out
+}
 
 fn labels_text(labels: &[String]) -> String {
     let mut seen = HashSet::new();
@@ -389,13 +409,17 @@ impl Db {
         let conn = Connection::open(path)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch(SCHEMA)?;
-        Ok(Db { conn: Mutex::new(conn) })
+        Ok(Db::with_connection(conn))
     }
 
     pub fn open_in_memory() -> Result<Db> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
-        Ok(Db { conn: Mutex::new(conn) })
+        Ok(Db::with_connection(conn))
+    }
+
+    fn with_connection(conn: Connection) -> Db {
+        Db { conn: Mutex::new(conn), pending: Mutex::new(HashMap::new()), next_change: std::sync::atomic::AtomicU64::new(1) }
     }
 
     pub fn with<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T> {
@@ -647,6 +671,7 @@ impl Db {
     // ---- messages ----
 
     pub fn upsert_message(&self, m: &MessageRow, raw: Option<&[u8]>) -> Result<()> {
+        let labels = self.with_pending(&m.account_id, &m.id, m.labels.clone());
         self.with(|c| {
             c.execute(
                 "INSERT INTO messages (account_id, id, thread_id, internal_date, from_name, from_email, to_json, cc_json, bcc_json, reply_to_json, delivered_to, subject, norm_subject, snippet, size, has_attachments, attachments_json, message_id, in_reply_to, references_json, list_unsubscribe, list_unsubscribe_post, list_id, labels, raw, imap_folder, imap_uid)
@@ -682,7 +707,7 @@ impl Db {
                     m.list_unsubscribe,
                     m.list_unsubscribe_post,
                     m.list_id,
-                    labels_text(&m.labels),
+                    labels_text(&labels),
                     raw,
                     m.imap_folder,
                     m.imap_uid
@@ -718,7 +743,14 @@ impl Db {
         Ok(())
     }
 
+    /// A message's labels as the server reports them (sync, history, a fetched thread), with the changes made
+    /// here that are still on their way to the server applied on top.
     pub fn set_labels(&self, account: &str, id: &str, labels: &[String]) -> Result<()> {
+        let labels = self.with_pending(account, id, labels.to_vec());
+        self.write_labels(account, id, &labels)
+    }
+
+    fn write_labels(&self, account: &str, id: &str, labels: &[String]) -> Result<()> {
         self.with(|c| c.execute("UPDATE messages SET labels=? WHERE account_id=? AND id=?", params![labels_text(labels), account, id]))?;
         Ok(())
     }
@@ -727,16 +759,82 @@ impl Db {
     pub fn modify_labels(&self, account: &str, ids: &[String], add: &[String], remove: &[String]) -> Result<()> {
         for id in ids {
             if let Some(m) = self.message(account, id)? {
-                let mut labels: Vec<String> = m.labels.into_iter().filter(|l| !remove.contains(l)).collect();
-                for a in add {
-                    if !labels.contains(a) {
-                        labels.push(a.clone());
-                    }
-                }
-                self.set_labels(account, id, &labels)?;
+                self.write_labels(account, id, &apply_change(m.labels, add, remove))?;
             }
         }
         Ok(())
+    }
+
+    /// Change labels here first (the UI shows it at once) and remember the change until `end_change`, so that
+    /// labels read from the server in between don't undo it. Returns the change's token.
+    pub fn begin_change(&self, account: &str, ids: &[String], add: &[String], remove: &[String]) -> Result<u64> {
+        let token = self.next_change.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        {
+            let mut p = self.pending.lock();
+            for id in ids {
+                p.entry((account.to_string(), id.clone())).or_default().push(PendingChange { token, add: add.to_vec(), remove: remove.to_vec() });
+            }
+        }
+        self.modify_labels(account, ids, add, remove)?;
+        Ok(token)
+    }
+
+    /// The server has the change (`ok`), or refused it: then only what this change itself did is undone, so a
+    /// label the message already had stays, and changes made meanwhile elsewhere are kept.
+    pub fn end_change(&self, account: &str, ids: &[String], token: u64, ok: bool, before: &HashMap<String, Vec<String>>) -> Result<()> {
+        let mut undo: Vec<(String, PendingChange)> = Vec::new();
+        {
+            let mut p = self.pending.lock();
+            for id in ids {
+                let key = (account.to_string(), id.clone());
+                if let Some(list) = p.get_mut(&key) {
+                    if let Some(i) = list.iter().position(|c| c.token == token) {
+                        undo.push((id.clone(), list.remove(i)));
+                    }
+                    if list.is_empty() {
+                        p.remove(&key);
+                    }
+                }
+            }
+        }
+        if ok {
+            return Ok(());
+        }
+        for (id, c) in undo {
+            let Some(had) = before.get(&id) else { continue };
+            let Some(m) = self.message(account, &id)? else { continue };
+            let added: Vec<String> = c.add.iter().filter(|l| !had.contains(l)).cloned().collect();
+            let removed: Vec<String> = c.remove.iter().filter(|l| had.contains(l)).cloned().collect();
+            self.write_labels(account, &id, &apply_change(m.labels, &removed, &added))?;
+        }
+        Ok(())
+    }
+
+    /// Labels involved in changes still on their way to the server: their server counts are about to change.
+    pub fn pending_labels(&self, account: &str) -> HashSet<String> {
+        let p = self.pending.lock();
+        let mut out = HashSet::new();
+        for ((a, id), list) in p.iter() {
+            if a != account {
+                continue;
+            }
+            for c in list {
+                out.extend(c.add.iter().cloned());
+                out.extend(c.remove.iter().cloned());
+            }
+            if let Ok(Some(m)) = self.message(a, id) {
+                out.extend(m.labels);
+            }
+        }
+        out
+    }
+
+    fn with_pending(&self, account: &str, id: &str, labels: Vec<String>) -> Vec<String> {
+        let p = self.pending.lock();
+        match p.get(&(account.to_string(), id.to_string())) {
+            Some(list) => list.iter().fold(labels, |l, c| apply_change(l, &c.add, &c.remove)),
+            None => labels,
+        }
     }
 
     pub fn delete_message(&self, account: &str, id: &str) -> Result<()> {
