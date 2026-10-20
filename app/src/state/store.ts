@@ -571,7 +571,7 @@ export function openThread(t: ThreadSummary) {
     route: { ...s.route, thread: ref },
     cursor: Math.max(
       0,
-      (s.list.result?.threads ?? []).findIndex((x) => x.threadId === t.threadId),
+      (s.list.result?.threads ?? []).filter((x) => !s.hiddenThreads.includes(x.threadId)).findIndex((x) => x.threadId === t.threadId),
     ),
   }));
   pushHash();
@@ -587,9 +587,19 @@ export function closeThread() {
 /** Next/previous conversation from the open one (auto-advance and j/k). */
 export function stepThread(dir: 1 | -1): boolean {
   const s = get();
+  // From the open conversation's place in the list, even when an action has just hidden it (auto-advance).
+  const all = s.list.result?.threads ?? [];
+  const open = s.route.thread ? all.findIndex((t) => t.threadId === s.route.thread!.threadId) : -1;
+  if (open >= 0) {
+    for (let i = open + dir; i >= 0 && i < all.length; i += dir)
+      if (!s.hiddenThreads.includes(all[i].threadId)) {
+        openThread(all[i]);
+        return true;
+      }
+    return false;
+  }
   const list = visibleThreads();
-  const cur = s.route.thread ? list.findIndex((t) => t.threadId === s.route.thread!.threadId) : s.cursor;
-  const next = list[cur + dir];
+  const next = list[(s.route.thread ? -1 : s.cursor) + dir];
   if (!next) return false;
   openThread(next);
   return true;

@@ -1079,7 +1079,12 @@ function AccountRow({ a, index }: { a: Account; index: number }) {
         <div className="desc">
           {a.email} · {a.kind === "gmail" ? "Gmail (mail API)" : "IMAP/SMTP"} · ⌘{index + 1}
           {a.needsReauth ? " · needs signing in again" : sync ? ` · ${SYNC_TEXT[sync] ?? sync}` : ""}
-          {!a.needsReauth && syncError && (sync === "error" || sync === "busy") && <div className="hint">{syncError}</div>}
+          {!a.needsReauth && syncError && (sync === "error" || sync === "busy") && (
+            <div className="hint" data-testid="sync-error">
+              {errorText(syncError)}
+              {sync === "error" ? " Courier will try again." : ""}
+            </div>
+          )}
         </div>
       </div>
       <div style={{ display: "flex", gap: 4 }}>

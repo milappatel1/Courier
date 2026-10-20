@@ -68,6 +68,8 @@ pub struct GState {
     pub precondition_next: u32,
     /// Message ids that make any batchModify or batchDelete naming them fail that way, every time.
     pub precondition_ids: Vec<String>,
+    /// Routes (as in `latency`) that answer with this status and the API's error body, every time.
+    pub fail_routes: HashMap<String, u16>,
 }
 
 #[derive(Clone)]
@@ -174,6 +176,9 @@ impl FakeGmail {
             }
             if s.forbidden_ids.iter().any(|id| path.contains(&format!("/messages/{id}"))) {
                 return Response::json(403, &json!({"error": {"code": 403, "message": "Forbidden", "errors": [{"reason": "forbidden"}], "status": "PERMISSION_DENIED"}}));
+            }
+            if let Some(code) = s.fail_routes.get(route_name(&req.method, &path)).copied() {
+                return Response::json(code, &json!({"error": {"code": code, "message": "Bad Request", "errors": [{"message": "Bad Request", "domain": "global", "reason": "badRequest"}], "status": "INVALID_ARGUMENT"}}));
             }
             let write = req.method == "POST" && (path.ends_with("/batchModify") || path.ends_with("/batchDelete") || path.ends_with("/modify") || path.ends_with("/trash"));
             let named_bad = write && !s.precondition_ids.is_empty() && strs(&req.json()["ids"]).iter().any(|id| s.precondition_ids.contains(id));

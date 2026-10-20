@@ -257,6 +257,9 @@ impl E2e {
                     if let Some(n) = args["preconditionNext"].as_u64() {
                         g.precondition_next = n as u32;
                     }
+                    if let Some(f) = args["failRoutes"].as_object() {
+                        g.fail_routes = f.iter().filter_map(|(k, v)| v.as_u64().map(|c| (k.clone(), c as u16))).collect();
+                    }
                     if let Some(ids) = args["preconditionIds"].as_array() {
                         g.precondition_ids = ids.iter().filter_map(|x| x.as_str().map(str::to_string)).collect();
                     }

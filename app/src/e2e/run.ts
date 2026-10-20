@@ -400,6 +400,38 @@ step("opening a conversation that's on this Mac shows it at once, even when the 
   }
 });
 
+step("archiving with e moves on to the next conversation at once (auto-advance), with nothing coming back", async () => {
+  await backToInbox();
+  await setSetting("autoAdvance", "older");
+  await api.e2eControl("gmail-behaviour", { latency: { batchModify: 700, "threads.list": 150, "threads.get": 600 } });
+  try {
+    for (const n of [1, 2, 3]) await api.e2eControl("deliver-gmail", { from: "Advance Test <advance@test.example>", subject: `Advance ${n}`, body: "x" });
+    await until("the rows", () => row("Advance 1") && row("Advance 2") && row("Advance 3"), 30_000);
+    const list = visibleThreads();
+    const at = list.findIndex((t) => t.subject === "Advance 3");
+    const [gone, next] = [list[at].threadId, list[at + 1].subject];
+    click(row("Advance 3")!);
+    await until("Advance 3 open", () => q("conv-subject")?.textContent?.includes("Advance 3"));
+    await sleep(800);
+    const rec = recordFrames();
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    key(document.body, "e");
+    const t0 = performance.now();
+    await until("the next one open", () => q("conv-subject")?.textContent?.includes(next), 5000);
+    const ms = performance.now() - t0;
+    await until("archived on the server", async () => (await msgsWith("Advance 3")).every((m) => !m.labels.includes("INBOX")) || null, 20_000);
+    await sleep(2000);
+    const issues = flashes(rec.stop(), [gone], { conversationOpen: true });
+    check(ms < 250, `the next conversation took ${Math.round(ms)} ms`);
+    check(!issues.length, issues.join("\n    "));
+    click(await el("conv-back"));
+    await until("the list without it", () => !row("Advance 3"));
+  } finally {
+    await setSetting("autoAdvance", "list");
+    await api.e2eControl("gmail-behaviour", { latency: {} });
+  }
+});
+
 step("deleting when the server refuses: a passing refusal is retried, a lasting one says so plainly and can be tried again", async () => {
   await backToInbox();
   for (const n of [1, 2]) await api.e2eControl("deliver-gmail", { from: "Refusal Test <refuse@test.example>", subject: `Refused ${n}`, body: "x" });
@@ -1418,6 +1450,25 @@ step("awkward mail still fits: very long subjects and names, right-to-left text,
   check(!problems.length, problems.slice(0, 10).join("\n"));
 });
 
+step("a sync that fails says why in words in Settings ▸ Accounts", async () => {
+  await backToInbox();
+  await api.e2eControl("gmail-behaviour", { failRoutes: { history: 400 } });
+  try {
+    await api.e2eControl("deliver-gmail", { from: "Sync Test <sync@test.example>", subject: "Sync check", body: "x" });
+    const id = getState().accounts.find((a) => a.kind === "gmail")!.id;
+    await until("the sync error", () => getState().sync[id] === "error", 30_000);
+    click(await el("settings-gear"));
+    click(await el("see-all-settings"));
+    click(await el("settings-tab-accounts"));
+    const hint = await el("sync-error");
+    check(!RAW_ERROR.test(hint.innerText) && /didn't accept|broke off/.test(hint.innerText), `the account says: ${hint.innerText}`);
+    click(await el("settings-close"));
+  } finally {
+    await api.e2eControl("gmail-behaviour", { failRoutes: {} });
+    await api.e2eControl("sync");
+  }
+});
+
 step("every settings page opens cleanly at desktop, rail and phone widths", async () => {
   const problems: string[] = [];
   try {
@@ -1436,6 +1487,10 @@ step("every settings page opens cleanly at desktop, rail and phone widths", asyn
         click(tab);
         await sleep(250);
         problems.push(...layoutIssues().map((p) => `${w}px ${tab.dataset.testid}: ${p}`));
+        const raw = [...(q("settings")?.querySelectorAll<HTMLElement>(".hint, .desc, .error, .empty") ?? [])]
+          .map((x) => x.innerText)
+          .find((x) => RAW_ERROR.test(x));
+        if (raw) problems.push(`${tab.dataset.testid} shows raw error text: ${raw}`);
       }
       click(await el("settings-close"));
     }
