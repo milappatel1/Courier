@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { fullDate, headerDate } from "./core/dates";
 import { formatAddress } from "./core/addresses";
 import { parseMessage, type ParsedMessage } from "./core/mime/parse";
-import { api } from "./ipc/api";
+import { api, failureText } from "./ipc/api";
 import type { MessageRow } from "./ipc/types";
 import { buildRaw } from "./state/compose";
 import { init, setState, useMail, type ComposeData } from "./state/store";
@@ -160,7 +160,7 @@ export function EmlPage({ id }: { id: string }) {
       try {
         setP(parseMessage(await api.readFile(payload.path)));
       } catch (e) {
-        setErr(String(e));
+        setErr(failureText("open this message", e));
       }
     })();
   }, [id]);

@@ -20,6 +20,7 @@
   --text: #202124;
   --text-strong: #1f1f1f;
   --text-2: #5f6368;
+  --bin-banner-bg: rgba(241, 243, 244, 0.87);
   --text-3: #5e5e5e;
   --icon: #444746;
   --icon-toolbar: #444444;
@@ -110,6 +111,7 @@
   --text: #ffffff;
   --text-strong: #ffffff;
   --text-2: rgba(255, 255, 255, 0.7);
+  --bin-banner-bg: rgba(255, 255, 255, 0.06);
   --text-3: rgba(255, 255, 255, 0.7);
   --icon: #e3e3e3;
   --icon-toolbar: #e3e3e3;
@@ -2888,6 +2890,24 @@ a {
 }
 .linkbtn:hover {
   text-decoration: underline;
+}
+.bin-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  box-sizing: border-box;
+  padding: 6px 16px;
+  font-size: 14px;
+  text-align: center;
+  color: var(--text-2);
+  background: var(--bin-banner-bg);
+}
+.bin-banner .linkbtn {
+  height: 36px;
+  padding: 0 8px;
+  font-weight: 500;
 }
 .unsubscribed {
   margin-left: 8px;

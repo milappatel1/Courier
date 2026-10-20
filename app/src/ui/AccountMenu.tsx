@@ -1,7 +1,7 @@
 // The account switcher under the avatar: current account, the others (⌘1…⌘9), All inboxes, add another
 // account, sign out.
 import { useRef } from "react";
-import { api, errorText } from "../ipc/api";
+import { api, failureText } from "../ipc/api";
 import { loadAccounts, openSettings, setAccount, toast, ui, useMail } from "../state/store";
 import { Avatar, Icon, IconButton, useOutsideClick } from "./common";
 
@@ -30,7 +30,7 @@ export function AccountMenu({ onClose }: { onClose: () => void }) {
               if (rest.length) await setAccount(rest[0].id);
               toast(`Signed out of ${a.email}.`);
             })
-            .catch((e) => toast(errorText(e))),
+            .catch((e) => toast(failureText("sign out", e))),
       },
     });
   };

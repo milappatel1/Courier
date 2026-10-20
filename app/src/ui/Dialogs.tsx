@@ -7,7 +7,7 @@ import { fullDate } from "../core/dates";
 import { COMPOSE_SHORTCUTS, SHORTCUTS } from "../core/shortcuts";
 import { LABEL_BG, labelTextColor, leafName, parentPath, validateLabelName } from "../core/labels";
 import { formatAddress } from "../core/addresses";
-import { api, errorText } from "../ipc/api";
+import { api, errorText, isAuthError, isOfflineError } from "../ipc/api";
 import type { Discovered, ImapAccountConfig } from "../ipc/types";
 import { applyLabels, snooze } from "../state/actions";
 import { download } from "../state/files";
@@ -33,6 +33,7 @@ function Confirm({
   title,
   body,
   note,
+  alt,
   ok,
   run,
   onClose,
@@ -40,6 +41,7 @@ function Confirm({
   title: string;
   body: string;
   note?: { text: string; link?: { label: string; run: () => void } };
+  alt?: { label: string; run: () => void };
   ok: string;
   run: () => void;
   onClose: () => void;
@@ -54,6 +56,11 @@ function Confirm({
           <button className="btn text" onClick={onClose} data-testid="confirm-cancel">
             Cancel
           </button>
+          {alt && (
+            <button className="btn text" onClick={() => (onClose(), alt.run())} data-testid="confirm-alt">
+              {alt.label}
+            </button>
+          )}
           <button className="btn text" onClick={() => (onClose(), run())} data-testid="confirm-ok">
             {ok}
           </button>
@@ -342,7 +349,7 @@ function AddAccount({ kind, reauth, onClose }: { kind?: "gmail" | "imap"; reauth
       const a = await api.addGmail(email || undefined, reauth?.id);
       await done(a.id);
     } catch (e) {
-      setErr(errorText(e));
+      setErr(isAuthError(e) ? "Sign-in didn't go through. Try again, and allow every permission Courier asks for." : errorText(e));
     } finally {
       setBusy(false);
     }
@@ -381,7 +388,13 @@ function AddAccount({ kind, reauth, onClose }: { kind?: "gmail" | "imap"; reauth
       });
       await done(a.id);
     } catch (e) {
-      setErr(errorText(e));
+      setErr(
+        isAuthError(e)
+          ? "The mail server didn't accept that email address and password. Some providers need an app password made for Courier."
+          : isOfflineError(e)
+            ? "Courier couldn't reach the mail server. Check the server names, the ports and your connection."
+            : errorText(e),
+      );
     } finally {
       setBusy(false);
     }

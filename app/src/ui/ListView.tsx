@@ -68,6 +68,7 @@ export function ListView() {
       </div>
       <ListToolbar />
       <SelectAllBanner />
+      <EmptyBinBanner />
       {showTabs && <CategoryTabs />}
       {list.loading && <div className="loading-bar" />}
       <div className="list" role="grid" aria-label="Conversations" data-testid="thread-list">
@@ -79,6 +80,28 @@ export function ListView() {
 }
 
 /** "1–50 of 1,234" for the rows shown (conversations on their way out of the view don't count). */
+/** Above Trash and Spam: what happens to mail there, and a way to empty it now. */
+function EmptyBinBanner() {
+  const route = useMail((s) => s.route.list);
+  const accountId = useMail((s) => s.accountId);
+  const any = useMail((s) => (s.list.result?.threads.length ?? 0) > 0);
+  const label = route.query ? null : route.label;
+  if ((label !== "TRASH" && label !== "SPAM") || accountId === "all") return null;
+  const where = label === "TRASH" ? "Trash" : "Spam";
+  const gmail = accountById(accountId)?.kind === "gmail";
+  if (!gmail && !any) return null;
+  return (
+    <div className="bin-banner" data-testid="bin-banner">
+      {gmail && `Messages that have been in ${where} more than 30 days will be automatically deleted. `}
+      {any && (
+        <button type="button" className="linkbtn" onClick={() => void emptyLabel(accountId, label)} data-testid="bin-empty">
+          {label === "TRASH" ? "Empty Trash now" : "Delete all spam messages now"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function pageInfo(r: ViewResult | null, page: number, size: number, shown: number) {
   const n = shown;
   if (!r || !n) return "";

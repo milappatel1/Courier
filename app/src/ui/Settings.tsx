@@ -5,7 +5,7 @@ import { describeActions, describeCriteria, type FilterAction, type FilterCriter
 import { exportFiltersXml, importedAction, importFiltersXml, type FilterActionLike, type FilterCriteriaLike, type ImportedFilter } from "../core/filtersxml";
 import { download } from "../state/files";
 import { leafName } from "../core/labels";
-import { api, errorText } from "../ipc/api";
+import { api, errorText, failureText } from "../ipc/api";
 import type { Account, ImapAccountConfig, Label, Signature } from "../ipc/types";
 import { DEFAULTS, FONTS, SIZES, STAR_TYPES, SWIPE_ACTIONS, type Settings as S, type SwipeAction } from "../state/settings";
 import {
@@ -467,7 +467,7 @@ function SignaturesRow({ account }: { account: Account }) {
   };
   const saveDefaults = async (d: typeof defaults) => {
     setDefaults(d);
-    await api.signatureDefaults(account.id, account.email, d.newMail, d.replies).catch((e) => toast(errorText(e)));
+    await api.signatureDefaults(account.id, account.email, d.newMail, d.replies).catch((e) => toast(failureText("save the signature choices", e)));
   };
   return (
     <Row k="Signature:" small="(added at the end of outgoing messages)">
@@ -568,7 +568,7 @@ function VacationRow({ account, ctl }: { account: Account; ctl: React.MutableRef
   ctl.current = {
     save: async () => {
       if (!v || account.kind !== "gmail") return;
-      await api.setServerSettings(account.id, "vacation", v).catch((e) => toast(errorText(e)));
+      await api.setServerSettings(account.id, "vacation", v).catch((e) => toast(failureText("save the vacation responder", e)));
     },
   };
   const day = (ms?: string) => (ms ? new Date(Number(ms)).toISOString().slice(0, 10) : "");
@@ -634,7 +634,7 @@ function LabelsTab({ accountId }: { accountId: string }) {
     void api
       .labelUpdate(accountId, l.id, patch)
       .then(() => loadLabels(accountId))
-      .catch((e) => toast(errorText(e)));
+      .catch((e) => toast(failureText("change the label", e)));
   const setSys = (id: string, v: string) => {
     useMail.setState((s) => ({ settings: { ...s.settings, systemLabels: { ...vis, [id]: v } } as unknown as S }));
     void api.setSetting("systemLabels", { ...vis, [id]: v });
@@ -755,7 +755,7 @@ function LabelsTab({ accountId }: { accountId: string }) {
                             void api
                               .labelDelete(accountId, l.id)
                               .then(() => loadLabels(accountId))
-                              .catch((e) => toast(errorText(e))),
+                              .catch((e) => toast(failureText("remove the label", e))),
                         },
                       })
                     }
@@ -953,7 +953,7 @@ function AccountsTab() {
       loadClient();
       toast("Google sign-in is set up.");
     } catch (e) {
-      toast(errorText(e));
+      toast(failureText("save the sign-in setup", e));
     }
   };
   return (
@@ -1033,7 +1033,7 @@ function AccountsTab() {
                 void api
                   .setDefaultMailApp()
                   .then(() => setTimeout(() => void api.isDefaultMailApp().then(setIsDefault), 1500))
-                  .catch((e) => toast(errorText(e)))
+                  .catch((e) => toast(failureText("make Courier the default mail app", e)))
               }
             >
               Make Courier the default mail app
@@ -1176,7 +1176,7 @@ function SendAsRow({ a }: { a: Account }) {
               void api
                 .sendAsSave(a.id, e, { displayName: n, treatAsAlias: true }, true)
                 .then(() => (setAdding(false), load(), toast("Address added. Confirm it from the verification email your provider sends.")))
-                .catch((x) => toast(errorText(x)))
+                .catch((x) => toast(failureText("add that address", x)))
             }
           >
             Add
@@ -1213,7 +1213,7 @@ function ImapServerRow({ a }: { a: Account }) {
             void api
               .addImap({ email: a.email, name: a.name, config: cfg, password: pw, reauthId: a.id })
               .then(() => (toast("Password updated."), setPw("")))
-              .catch((e) => toast(errorText(e)))
+              .catch((e) => toast(failureText("update the password", e)))
               .finally(() => setBusy(false));
           }}
         >
@@ -1456,7 +1456,7 @@ function ForwardingTab({ accountId }: { accountId: string }) {
       if (imap) await api.setServerSettings(accountId, "imap", imap);
       toast("Your preferences have been saved.");
     } catch (e) {
-      toast(errorText(e));
+      toast(failureText("save the forwarding settings", e));
     }
   };
   const verified = fwd.filter((f) => f.verificationStatus === "accepted");
@@ -1481,7 +1481,7 @@ function ForwardingTab({ accountId }: { accountId: string }) {
               void api
                 .forwardingAdd(accountId, add)
                 .then(() => (setAdd(""), load(), toast("A confirmation code was sent to that address.")))
-                .catch((e) => toast(errorText(e)))
+                .catch((e) => toast(failureText("add the forwarding address", e)))
             }
           >
             Add

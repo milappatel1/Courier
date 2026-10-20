@@ -1,5 +1,5 @@
 // Actions on conversations, with the toast + Undo the web client shows.
-import { parseListUnsubscribe, unsubscribeDialog } from "../core/unsubscribe";
+import { parseListUnsubscribe, unsubscribeDialog, type UnsubscribeMethod } from "../core/unsubscribe";
 import { api, errorText, failureText, on, type BulkOutcome } from "../ipc/api";
 import type { ThreadSummary, ViewQuery } from "../ipc/types";
 import { nextStar } from "./settings";
@@ -116,6 +116,69 @@ const DOING: Record<ActionKind, string> = {
 };
 const doing = (kind: ActionKind, n: number) => DOING[kind].replace("{c}", n === 1 ? "the conversation" : `${n.toLocaleString()} conversations`);
 
+/** A sender in the conversations being reported, with a way to unsubscribe from them. */
+interface SpamOffer {
+  accountId: string;
+  sender: { name: string; email: string };
+  method: UnsubscribeMethod;
+}
+
+/**
+ * Reporting spam on mailing-list mail asks first, as the web client does, whether to unsubscribe as well.
+ * True when it asked (the answer carries on from the dialog).
+ */
+async function askSpamOrUnsubscribe(targets: Target[], count: number): Promise<boolean> {
+  const local = !!getState().info?.e2e;
+  const offers: SpamOffer[] = [];
+  for (const t of targets) {
+    const done = getState().unsubscribed[t.accountId] ?? [];
+    const me = accountById(t.accountId)?.email.toLowerCase();
+    for (const id of t.threadIds) {
+      const d = await api.thread(t.accountId, id).catch(() => null);
+      const m = [...(d?.messages ?? [])].reverse().find((x) => x.listUnsubscribe && x.fromEmail.toLowerCase() !== me);
+      const method = m && parseListUnsubscribe(m.listUnsubscribe, m.listUnsubscribePost || null, { localOk: local });
+      if (!m || !method || done.includes(m.fromEmail.toLowerCase()) || offers.some((o) => o.sender.email === m.fromEmail)) continue;
+      offers.push({ accountId: t.accountId, sender: { name: m.fromName, email: m.fromEmail }, method });
+    }
+  }
+  if (!offers.length) return false;
+  const who = offers.map((o) => o.sender.name || o.sender.email).join(", ");
+  ui({
+    confirm: {
+      title: "Report spam or unsubscribe?",
+      body:
+        count === 1 && offers.length === 1
+          ? `This message will be marked as spam. Would you also like to stop receiving similar messages from ${who}?`
+          : `These messages will be marked as spam. Would you also like to stop receiving similar messages from ${who}?`,
+      alt: { label: "Report spam", run: () => void act("spam", targets, { asked: true }) },
+      ok: "Unsubscribe",
+      run: () => void spamAndUnsubscribe(targets, offers),
+    },
+  });
+  return true;
+}
+
+async function spamAndUnsubscribe(targets: Target[], offers: SpamOffer[]) {
+  const { sendSimple } = await import("./compose");
+  let ok = 0;
+  for (const o of offers) {
+    try {
+      if (o.method.kind === "one-click") await api.unsubscribeOneClick(o.method.url);
+      else if (o.method.kind === "mailto") await sendSimple(o.accountId, o.method.to, o.method.subject || "unsubscribe", o.method.body);
+      else {
+        await api.openExternal(o.method.url);
+        continue;
+      }
+      await api.markUnsubscribed(o.accountId, o.sender.email).catch(() => {});
+      noteUnsubscribed(o.accountId, o.sender.email);
+      ok++;
+    } catch (e) {
+      toast(failureText(`unsubscribe from ${o.sender.name || o.sender.email}`, e));
+    }
+  }
+  await act("spam", targets, { asked: true, note: ok ? (ok === 1 ? " Unsubscribed from its mailing list." : " Unsubscribed from their mailing lists.") : "" });
+}
+
 /** After removing the open conversation from view: next one (auto-advance) or back to the list. */
 function advanceAfter(leaving: boolean) {
   const s = getState();
@@ -124,9 +187,10 @@ function advanceAfter(leaving: boolean) {
   if (mode === "list" || !stepThread(mode === "older" ? 1 : -1)) closeThread();
 }
 
-export async function act(kind: ActionKind, targets: Target[] = currentTargets()) {
+export async function act(kind: ActionKind, targets: Target[] = currentTargets(), opts: { asked?: boolean; note?: string } = {}) {
   const count = targets.reduce((n, t) => n + t.threadIds.length, 0);
   if (!count) return;
+  if (kind === "spam" && !opts.asked && (await askSpamOrUnsubscribe(targets, count))) return;
   const s = getState();
   const rule = RULES[kind];
   const label = s.route.list.query ? null : s.route.list.label;
@@ -163,7 +227,7 @@ export async function act(kind: ActionKind, targets: Target[] = currentTargets()
     if (["read", "unread", "star", "unstar", "important", "not-important"].includes(kind) && !leaving) {
       toast(rule.text(count));
       setState({ undo: { text: rule.text(count), run: undo } });
-    } else withUndo(rule.text(count), undo);
+    } else withUndo(rule.text(count) + (opts.note ?? ""), undo);
     ok = true;
   } catch (e) {
     toast(failureText(doing(kind, count), e), { action: { label: "Try again", run: () => void act(kind, targets) } });

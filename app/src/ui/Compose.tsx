@@ -9,7 +9,7 @@ import { schedulePresets } from "../core/dates";
 import { encodedSize, SEND_LIMIT_BYTES } from "../core/mime/build";
 import { signatureHtml } from "../core/compose";
 import { htmlToText } from "../core/text";
-import { api, errorText, failureText } from "../ipc/api";
+import { api, failureText } from "../ipc/api";
 import type { Contact, Signature, Template } from "../ipc/types";
 import {
   attachmentFromFile,
@@ -1147,7 +1147,7 @@ function SpellDialog({ html, onClose, onFix }: { html: string; onClose: () => vo
         const chars = [...text];
         setIssues((r[0] ?? []).map((x) => ({ word: chars.slice(x.start, x.start + x.len).join(""), suggestions: x.suggestions })));
       })
-      .catch((e) => (toast(errorText(e)), onClose()));
+      .catch((e) => (toast(failureText("check the spelling", e)), onClose()));
   }, []);
   return (
     <Dialog

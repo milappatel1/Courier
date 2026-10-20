@@ -2,7 +2,7 @@
 // per-label menus, and drop targets for dragging conversations onto labels.
 import { useEffect, useMemo, useState } from "react";
 import { LABEL_BG, labelTextColor, labelTree, leafName, type LabelNode } from "../core/labels";
-import { api, errorText, on } from "../ipc/api";
+import { api, failureText, on } from "../ipc/api";
 import type { Label, OutboxRow } from "../ipc/types";
 import { applyLabels } from "../state/actions";
 import { openCompose } from "../state/compose";
@@ -367,7 +367,7 @@ function LabelMenu({ label, anchor, onClose }: { label: Label; anchor: ReturnTyp
     void api
       .labelUpdate(label.accountId, label.id, patch)
       .then(() => loadLabels(label.accountId))
-      .catch((e) => toast(errorText(e)));
+      .catch((e) => toast(failureText("change the label", e)));
   const colors: MenuEntry = {
     label: "Label color",
     submenu: () => (
@@ -413,7 +413,7 @@ function LabelMenu({ label, anchor, onClose }: { label: Label; anchor: ReturnTyp
               void api
                 .labelDelete(label.accountId, label.id)
                 .then(() => (loadLabels(label.accountId), getState().route.list.label === label.id && go({ label: "INBOX" })))
-                .catch((e) => toast(errorText(e))),
+                .catch((e) => toast(failureText("remove the label", e))),
           },
         }),
     },

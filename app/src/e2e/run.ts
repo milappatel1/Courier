@@ -158,6 +158,8 @@ const parsedSent = (raw: string) => {
 const msgsWith = async (subject: string) => (await server()).gmailMessages.filter((m) => m.subject === subject || m.subject === `Re: ${subject}`);
 
 async function openList(label: string) {
+  // Trash, Spam and the rest wait under More until it's opened.
+  if (!q(`nav-${label}`) && label !== "INBOX" && q("nav-more")) click(q("nav-more")!);
   // At phone width the menu lists the inbox tabs in place of Inbox.
   click(await until(`nav ${label}`, () => q(`nav-${label}`) ?? (label === "INBOX" ? q("nav-tab-primary") : null)));
   await until(`${label} list`, () => getState().route.list.label === label && !getState().route.thread && !getState().list.loading);
@@ -236,6 +238,14 @@ step("adds the IMAP account (discovery, app password, test login)", async () => 
   type(await el("imap-email"), info.imapEmail);
   type(await el("imap-name"), "Pat");
   click(await el("imap-next"));
+  // A wrong password gets a sentence about the password, not the server's reply.
+  type(await el("imap-password"), "not-the-password");
+  click(await el("imap-add"));
+  const wrong = await until("the error", () => document.querySelector<HTMLElement>(".error-box"), 20_000);
+  check(
+    /didn't accept that email address and password/.test(wrong.textContent ?? "") && !RAW_ERROR.test(wrong.textContent ?? ""),
+    `said: ${wrong.textContent}`,
+  );
   type(await el("imap-password"), info.imapPassword);
   click(await el("imap-add"));
   await until("two accounts", () => getState().accounts.length === 2, 30_000);
@@ -1023,6 +1033,51 @@ step("unsubscribe as the web client does: one-click in the background, else an e
   );
   click(await el("confirm-ok"));
   await until("the page opened", async () => (await server()).opened.includes("https://store.example/unsubscribe?u=1") || null);
+  await backToInbox();
+});
+
+step("Trash and Spam say what happens to their mail and offer to empty them", async () => {
+  await api.e2eControl("deliver-gmail", { from: "Old Note <old@test.example>", subject: "Already in Trash", body: "x", labels: ["TRASH"] });
+  await openList("TRASH");
+  await until("the trashed message", () => row("Already in Trash"), 30_000);
+  const b = await until("the banner with its link", () => (q("bin-empty") ? q("bin-banner") : null));
+  check(
+    b.textContent?.startsWith("Messages that have been in Trash more than 30 days will be automatically deleted.") &&
+      q("bin-empty", b)?.textContent === "Empty Trash now",
+    b.textContent ?? "",
+  );
+  click(q("bin-empty", b)!);
+  check((await el("confirm-dialog")).textContent?.includes("Empty Trash?"), "no confirmation before emptying");
+  click(await el("confirm-cancel"));
+  await openList("SPAM");
+  check((await el("bin-banner")).textContent?.startsWith("Messages that have been in Spam more than 30 days will be automatically deleted."), "no Spam banner");
+  await backToInbox();
+});
+
+step("reporting list mail as spam asks whether to unsubscribe as well", async () => {
+  await backToInbox();
+  const h = (p: string) => `List-Unsubscribe: <${info.fakeBase}/unsubscribe/${p}>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n`;
+  await api.e2eControl("deliver-gmail", { from: "Promo Blast <blast@promo.example>", subject: "Promo blast", body: "x", headers: h("blast") });
+  await api.e2eControl("deliver-gmail", { from: "Other Promo <other@promo2.example>", subject: "Other promo", body: "x", headers: h("other") });
+  const inSpam = async (subject: string) => (await msgsWith(subject)).every((m) => m.labels.includes("SPAM")) || null;
+  click(await until("the blast", () => row("Promo blast"), 30_000));
+  click(await el("conv-spam"));
+  const d = await el("confirm-dialog");
+  check(
+    (d.textContent ?? "").includes("Report spam or unsubscribe?") &&
+      (d.textContent ?? "").includes("This message will be marked as spam. Would you also like to stop receiving similar messages from Promo Blast?"),
+    d.textContent ?? "",
+  );
+  click(await el("confirm-ok"));
+  await until("unsubscribed", async () => (await server()).unsubscribeRequests.find((r) => r.path === "blast" && r.method === "POST"), 20_000);
+  await until("in Spam", () => inSpam("Promo blast"), 20_000);
+  await until("the toast", () => toastWith(/marked as spam\. Unsubscribed from its mailing list\./));
+  await backToInbox();
+  click(await until("the other", () => row("Other promo"), 30_000));
+  click(await el("conv-spam"));
+  click(await el("confirm-alt", await el("confirm-dialog")));
+  await until("in Spam", () => inSpam("Other promo"), 20_000);
+  check(!(await server()).unsubscribeRequests.some((r) => r.path === "other"), "unsubscribed when only Report spam was chosen");
   await backToInbox();
 });
 

@@ -94,7 +94,15 @@ interface UI {
   themePicker: boolean;
   showOriginal: null | { accountId: string; messageId: string };
   snoozePicker: null | { accountId: string; threadIds: string[] };
-  confirm: null | { title: string; body: string; note?: { text: string; link?: { label: string; run: () => void } }; ok: string; run: () => void };
+  confirm: null | {
+    title: string;
+    body: string;
+    note?: { text: string; link?: { label: string; run: () => void } };
+    /** A second answer next to the main one ("Report spam" beside "Unsubscribe"). */
+    alt?: { label: string; run: () => void };
+    ok: string;
+    run: () => void;
+  };
   /** A one-line question (the web view has no window.prompt). */
   ask: null | { title: string; label: string; value?: string; ok: string; options?: string[]; run: (value: string) => void };
   searchFocus: number;
