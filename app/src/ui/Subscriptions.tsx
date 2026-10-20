@@ -2,7 +2,6 @@
 // Unsubscribe button (one-click, an unsubscribe email, or the sender's page) and a way to clear out their
 // past mail. Built from the mail Courier has on this Mac.
 import { useEffect, useMemo, useState } from "react";
-import { listDate } from "../core/dates";
 import { parseListUnsubscribe } from "../core/unsubscribe";
 import { api, errorText, failureText, on } from "../ipc/api";
 import type { Subscription } from "../ipc/types";
@@ -47,12 +46,10 @@ export function Subscriptions() {
   };
   return (
     <div className="subs" data-testid="subscriptions">
-      <h1 className="subs-title">Manage subscriptions</h1>
+      <h1 className="subs-title">Subscriptions</h1>
       <div className="subs-scroll">
         <div className="subs-head">
-          <span className="subs-intro">
-            Senders whose mail offers a way to unsubscribe, from the mail on this Mac. Mail you already have stays until you clear it.
-          </span>
+          <span className="subs-intro">When you unsubscribe, it can take senders a few days to stop sending messages.</span>
           <label className="subs-sort">
             <span className="light">Sort by</span>
             <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} data-testid="subs-sort" aria-label="Sort subscriptions">
@@ -100,9 +97,7 @@ function SubRow({ r, onDone }: { r: Subscription; onDone: () => void }) {
             {r.email}
             {multi && <> · {accountById(r.accountId)?.email}</>}
           </span>
-          <span className="sub-meta">
-            {r.recent > 0 ? `${r.recent} in the last 30 days` : "Nothing in the last 30 days"} · {r.total} in all · newest {listDate(r.lastDate)}
-          </span>
+          <span className="sub-meta">{r.recent > 20 ? "20+ emails recently" : r.recent >= 10 ? "10-20 emails recently" : "10 or fewer emails recently"}</span>
         </span>
       </button>
       <div className="sub-actions">
@@ -117,7 +112,13 @@ function SubRow({ r, onDone }: { r: Subscription; onDone: () => void }) {
             label={how ? `Unsubscribe from ${name}` : "No unsubscribe option"}
             disabled={!how}
             onClick={() =>
-              void unsubscribe(r.accountId, r.listUnsubscribe, r.listUnsubscribePost, name, (to, s, b) => sendSimple(r.accountId, to, s, b), onDone)
+              void unsubscribe({
+                accountId: r.accountId,
+                sender: { name: r.name, email: r.email },
+                scope: "sender",
+                sendMail: (to, s, b) => sendSimple(r.accountId, to, s, b),
+                onDone,
+              })
             }
             testId="sub-unsubscribe"
           />

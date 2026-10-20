@@ -121,6 +121,9 @@ export const api = {
   forwardingAdd: (accountId: string, email: string) => call<unknown>("forwarding_add", { accountId, email }),
   forwardingRemove: (accountId: string, email: string) => call<void>("forwarding_remove", { accountId, email }),
   unsubscribeOneClick: (url: string) => call<void>("unsubscribe_one_click", { url }),
+  senderLists: (accountId: string, email: string) =>
+    call<{ listId: string; listUnsubscribe: string; listUnsubscribePost: string }[]>("sender_lists", { accountId, email }),
+  unsubscribedSenders: (accountId: string) => call<string[]>("unsubscribed_senders", { accountId }),
   syncNow: (accountId?: string | null) => call<void>("sync_now", { accountId: accountId ?? null }),
   // files & Mac
   tempFile: (name: string, data: Uint8Array) => call<string>("temp_file", { name, data: base64Encode(data) }),

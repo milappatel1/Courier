@@ -1724,15 +1724,50 @@ impl Engine {
 
     // ---- unsubscribe ----
 
-    /// RFC 8058 one-click (POST) when offered; otherwise the caller handles mailto/link.
+    /// RFC 8058 one-click: POST "List-Unsubscribe=One-Click" to the sender's https link, from a client of its own
+    /// (no cookies, nothing of the account's), following at most 5 redirects and only to https. Done when the
+    /// final answer is 2xx. The caller handles mailto and website links.
     pub async fn unsubscribe_one_click(&self, url: &str) -> Result<()> {
-        // RFC 8058 one-click needs HTTPS. Debug and test builds also accept the local fake server.
-        let local_fake = cfg!(debug_assertions) && url.starts_with("http://127.0.0.1:");
-        if !url.starts_with("https://") && !local_fake {
-            return Err(Error::msg("Only https unsubscribe links can be used."));
+        // Debug and test builds also accept the local fake server.
+        let local_fake = cfg!(debug_assertions);
+        if !one_click_allowed(url, local_fake) {
+            return Err(Error::msg("This sender's unsubscribe link can't be used for one-click unsubscribe."));
         }
-        let r = self.http.post(url).header("Content-Type", "application/x-www-form-urlencoded").body("List-Unsubscribe=One-Click").send().await?;
-        if r.status().is_success() { Ok(()) } else { Err(Error::Server(format!("unsubscribe {}", r.status()))) }
+        let policy = reqwest::redirect::Policy::custom(move |a| {
+            if a.previous().len() >= 5 {
+                a.error("too many redirects")
+            } else if one_click_allowed(a.url().as_str(), local_fake) {
+                a.follow()
+            } else {
+                a.stop()
+            }
+        });
+        let ms = ONE_CLICK_TIMEOUT_MS.load(Ordering::Relaxed);
+        let client = reqwest::Client::builder()
+            .redirect(policy)
+            .timeout(Duration::from_millis(ms))
+            .connect_timeout(Duration::from_millis(ms.min(10_000)))
+            .user_agent("Courier")
+            .build()
+            .map_err(|e| Error::msg(e.to_string()))?;
+        let sent = client.post(url).header("Content-Type", "application/x-www-form-urlencoded").body("List-Unsubscribe=One-Click").send().await;
+        match sent {
+            Ok(r) if r.status().is_success() => Ok(()),
+            Ok(r) => {
+                crate::applog::warn(&format!("one-click unsubscribe: the sender answered {}", r.status()));
+                Err(Error::msg("The sender's server didn't confirm it."))
+            }
+            Err(e) => {
+                crate::applog::warn(&format!("one-click unsubscribe: {e}"));
+                Err(Error::msg("The sender's server didn't answer."))
+            }
+        }
+    }
+
+    /// Each mailing list a sender has used in the cached mail (by List-Id, else by its unsubscribe header),
+    /// newest first: Manage subscriptions unsubscribes from all of them.
+    pub fn sender_lists(&self, account: &str, email: &str) -> Result<Vec<crate::db::SenderList>> {
+        self.db.sender_lists(account, email)
     }
 }
 
@@ -1814,6 +1849,31 @@ fn expand_label_rules(add: &[String], remove: &[String]) -> (Vec<String>, Vec<St
     }
     add.retain(|l| !remove.contains(l));
     (add, remove)
+}
+
+/// How long a one-click unsubscribe request may take (tests shorten it).
+pub static ONE_CLICK_TIMEOUT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(15_000);
+
+/// Whether Courier may POST a one-click unsubscribe to `url`: https only, and never to this Mac or the local
+/// network (a link in a message must not reach a router or a printer). `local_fake` lets debug builds reach the
+/// fake servers on 127.0.0.1 over http.
+pub fn one_click_allowed(url: &str, local_fake: bool) -> bool {
+    let Ok(u) = reqwest::Url::parse(url) else { return false };
+    if local_fake && u.scheme() == "http" && u.host_str() == Some("127.0.0.1") {
+        return true;
+    }
+    if u.scheme() != "https" {
+        return false;
+    }
+    match u.host() {
+        Some(url::Host::Domain(d)) => {
+            let d = d.to_ascii_lowercase();
+            !(d == "localhost" || d.ends_with(".localhost") || d.ends_with(".local") || d.ends_with(".internal") || !d.contains('.'))
+        }
+        Some(url::Host::Ipv4(ip)) => !(ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast() || ip.octets()[0] == 100 && ip.octets()[1] & 0xc0 == 64),
+        Some(url::Host::Ipv6(ip)) => !(ip.is_loopback() || ip.is_unspecified() || (ip.segments()[0] & 0xfe00) == 0xfc00 || (ip.segments()[0] & 0xffc0) == 0xfe80),
+        None => false,
+    }
 }
 
 /// What a whole-view action did: the messages changed (for Undo) and how many conversations changed or didn't.

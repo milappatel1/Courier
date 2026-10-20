@@ -287,13 +287,13 @@ describe("text", () => {
 });
 
 describe("unsubscribe and mailto", () => {
-  it("prefers RFC 8058 one-click, then mailto, then a link", () => {
+  it("prefers RFC 8058 one-click, then mailto, then the website", () => {
     expect(parseListUnsubscribe("<mailto:u@x.io?subject=stop>, <https://x.io/u>", "List-Unsubscribe=One-Click")).toEqual({
       kind: "one-click",
       url: "https://x.io/u",
     });
     expect(parseListUnsubscribe("<mailto:u@x.io?subject=stop>, <https://x.io/u>", null)).toEqual({ kind: "mailto", to: "u@x.io", subject: "stop", body: "" });
-    expect(parseListUnsubscribe("<https://x.io/u>", null)).toEqual({ kind: "link", url: "https://x.io/u" });
+    expect(parseListUnsubscribe("<https://x.io/u>", null)).toEqual({ kind: "website", url: "https://x.io/u" });
     expect(parseListUnsubscribe(null, null)).toBeNull();
   });
   it("parses mailto URLs", () => {

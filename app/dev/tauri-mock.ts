@@ -934,6 +934,17 @@ const handlers: Record<string, (a: Args) => unknown> = {
     return [...by.values()].sort((x, y) => (y.recent as number) - (x.recent as number));
   },
   mark_unsubscribed: (a) => (unsubscribed.set(`${a.accountId}:${String(a.email).toLowerCase()}`, Date.now()), null),
+  unsubscribed_senders: (a) => [...unsubscribed.keys()].filter((k) => k.startsWith(`${a.accountId}:`)).map((k) => k.slice(String(a.accountId).length + 1)),
+  sender_lists: (a) => {
+    const seen = new Map<string, Record<string, unknown>>();
+    for (const m of [...msgs].sort((x, y) => y.date - x.date)) {
+      const p = parsed(m);
+      if (m.accountId !== a.accountId || !p.listUnsubscribe || p.from[0]?.email.toLowerCase() !== String(a.email).toLowerCase()) continue;
+      if (!seen.has(p.listUnsubscribe))
+        seen.set(p.listUnsubscribe, { listId: "", listUnsubscribe: p.listUnsubscribe, listUnsubscribePost: p.listUnsubscribePost ?? "" });
+    }
+    return [...seen.values()];
+  },
   sync_now: () => null,
   temp_file: (a) => `/tmp/preview/${a.name}`,
   write_file: () => null,

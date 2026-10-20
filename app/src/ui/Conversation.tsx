@@ -318,6 +318,7 @@ function Message({
     };
   }, [expanded, accountId, m.id]);
   const fromSelf = acct && (m.fromEmail.toLowerCase() === acct.email.toLowerCase() || acct.aliases.some((a) => a.toLowerCase() === m.fromEmail.toLowerCase()));
+  const unsubscribed = useMail((s) => s.unsubscribed[accountId] ?? NO_SENDERS);
   const allowRemote = remote || settings.images === "always" || settings.alwaysShowRemoteFrom.includes(m.fromEmail.toLowerCase()) || !!fromSelf;
   const name = m.fromName || m.fromEmail;
   const star = STAR_TYPES.find((s) => s.id === (m.starType ?? "yellow-star"));
@@ -400,16 +401,23 @@ function Message({
                 </SenderCard>
               )}
               {!isDraft && m.fromName && <span className="addr">&lt;{m.fromEmail}&gt;</span>}
-              {m.listUnsubscribe && !fromSelf && (
-                <button
-                  type="button"
-                  className="linkbtn"
-                  style={{ fontSize: 12, marginLeft: 8, textDecoration: "underline" }}
-                  onClick={(e) => (e.stopPropagation(), doUnsubscribe(accountId, m))}
-                  data-testid="unsubscribe"
-                >
-                  Unsubscribe
-                </button>
+              {m.listUnsubscribe && !fromSelf && unsubscribed.includes(m.fromEmail.toLowerCase()) ? (
+                <span className="unsubscribed" data-testid="unsubscribed">
+                  Unsubscribed
+                </span>
+              ) : (
+                m.listUnsubscribe &&
+                !fromSelf && (
+                  <button
+                    type="button"
+                    className="linkbtn"
+                    style={{ fontSize: 12, marginLeft: 8, textDecoration: "underline" }}
+                    onClick={(e) => (e.stopPropagation(), doUnsubscribe(accountId, m))}
+                    data-testid="unsubscribe"
+                  >
+                    Unsubscribe
+                  </button>
+                )
               )}
             </div>
             {/* The details box hangs under "to …" inside the message, so it scrolls with it. */}
@@ -623,10 +631,17 @@ function SenderCard({ accountId, name, email, children }: { accountId: string; n
   );
 }
 
+const NO_SENDERS: string[] = [];
+
 function doUnsubscribe(accountId: string, m: MessageRow) {
-  void unsubscribe(accountId, m.listUnsubscribe, m.listUnsubscribePost, m.fromName || m.fromEmail, (to, subject, body) =>
-    sendSimple(accountId, to, subject, body),
-  );
+  void unsubscribe({
+    accountId,
+    sender: { name: m.fromName, email: m.fromEmail },
+    scope: "list",
+    header: m.listUnsubscribe,
+    post: m.listUnsubscribePost,
+    sendMail: (to, subject, body) => sendSimple(accountId, to, subject, body),
+  });
 }
 
 async function downloadEml(accountId: string, m: MessageRow) {

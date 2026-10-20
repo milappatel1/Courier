@@ -22,6 +22,15 @@ pub struct AttachmentMeta {
 }
 
 /// A sender on the Manage subscriptions page.
+/// One mailing list a sender uses, with the unsubscribe headers of its newest message.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SenderList {
+    pub list_id: String,
+    pub list_unsubscribe: String,
+    pub list_unsubscribe_post: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Subscription {
@@ -629,6 +638,22 @@ impl Db {
         self.with(|c| {
             c.execute("UPDATE labels SET threads_total=?3, threads_unread=?4, messages_total=?5, messages_unread=?6 WHERE account_id=?1 AND id=?2", params![account, id, counts.0, counts.1, counts.2, counts.3])?;
             Ok(())
+        })
+    }
+
+    pub fn sender_lists(&self, account: &str, email: &str) -> Result<Vec<SenderList>> {
+        self.with(|c| {
+            let mut st = c.prepare(
+                "SELECT list_id, list_unsubscribe, list_unsubscribe_post FROM (
+                   SELECT list_id, list_unsubscribe, list_unsubscribe_post, internal_date,
+                          ROW_NUMBER() OVER (PARTITION BY CASE WHEN list_id != '' THEN list_id ELSE list_unsubscribe END ORDER BY internal_date DESC) AS rn
+                   FROM messages WHERE account_id = ?1 AND lower(from_email) = lower(?2) AND list_unsubscribe != '')
+                 WHERE rn = 1 ORDER BY internal_date DESC",
+            )?;
+            let rows = st
+                .query_map(params![account, email], |r| Ok(SenderList { list_id: r.get(0)?, list_unsubscribe: r.get(1)?, list_unsubscribe_post: r.get(2)? }))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
         })
     }
 

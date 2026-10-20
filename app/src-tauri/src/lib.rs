@@ -613,6 +613,8 @@ pub fn run() {
             commands::forwarding_add,
             commands::forwarding_remove,
             commands::unsubscribe_one_click,
+            commands::sender_lists,
+            commands::unsubscribed_senders,
             commands::sync_now,
             commands::temp_file,
             commands::write_file,

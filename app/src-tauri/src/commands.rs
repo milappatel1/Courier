@@ -662,6 +662,17 @@ pub async fn unsubscribe_one_click(st: S<'_>, url: String) -> Result<()> {
     st.engine.unsubscribe_one_click(&url).await
 }
 
+#[tauri::command]
+pub fn sender_lists(st: S, account_id: String, email: String) -> Result<Vec<crate::db::SenderList>> {
+    st.engine.sender_lists(&account_id, &email)
+}
+
+#[tauri::command]
+pub fn unsubscribed_senders(st: S, account_id: String) -> Result<Vec<String>> {
+    let done = st.engine.db.kv_get(&format!("unsubscribed:{account_id}"))?.unwrap_or(serde_json::json!({}));
+    Ok(done.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default())
+}
+
 // ---- sync & status ----
 
 #[tauri::command]

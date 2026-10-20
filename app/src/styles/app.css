@@ -2889,6 +2889,14 @@ a {
 .linkbtn:hover {
   text-decoration: underline;
 }
+.unsubscribed {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.confirm-note {
+  margin: 12px 0 0;
+}
 .star-pick {
   display: flex;
   flex-wrap: wrap;

@@ -94,7 +94,7 @@ interface UI {
   themePicker: boolean;
   showOriginal: null | { accountId: string; messageId: string };
   snoozePicker: null | { accountId: string; threadIds: string[] };
-  confirm: null | { title: string; body: string; ok: string; run: () => void };
+  confirm: null | { title: string; body: string; note?: { text: string; link?: { label: string; run: () => void } }; ok: string; run: () => void };
   /** A one-line question (the web view has no window.prompt). */
   ask: null | { title: string; label: string; value?: string; ok: string; options?: string[]; run: (value: string) => void };
   searchFocus: number;
@@ -132,6 +132,8 @@ export interface MailState {
   /** The last sync error per account (server text, shown in Settings ▸ Accounts). */
   syncError: Record<string, string>;
   hiddenThreads: string[]; // optimistic removals from the current list
+  /** Senders Courier unsubscribed from, per account (lower-case addresses). */
+  unsubscribed: Record<string, string[]>;
 }
 
 export const SYSTEM_ROUTE_NAMES: Record<string, string> = {
@@ -216,6 +218,7 @@ export const useMail = create<MailState>(() => ({
   sync: {},
   syncError: {},
   hiddenThreads: [],
+  unsubscribed: {},
 }));
 
 const set = useMail.setState;
@@ -485,8 +488,18 @@ export async function loadList(opts: { quiet?: boolean } = {}) {
 export async function loadLabels(accountId?: string) {
   const ids = accountId ? [accountId] : get().accounts.map((a) => a.id);
   const out: Record<string, Label[]> = {};
-  await Promise.all(ids.map(async (id) => (out[id] = await api.labels(id).catch(() => []))));
-  set((s) => ({ labels: { ...s.labels, ...out } }));
+  const unsub: Record<string, string[]> = {};
+  await Promise.all(
+    ids.map(async (id) => {
+      out[id] = await api.labels(id).catch(() => []);
+      unsub[id] = await api.unsubscribedSenders(id).catch(() => []);
+    }),
+  );
+  set((s) => ({ labels: { ...s.labels, ...out }, unsubscribed: { ...s.unsubscribed, ...unsub } }));
+}
+
+export function noteUnsubscribed(accountId: string, email: string) {
+  set((s) => ({ unsubscribed: { ...s.unsubscribed, [accountId]: [...(s.unsubscribed[accountId] ?? []), email.toLowerCase()] } }));
 }
 
 export async function loadAccounts() {

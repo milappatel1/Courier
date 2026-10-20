@@ -29,7 +29,21 @@ export function Dialogs() {
   );
 }
 
-function Confirm({ title, body, ok, run, onClose }: { title: string; body: string; ok: string; run: () => void; onClose: () => void }) {
+function Confirm({
+  title,
+  body,
+  note,
+  ok,
+  run,
+  onClose,
+}: {
+  title: string;
+  body: string;
+  note?: { text: string; link?: { label: string; run: () => void } };
+  ok: string;
+  run: () => void;
+  onClose: () => void;
+}) {
   return (
     <Dialog
       title={title}
@@ -37,7 +51,7 @@ function Confirm({ title, body, ok, run, onClose }: { title: string; body: strin
       testId="confirm-dialog"
       actions={
         <>
-          <button className="btn text" onClick={onClose}>
+          <button className="btn text" onClick={onClose} data-testid="confirm-cancel">
             Cancel
           </button>
           <button className="btn text" onClick={() => (onClose(), run())} data-testid="confirm-ok">
@@ -47,6 +61,19 @@ function Confirm({ title, body, ok, run, onClose }: { title: string; body: strin
       }
     >
       {body}
+      {note && (
+        <p className="confirm-note" data-testid="confirm-note">
+          {note.link ? note.text.replace(` ${note.link.label}.`, " ") : note.text}
+          {note.link && (
+            <>
+              <button type="button" className="linkbtn" onClick={() => (onClose(), note.link!.run())}>
+                {note.link.label}
+              </button>
+              .
+            </>
+          )}
+        </p>
+      )}
     </Dialog>
   );
 }

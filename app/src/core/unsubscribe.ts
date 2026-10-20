@@ -1,25 +1,57 @@
-// List-Unsubscribe (RFC 2369) and one-click List-Unsubscribe-Post (RFC 8058).
+// List-Unsubscribe (RFC 2369) and one-click List-Unsubscribe-Post (RFC 8058), taken in the web client's order,
+// and the Unsubscribe dialog in its words.
+import { decodeWords } from "./mime/headers";
 
 export type UnsubscribeMethod =
-  | { kind: "one-click"; url: string } // POST "List-Unsubscribe=One-Click" to url
-  | { kind: "mailto"; to: string; subject: string; body: string }
-  | { kind: "link"; url: string } // open in the browser
-  | null;
+  | { kind: "one-click"; url: string } // POST "List-Unsubscribe=One-Click" to url, in the background
+  | { kind: "mailto"; to: string; subject: string; body: string } // an unsubscribe email from the account
+  | { kind: "website"; url: string }; // the sender's page, in the browser
 
-export function parseListUnsubscribe(header: string | null, post: string | null): UnsubscribeMethod {
+/**
+ * One-click when the sender offers it over https, else an email to the listed address, else the sender's page.
+ * `localOk` lets the end-to-end run's fake sender (http on 127.0.0.1) stand in for an https one.
+ */
+export function parseListUnsubscribe(header: string | null, post: string | null, opts: { localOk?: boolean } = {}): UnsubscribeMethod | null {
   if (!header) return null;
-  const urls = [...header.matchAll(/<([^>]+)>/g)].map((m) => m[1].trim());
-  const https = urls.find((u) => /^https:\/\//i.test(u));
+  const urls = [...decodeWords(header).matchAll(/<([^>]+)>/g)].map((m) => m[1].trim());
+  const https = urls.find((u) => /^https:\/\//i.test(u) || (opts.localOk && /^http:\/\/127\.0\.0\.1[:/]/i.test(u)));
   const http = urls.find((u) => /^http:\/\//i.test(u));
   const mailto = urls.find((u) => /^mailto:/i.test(u));
   if (https && post && /List-Unsubscribe\s*=\s*One-Click/i.test(post)) return { kind: "one-click", url: https };
   if (mailto) {
     const [addr, query = ""] = mailto.slice(7).split("?");
     const params = new URLSearchParams(query);
-    return { kind: "mailto", to: decodeURIComponent(addr), subject: params.get("subject") ?? "unsubscribe", body: params.get("body") ?? "" };
+    return { kind: "mailto", to: decodeURIComponent(addr), subject: params.get("subject") ?? "", body: params.get("body") ?? "" };
   }
-  if (https ?? http) return { kind: "link", url: (https ?? http)! };
-  return null;
+  const page = https ?? http;
+  return page ? { kind: "website", url: page } : null;
+}
+
+export interface UnsubscribeDialog {
+  title: string;
+  body: string;
+  /** From a message: where the sender's other lists are handled. */
+  note?: string;
+  ok: "Unsubscribe" | "Go to website";
+}
+
+/**
+ * The confirmation, as the web client asks it. From a message ("list") it's about that mailing list; from
+ * Manage subscriptions ("sender") it's about every list from the sender. An email says from which account it
+ * goes and to whom; a website-only list sends you to the website.
+ */
+export function unsubscribeDialog(
+  m: UnsubscribeMethod,
+  o: { scope: "list" | "sender"; sender: { name: string; email: string }; account: string; mailTo?: string[] },
+): UnsubscribeDialog {
+  const name = o.sender.name || o.sender.email;
+  const which = o.scope === "list" ? `this mailing list (${name})` : `all mailing lists from ${name} (${o.sender.email})`;
+  const note = o.scope === "list" ? "To unsubscribe from this sender's other mailing lists, go to Manage subscriptions." : undefined;
+  if (m.kind === "website")
+    return { title: "Unsubscribe", body: `To stop getting messages from ${which}, go to their website to unsubscribe.`, note, ok: "Go to website" };
+  const to = o.mailTo ?? (m.kind === "mailto" ? [m.to] : []);
+  const mail = to.length ? ` Courier will unsubscribe for you by sending an email from ${o.account} to ${to.join(" and ")}.` : "";
+  return { title: "Unsubscribe", body: `Do you want to stop getting messages from ${which}?${mail}`, note, ok: "Unsubscribe" };
 }
 
 /** Parse a mailto: URL (for the mailto handler and the "unsubscribe by email" path). */
