@@ -551,3 +551,25 @@ async fn bulk_delete_goes_on_past_a_refused_batch() {
     let trashed = ids.iter().filter(|id| w.gmail.message(id).unwrap().labels.contains(&"TRASH".into())).count();
     assert!(trashed >= 100 && trashed < 1100, "{trashed} of 1100 trashed");
 }
+
+#[tokio::test]
+async fn a_sync_while_a_change_is_on_its_way_keeps_the_change() {
+    let w = world().await;
+    let id = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Hello", "x", ""), &["INBOX", "UNREAD"]);
+    w.engine.sync_account("g1").await.unwrap();
+    let t = w.engine.db.message("g1", &id).unwrap().unwrap().thread_id;
+    // A change made elsewhere leaves a history record carrying the message's labels as they were then.
+    w.gmail.modify_elsewhere(&id, &["STARRED"], &[]);
+    w.gmail.state.lock().latency.insert("batchModify".into(), 600);
+    let (e, tt) = (w.engine.clone(), t.clone());
+    let delete = tokio::spawn(async move { e.modify_threads("g1", &[tt], &["TRASH".into()], &[]).await });
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    w.engine.sync_account("g1").await.unwrap();
+    let labels = w.engine.db.message("g1", &id).unwrap().unwrap().labels;
+    assert!(labels.contains(&"TRASH".to_string()) && !labels.contains(&"INBOX".to_string()), "the sync put back the old labels: {labels:?}");
+    assert!(labels.contains(&"STARRED".to_string()), "the change made elsewhere was lost: {labels:?}");
+    assert_eq!(w.engine.db.label("g1", "INBOX").unwrap().unwrap().threads_total, 0, "the Inbox count went back up");
+    delete.await.unwrap().unwrap();
+    let labels = w.engine.db.message("g1", &id).unwrap().unwrap().labels;
+    assert!(labels.contains(&"TRASH".to_string()) && labels.contains(&"STARRED".to_string()) && !labels.contains(&"INBOX".to_string()), "{labels:?}");
+}
