@@ -3,7 +3,22 @@ import { parseListUnsubscribe } from "../core/unsubscribe";
 import { api, errorText, on } from "../ipc/api";
 import type { ThreadSummary, ViewQuery } from "../ipc/types";
 import { nextStar } from "./settings";
-import { accountById, closeThread, getState, labelName, loadList, setState, stepThread, toast, ui, visibleThreads, withUndo, type ThreadRef } from "./store";
+import {
+  accountById,
+  closeThread,
+  getState,
+  hideThreads,
+  labelName,
+  loadList,
+  setState,
+  settleThreads,
+  stepThread,
+  toast,
+  ui,
+  visibleThreads,
+  withUndo,
+  type ThreadRef,
+} from "./store";
 
 export type ActionKind =
   | "archive"
@@ -77,10 +92,6 @@ const RULES: Record<ActionKind, { add: string[]; remove: string[]; text: (n: num
   unsnooze: { add: [], remove: [], text: (n) => `${plural(n, "Conversation", "conversations")} unsnoozed.`, leaves: (l) => l === "SNOOZED" },
 };
 
-function hide(threadIds: string[]) {
-  setState((s) => ({ hiddenThreads: [...s.hiddenThreads, ...threadIds], selected: s.selected.filter((x) => !threadIds.includes(x)) }));
-}
-
 /** After removing the open conversation from view: next one (auto-advance) or back to the list. */
 function advanceAfter(leaving: boolean) {
   const s = getState();
@@ -107,9 +118,11 @@ export async function act(kind: ActionKind, targets: Target[] = currentTargets()
     });
     return;
   }
-  if (leaving) hide(targets.flatMap((t) => t.threadIds));
+  const moved = leaving ? targets.flatMap((t) => t.threadIds) : [];
+  hideThreads(moved);
   const wasOpen = s.route.thread;
   advanceAfter(leaving && !!wasOpen && targets.some((t) => t.threadIds.includes(wasOpen.threadId)));
+  let ok = false;
   try {
     for (const t of targets) {
       if (kind === "mute" || kind === "unmute") await api.mute(t.accountId, t.threadIds, kind === "mute");
@@ -127,23 +140,29 @@ export async function act(kind: ActionKind, targets: Target[] = currentTargets()
       toast(rule.text(count));
       setState({ undo: { text: rule.text(count), run: undo } });
     } else withUndo(rule.text(count), undo);
+    ok = true;
   } catch (e) {
     toast(`Couldn't do that: ${errorText(e)}`);
   } finally {
+    settleThreads(moved, ok);
     void loadList({ quiet: true });
     setState({ selected: [], selectAllMatching: false, keepThreads: [] });
   }
 }
 
 async function deleteForever(targets: Target[], count: number) {
-  hide(targets.flatMap((t) => t.threadIds));
+  const gone = targets.flatMap((t) => t.threadIds);
+  hideThreads(gone);
   advanceAfter(true);
+  let ok = false;
   try {
     for (const t of targets) await api.deleteForever(t.accountId, t.threadIds);
     toast(RULES["delete-forever"].text(count));
+    ok = true;
   } catch (e) {
     toast(`Couldn't delete: ${errorText(e)}`);
   }
+  settleThreads(gone, ok);
   void loadList({ quiet: true });
 }
 
@@ -158,7 +177,9 @@ export async function applyLabels(add: string[], remove: string[], opts: { move?
   if (opts.move && here && here !== add[0] && !["STARRED", "IMPORTANT", "SNOOZED", "ALL", "SENT", "DRAFT"].includes(here)) removeAll.push(here);
   if (opts.move && !here) removeAll.push("INBOX");
   const leaving = !!here && removeAll.includes(here);
-  if (leaving) hide(targets.flatMap((t) => t.threadIds));
+  const moved = leaving ? targets.flatMap((t) => t.threadIds) : [];
+  hideThreads(moved);
+  let ok = false;
   try {
     for (const t of targets) await api.modifyThreads(t.accountId, t.threadIds, add, removeAll);
     const acct = targets[0].accountId;
@@ -171,18 +192,22 @@ export async function applyLabels(add: string[], remove: string[], opts: { move?
     withUndo(text, async () => {
       for (const t of targets) await api.modifyThreads(t.accountId, t.threadIds, removeAll, add);
     });
+    ok = true;
   } catch (e) {
     toast(`Couldn't change labels: ${errorText(e)}`);
   }
+  settleThreads(moved, ok);
   void loadList({ quiet: true });
 }
 
 export async function snooze(until: number, targets: Target[] = currentTargets()) {
   const count = targets.reduce((n, t) => n + t.threadIds.length, 0);
   if (!count) return;
-  hide(targets.flatMap((t) => t.threadIds));
+  const moved = targets.flatMap((t) => t.threadIds);
+  hideThreads(moved);
   const open = getState().route.thread;
   advanceAfter(!!open && targets.some((t) => t.threadIds.includes(open.threadId)));
+  let ok = false;
   try {
     for (const t of targets) await api.snooze(t.accountId, t.threadIds, until);
     const d = new Date(until);
@@ -190,9 +215,11 @@ export async function snooze(until: number, targets: Target[] = currentTargets()
     withUndo(`Snoozed until ${when}`, async () => {
       for (const t of targets) await api.unsnooze(t.accountId, t.threadIds);
     });
+    ok = true;
   } catch (e) {
     toast(`Couldn't snooze: ${errorText(e)}`);
   }
+  settleThreads(moved, ok);
   void loadList({ quiet: true });
 }
 

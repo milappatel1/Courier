@@ -423,6 +423,35 @@ export function currentView(page?: number): ViewQuery {
 const viewKey = (v: ViewQuery) => JSON.stringify([v.accountId, v.label, v.category, v.query, v.page, v.pageSize, v.conversations]);
 
 let listSeq = 0;
+
+/**
+ * Conversations an action took out of the view, until a listing fetched after the action finished: by id, the
+ * listing number from which on the server and the cache show the change (Infinity while it is still running).
+ * Earlier listings still have the old state, so they must not put the row back.
+ */
+const leaving = new Map<string, number>();
+
+/** An action is taking these conversations out of the current view (hidden at once). */
+export function hideThreads(threadIds: string[]) {
+  for (const id of threadIds) leaving.set(id, Infinity);
+  set((s) => ({ hiddenThreads: [...new Set([...s.hiddenThreads, ...threadIds])], selected: s.selected.filter((x) => !threadIds.includes(x)) }));
+}
+
+/** The action is done: listings from now on show it. When it failed, the conversations come back at once. */
+export function settleThreads(threadIds: string[], ok: boolean) {
+  for (const id of threadIds) leaving.set(id, listSeq + 1);
+  if (!ok) {
+    for (const id of threadIds) leaving.delete(id);
+    set((s) => ({ hiddenThreads: s.hiddenThreads.filter((x) => !threadIds.includes(x)) }));
+  }
+}
+
+/** The rows still hidden once listing number `seq` arrives. */
+function stillHidden(seq: number): string[] {
+  for (const [id, from] of leaving) if (seq >= from) leaving.delete(id);
+  return get().hiddenThreads.filter((id) => leaving.has(id));
+}
+
 export async function loadList(opts: { quiet?: boolean } = {}) {
   const s = get();
   if (!s.accountId || s.route.settings || s.route.list.label === "SUBSCRIPTIONS") return;
@@ -434,7 +463,7 @@ export async function loadList(opts: { quiet?: boolean } = {}) {
     // Fast: the cache. Then the server page for mail-API accounts (authoritative when online).
     const cached = await api.list({ ...view, mode: "cache" });
     if (seq !== listSeq) return;
-    set((st) => ({ list: { ...st.list, key, result: cached, loading: false }, hiddenThreads: [] }));
+    set((st) => ({ list: { ...st.list, key, result: cached, loading: false }, hiddenThreads: stillHidden(seq) }));
     const acct = accountById(view.accountId);
     if (acct?.kind === "gmail" && get().online) {
       const token = view.page === 0 ? null : (get().list.tokens[view.page] ?? undefined);
@@ -444,7 +473,7 @@ export async function loadList(opts: { quiet?: boolean } = {}) {
       set((st) => {
         const tokens = [...st.list.tokens];
         tokens[view.page + 1] = server.nextPageToken;
-        return { list: { ...st.list, key, result: server, loading: false, tokens }, hiddenThreads: [] };
+        return { list: { ...st.list, key, result: server, loading: false, tokens }, hiddenThreads: stillHidden(seq) };
       });
     }
   } catch (e) {

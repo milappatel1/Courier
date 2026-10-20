@@ -78,12 +78,14 @@ export function ListView() {
   );
 }
 
-function pageInfo(r: ViewResult | null, page: number, size: number) {
-  const n = r?.threads.length ?? 0;
+/** "1–50 of 1,234" for the rows shown (conversations on their way out of the view don't count). */
+function pageInfo(r: ViewResult | null, page: number, size: number, shown: number) {
+  const n = shown;
   if (!r || !n) return "";
   const start = page * size + 1;
   const end = page * size + n;
-  const total = Math.max(r.total, end);
+  // A listing fetched before the action still counts the hidden rows.
+  const total = Math.max(r.total - (r.threads.length - shown), end);
   return `${start.toLocaleString()}–${end.toLocaleString()} of ${r.estimate && r.hasMore ? "many" : total.toLocaleString()}`;
 }
 
@@ -97,6 +99,7 @@ function ListToolbar() {
   const textLabels = useMail((s) => s.settings.buttonLabels === "text");
   const [menu, setMenu] = useState<{ kind: "label" | "move" | "snooze" | "more"; anchor: Anchor } | null>(null);
   const [filter, setFilter] = useState<Record<string, unknown> | null>(null);
+  useMail((s) => s.hiddenThreads);
   const threads = visibleThreads();
   const any = selected.length > 0 || allMatching;
   const label = route.list.query ? null : route.list.label;
@@ -257,10 +260,10 @@ function ListToolbar() {
         testId="tb-more"
       />
       <div className="grow" />
-      {r && r.threads.length > 0 && (
+      {r && threads.length > 0 && (
         <>
           <span className="page-info" data-testid="page-info">
-            {pageInfo(r, route.list.page, size)}
+            {pageInfo(r, route.list.page, size, threads.length)}
           </span>
           <IconButton
             icon="chevron_left"
