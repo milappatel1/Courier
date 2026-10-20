@@ -6,20 +6,19 @@ import { api, failureText, on } from "../ipc/api";
 import type { Label, OutboxRow } from "../ipc/types";
 import { applyLabels } from "../state/actions";
 import { openCompose } from "../state/compose";
+import { SYSTEM_LABEL_DEFAULTS } from "../state/settings";
 import { go, hasTabs, labelsFor, loadLabels, toast, ui, useMail, SYSTEM_DISPLAY, getState, NO_LABELS } from "../state/store";
 import { Icon, IconButton, Menu, anchorOf, type MenuEntry } from "./common";
 
-const PRIMARY = [
+/** The system labels in the web client's order; Settings ▸ Labels decides which show above More. */
+const SYSTEM = [
   { id: "INBOX", icon: "inbox" },
   { id: "STARRED", icon: "star" },
   { id: "SNOOZED", icon: "schedule" },
-  { id: "SENT", icon: "send" },
-  { id: "DRAFT", icon: "draft" },
-  { id: "SUBSCRIPTIONS", icon: "unsubscribe" },
-];
-const MORE = [
   { id: "IMPORTANT", icon: "label_important" },
+  { id: "SENT", icon: "send" },
   { id: "SCHEDULED", icon: "schedule_send" },
+  { id: "DRAFT", icon: "draft" },
   { id: "ALL", icon: "stacked_email" },
   { id: "SPAM", icon: "report" },
   { id: "TRASH", icon: "delete" },
@@ -94,6 +93,13 @@ export function Nav() {
     if (l.type === "user" || id.startsWith("CATEGORY_")) return l.threadsUnread;
     return 0;
   };
+  const systemLabels = useMail((s) => s.settings.systemLabels);
+  const shown = (id: string) => {
+    if (id === "INBOX") return true;
+    const v = systemLabels[id] ?? SYSTEM_LABEL_DEFAULTS[id] ?? "show";
+    if (v === "show if unread") return id === "SCHEDULED" ? scheduled > 0 : count(id) > 0;
+    return v === "show";
+  };
   const exists = (id: string) =>
     unified ||
     ["SNOOZED", "SCHEDULED", "OUTBOX", "STARRED", "ALL", "SUBSCRIPTIONS"].includes(id) ||
@@ -135,6 +141,7 @@ export function Nav() {
       />
     );
   };
+  const systemItem = (x: { id: string; icon: string }) => item(x.id, x.icon, { countValue: x.id === "SCHEDULED" ? scheduled : undefined, test: `nav-${x.id}` });
   const tree = useMemo(() => labelTree(labels.filter((l) => l.type === "user" && l.labelListVisibility !== "labelHide")), [labels]);
   const renderTree = (nodes: LabelNode<Label>[], depth: number): React.ReactNode[] =>
     nodes.flatMap((node) => {
@@ -205,11 +212,10 @@ export function Nav() {
                   onClick={() => go({ label: "INBOX", category: c.key })}
                 />
               )),
-              ...PRIMARY.filter((x) => x.id !== "INBOX" && exists(x.id)).map((x) => item(x.id, x.icon, { test: `nav-${x.id}` })),
+              ...SYSTEM.filter((x) => x.id !== "INBOX" && exists(x.id) && shown(x.id)).map(systemItem),
             ]
-          : PRIMARY.filter((x) => exists(x.id)).map((x) => item(x.id, x.icon, { test: `nav-${x.id}` }))}
+          : SYSTEM.filter((x) => exists(x.id) && shown(x.id)).map(systemItem)}
         {pending > 0 && item("OUTBOX", "outbox", { countValue: pending, test: "nav-OUTBOX" })}
-        {scheduled > 0 && item("SCHEDULED", "schedule_send", { countValue: scheduled, test: "nav-SCHEDULED" })}
         <NavItem
           id="__more"
           icon={more ? "expand_less" : "expand_more"}
@@ -224,9 +230,7 @@ export function Nav() {
         />
         {more && (
           <>
-            {MORE.filter((x) => exists(x.id) && !(x.id === "SCHEDULED" && scheduled > 0)).map((x) =>
-              item(x.id, x.icon, { name: x.id === "ALL" && acct?.kind === "imap" ? "All Mail" : undefined, test: `nav-${x.id}` }),
-            )}
+            {SYSTEM.filter((x) => exists(x.id) && !shown(x.id)).map(systemItem)}
             {acct?.kind === "gmail" && (
               <>
                 <NavItem
@@ -243,6 +247,7 @@ export function Nav() {
                 {cats && CATS.map((c) => item(c.label, c.icon, { depth: 1, onClick: () => go({ label: c.label }), test: `nav-${c.label}` }))}
               </>
             )}
+            {item("SUBSCRIPTIONS", "unsubscribe", { test: "nav-SUBSCRIPTIONS" })}
             {!unified && (
               <NavItem
                 id="__manage"

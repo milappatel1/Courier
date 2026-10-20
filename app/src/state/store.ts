@@ -116,7 +116,8 @@ export interface MailState {
   labels: Record<string, Label[]>;
   settings: Settings;
   route: Route;
-  list: { key: string; result: ViewResult | null; loading: boolean; error: string | null; tokens: (string | null)[] };
+  /** `settling`: the cached page is short and the server hasn't answered yet, so it isn't called empty. */
+  list: { key: string; result: ViewResult | null; loading: boolean; settling?: boolean; error: string | null; tokens: (string | null)[] };
   selected: string[];
   selectAllMatching: boolean;
   /** With every conversation in the view selected: the ones unticked, which actions leave alone. */
@@ -474,9 +475,13 @@ export async function loadList(opts: { quiet?: boolean } = {}) {
     // Fast: the cache. Then the server page for mail-API accounts (authoritative when online).
     const cached = await api.list({ ...view, mode: "cache" });
     if (seq !== listSeq) return;
-    set((st) => ({ list: { ...st.list, key, result: cached, loading: false }, hiddenThreads: stillHidden(seq) }));
     const acct = accountById(view.accountId);
-    if (acct?.kind === "gmail" && get().online) {
+    const asking = acct?.kind === "gmail" && get().online;
+    // This Mac keeps only recent mail: a short cached page may be missing older mail the server has, so it
+    // isn't called empty (or complete) until the server has answered.
+    const short = asking && cached.threads.length < view.pageSize && (view.page === 0 || get().list.tokens[view.page] !== undefined);
+    set((st) => ({ list: { ...st.list, key, result: cached, loading: short && st.list.loading, settling: short }, hiddenThreads: stillHidden(seq) }));
+    if (asking) {
       const token = view.page === 0 ? null : (get().list.tokens[view.page] ?? undefined);
       if (token === undefined && view.page > 0) return; // no token for a page we skipped to: keep the cache
       const server = await api.list({ ...view, mode: "server", pageToken: token });
@@ -484,12 +489,12 @@ export async function loadList(opts: { quiet?: boolean } = {}) {
       set((st) => {
         const tokens = [...st.list.tokens];
         tokens[view.page + 1] = server.nextPageToken;
-        return { list: { ...st.list, key, result: server, loading: false, tokens }, hiddenThreads: stillHidden(seq) };
+        return { list: { ...st.list, key, result: server, loading: false, settling: false, tokens }, hiddenThreads: stillHidden(seq) };
       });
     }
   } catch (e) {
     if (seq !== listSeq) return;
-    set((st) => ({ list: { ...st.list, loading: false, error: errorText(e) } }));
+    set((st) => ({ list: { ...st.list, loading: false, settling: false, error: errorText(e) } }));
   }
 }
 

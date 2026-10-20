@@ -644,7 +644,7 @@ function Rows({ threads }: { threads: ThreadSummary[] | null }) {
   const hidden = useMail((s) => s.hiddenThreads);
   const route = useMail((s) => s.route);
   const items = (threads ?? list.result?.threads ?? []).filter((t) => !hidden.includes(t.threadId));
-  if (!items.length && !list.loading && threads === null) return <EmptyList />;
+  if (!items.length && !list.loading && !list.settling && threads === null) return <EmptyList />;
   return (
     <>
       {items.map((t, i) => (

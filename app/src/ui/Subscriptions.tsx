@@ -3,7 +3,7 @@
 // past mail. Built from the mail Courier has on this Mac.
 import { useEffect, useMemo, useState } from "react";
 import { parseListUnsubscribe } from "../core/unsubscribe";
-import { api, errorText, failureText, on } from "../ipc/api";
+import { api, errorText, failureText } from "../ipc/api";
 import type { Subscription } from "../ipc/types";
 import { unsubscribe } from "../state/actions";
 import { sendSimple } from "../state/compose";
@@ -17,18 +17,16 @@ export function Subscriptions() {
   const [rows, setRows] = useState<Subscription[] | null>(null);
   const [sort, setSort] = useState<Sort>("volume");
   const [error, setError] = useState<string | null>(null);
+  // Read once when the page opens, as the web client does: rows don't come, go or jump about while you work
+  // through them, whatever syncs in the background.
   useEffect(() => {
     let live = true;
-    const load = () =>
-      void api
-        .subscriptions(accountId)
-        .then((r) => live && (setRows(r), setError(null)))
-        .catch((e) => live && setError(errorText(e)));
-    load();
-    const un = on("mail-changed", load);
+    void api
+      .subscriptions(accountId)
+      .then((r) => live && (setRows(r), setError(null)))
+      .catch((e) => live && setError(errorText(e)));
     return () => {
       live = false;
-      void un.then((f) => f());
     };
   }, [accountId]);
   const sorted = useMemo(() => {

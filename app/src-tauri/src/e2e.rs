@@ -243,6 +243,25 @@ impl E2e {
                     }
                     Ok(json!({"id": id}))
                 }
+                // Mail that has long been in the mailbox, older than Courier's offline window and never cached: the
+                // server has it, the history doesn't mention it. An optional new label is made for it.
+                "seed-gmail-old" => {
+                    let date = (chrono::Local::now() - chrono::Duration::days(args["daysAgo"].as_i64().unwrap_or(400))).to_rfc2822();
+                    let raw = mail(&s("from"), GMAIL_ADDR, &s("subject"), &date, &s("body"), "");
+                    let mut g = self.gmail.state.lock();
+                    let mut labels: Vec<String> = args["labels"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
+                    if let Some(name) = args["newLabel"].as_str() {
+                        let id = format!("Label_{}", 100 + g.user_labels.len());
+                        if !g.user_labels.iter().any(|l| l["name"] == name) {
+                            g.user_labels.push(json!({"id": id, "name": name, "type": "user"}));
+                        }
+                        labels.push(g.user_labels.iter().find(|l| l["name"] == name).and_then(|l| l["id"].as_str()).unwrap_or(&id).to_string());
+                    }
+                    let id = crate::testsupport::fake_gmail::new_id(&mut g);
+                    let internal_date = crate::mailmeta::parse_raw(&raw).row.internal_date;
+                    g.messages.insert(id.clone(), crate::testsupport::fake_gmail::FMsg { id: id.clone(), thread_id: id.clone(), labels: labels.clone(), raw, internal_date });
+                    Ok(json!({"id": id, "labels": labels}))
+                }
                 "deliver-imap" => {
                     let raw = mail(&s("from"), IMAP_ADDR, &s("subject"), &chrono::Local::now().to_rfc2822(), &s("body"), &s("headers"));
                     let folder = args["folder"].as_str().unwrap_or("INBOX");

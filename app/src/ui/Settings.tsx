@@ -7,7 +7,17 @@ import { download } from "../state/files";
 import { leafName } from "../core/labels";
 import { api, errorText, failureText } from "../ipc/api";
 import type { Account, ImapAccountConfig, Label, Signature } from "../ipc/types";
-import { DEFAULTS, FONTS, SIZES, STAR_TYPES, SWIPE_ACTIONS, type Settings as S, type SwipeAction } from "../state/settings";
+import {
+  DEFAULTS,
+  FONTS,
+  SIZES,
+  STAR_TYPES,
+  SWIPE_ACTIONS,
+  SYSTEM_LABEL_DEFAULTS,
+  type LabelVisibility,
+  type Settings as S,
+  type SwipeAction,
+} from "../state/settings";
 import {
   closeSettings,
   labelsFor,
@@ -629,16 +639,13 @@ function LabelsTab({ accountId }: { accountId: string }) {
   const labels = useMail((s) => s.labels[accountId] ?? NO_LABELS);
   const user = labels.filter((l) => l.type === "user").sort((a, b) => a.name.localeCompare(b.name));
   const sys = ["INBOX", "STARRED", "SNOOZED", "IMPORTANT", "SENT", "SCHEDULED", "DRAFT", "ALL", "SPAM", "TRASH"];
-  const vis = useMail((s) => (s.settings as unknown as Record<string, unknown>).systemLabels as Record<string, string> | undefined) ?? {};
+  const vis = useMail((s) => s.settings.systemLabels);
   const update = (l: Label, patch: Record<string, unknown>) =>
     void api
       .labelUpdate(accountId, l.id, patch)
       .then(() => loadLabels(accountId))
       .catch((e) => toast(failureText("change the label", e)));
-  const setSys = (id: string, v: string) => {
-    useMail.setState((s) => ({ settings: { ...s.settings, systemLabels: { ...vis, [id]: v } } as unknown as S }));
-    void api.setSetting("systemLabels", { ...vis, [id]: v });
-  };
+  const setSys = (id: string, v: LabelVisibility) => void setSetting("systemLabels", { ...vis, [id]: v });
   return (
     <>
       <table className="stable">
@@ -656,14 +663,16 @@ function LabelsTab({ accountId }: { accountId: string }) {
                 {id === "INBOX" ? (
                   <span className="muted">always shown</span>
                 ) : (
-                  ["show", "hide", ...(["SPAM", "DRAFT", "SCHEDULED"].includes(id) ? ["show if unread"] : [])].map((v) => (
+                  (["show", "hide", ...(["SPAM", "DRAFT", "SCHEDULED"].includes(id) ? ["show if unread"] : [])] as LabelVisibility[]).map((v) => (
                     <button
                       key={v}
                       className="linkbtn"
+                      aria-pressed={(vis[id] ?? SYSTEM_LABEL_DEFAULTS[id]) === v}
+                      data-testid={`sys-${id}-${v.replace(/ /g, "-")}`}
                       style={{
                         marginRight: 8,
-                        fontWeight: (vis[id] ?? "show") === v ? 700 : 400,
-                        color: (vis[id] ?? "show") === v ? "var(--text)" : undefined,
+                        fontWeight: (vis[id] ?? SYSTEM_LABEL_DEFAULTS[id]) === v ? 700 : 400,
+                        color: (vis[id] ?? SYSTEM_LABEL_DEFAULTS[id]) === v ? "var(--text)" : undefined,
                       }}
                       onClick={() => setSys(id, v)}
                     >

@@ -619,7 +619,7 @@ fn strs(v: &Value) -> Vec<String> {
     v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
 }
 
-fn new_id(s: &mut GState) -> String {
+pub fn new_id(s: &mut GState) -> String {
     let id = format!("{:016x}", 0x18f0_0000_0000u64 + s.next);
     s.next += 1;
     id

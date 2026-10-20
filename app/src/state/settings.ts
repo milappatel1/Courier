@@ -31,7 +31,24 @@ export const SWIPE_ACTIONS: { id: SwipeAction; label: string; icon: string; colo
   { id: "none", label: "None", icon: "block", color: "#5f6368" },
 ];
 
+/** Settings ▸ Labels ▸ System labels: in the label list, under More, or in the list only while it has mail to see. */
+export type LabelVisibility = "show" | "hide" | "show if unread";
+
+/** The web client's defaults. */
+export const SYSTEM_LABEL_DEFAULTS: Record<string, LabelVisibility> = {
+  STARRED: "show",
+  SNOOZED: "show",
+  IMPORTANT: "hide",
+  SENT: "show",
+  SCHEDULED: "show if unread",
+  DRAFT: "show",
+  ALL: "hide",
+  SPAM: "hide",
+  TRASH: "hide",
+};
+
 export interface Settings {
+  systemLabels: Record<string, LabelVisibility>;
   language: string;
   pageSize: number;
   undoSendSeconds: number;
@@ -81,6 +98,7 @@ export interface Settings {
 }
 
 export const DEFAULTS: Settings = {
+  systemLabels: {},
   language: "en",
   pageSize: 50,
   undoSendSeconds: 5,

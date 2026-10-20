@@ -165,6 +165,19 @@ async function openList(label: string) {
   await until(`${label} list`, () => getState().route.list.label === label && !getState().route.thread && !getState().list.loading);
 }
 
+/** Click a menu item, opening More first when it waits under there. */
+async function openNav(id: string) {
+  if (!q(`nav-${id}`) && q("nav-more")) click(q("nav-more")!);
+  click(await el(`nav-${id}`));
+}
+
+/** Whether a menu item sits above More (in the label list) rather than under it. */
+const aboveMore = (id: string) => {
+  const item = q(`nav-${id}`);
+  const more = q("nav-more");
+  return !!item && !!more && !!(item.compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING);
+};
+
 async function backToInbox() {
   if (getState().route.settings) click(await el("settings-close"));
   if (q("conv-back")) click(q("conv-back")!);
@@ -439,6 +452,26 @@ step("archiving with e moves on to the next conversation at once (auto-advance),
   } finally {
     await setSetting("autoAdvance", "list");
     await api.e2eControl("gmail-behaviour", { latency: {} });
+  }
+});
+
+step("a label whose mail is older than this Mac keeps shows its mail without a flash of 'Nothing here'", async () => {
+  await backToInbox();
+  // Projects/Alpha has nothing on this Mac; the server has one message in it from last year.
+  await api.e2eControl("seed-gmail-old", { from: "Archive <old@archive.example>", subject: "From last year", body: "x", labels: ["Label_2"], daysAgo: 400 });
+  await api.e2eControl("gmail-behaviour", { latency: { "threads.list": 400 } });
+  try {
+    const nav = await until("the label", () => q("nav-label-Projects/Alpha"), 30_000);
+    const rec = recordFrames();
+    click(nav);
+    await until("the old mail", () => row("From last year"), 10_000);
+    await sleep(600);
+    const frames = rec.stop().frames;
+    const empty = frames.find((f) => f.empty);
+    check(!empty, `"Nothing here" showed at +${empty?.t} ms before the mail arrived`);
+  } finally {
+    await api.e2eControl("gmail-behaviour", { latency: {} });
+    await backToInbox();
   }
 });
 
@@ -1250,7 +1283,7 @@ step(
   "manage subscriptions: senders listed, unsubscribe, clear their mail",
   async () => {
     await backToInbox();
-    click(await el("nav-SUBSCRIPTIONS"));
+    await openNav("SUBSCRIPTIONS");
     await el("subscriptions");
     const deals = () => qa("sub-row").find((x) => x.textContent?.includes("news@deals.example"));
     await until("Daily Deals listed", deals);
@@ -1270,9 +1303,26 @@ step(
       async () => (await server()).gmailMessages.filter((m) => m.subject === "48 hours only: 30% off").every((m) => m.labels.includes("TRASH")),
       30_000,
     );
+    // The page holds still while mail comes in.
+    const shown = qa("sub-row")
+      .map((r) => r.textContent)
+      .join("|");
+    await api.e2eControl("deliver-gmail", {
+      from: "New List <hello@newlist.example>",
+      subject: "First issue",
+      body: "x",
+      headers: "List-Unsubscribe: <mailto:leave@newlist.example>\r\n",
+    });
+    await sleep(2500);
+    check(
+      qa("sub-row")
+        .map((r) => r.textContent)
+        .join("|") === shown,
+      "rows changed under the pointer while the page was open",
+    );
     // Remembered.
     await openList("INBOX");
-    click(await el("nav-SUBSCRIPTIONS"));
+    await openNav("SUBSCRIPTIONS");
     await until("still unsubscribed", () => deals()?.querySelector('[data-testid="sub-done"]'));
     await backToInbox();
   },
@@ -1420,7 +1470,7 @@ step(
         look("conversation");
         await backToInbox();
         if (getState().size === "phone") click(await el("main-menu-phone"));
-        click(await el("nav-SUBSCRIPTIONS"));
+        await openNav("SUBSCRIPTIONS");
         await el("subscriptions");
         look("subscriptions");
         getState().drawer && click(await el("drawer-scrim"));
@@ -1522,6 +1572,38 @@ step("a sync that fails says why in words in Settings ▸ Accounts", async () =>
     await api.e2eControl("gmail-behaviour", { failRoutes: {} });
     await api.e2eControl("sync");
   }
+});
+
+step("Settings ▸ Labels: show, hide and show if unread move system labels in and out of the menu", async () => {
+  await backToInbox();
+  click(await el("settings-gear"));
+  click(await el("see-all-settings"));
+  click(await el("settings-tab-labels"));
+  const pressed = (id: string, v: string) => q(`sys-${id}-${v}`)?.getAttribute("aria-pressed") === "true";
+  await until(
+    "the web client's defaults",
+    () =>
+      pressed("STARRED", "show") &&
+      pressed("IMPORTANT", "hide") &&
+      pressed("SCHEDULED", "show-if-unread") &&
+      pressed("ALL", "hide") &&
+      pressed("TRASH", "hide"),
+    5000,
+  );
+  click(await el("sys-STARRED-hide"));
+  click(await el("sys-ALL-show"));
+  click(await el("sys-SPAM-show-if-unread"));
+  click(await el("settings-close"));
+  if (!q("nav-STARRED")) click(await el("nav-more"));
+  await until("Starred under More, All Mail above it", () => !aboveMore("STARRED") && aboveMore("ALL"));
+  const spamUnread = () => getState().labels[getState().accountId]?.find((l) => l.id === "SPAM")?.threadsUnread ?? 0;
+  check(aboveMore("SPAM") === spamUnread() > 0, `Spam ${aboveMore("SPAM") ? "shows" : "hides"} with ${spamUnread()} unread`);
+  await api.e2eControl("deliver-gmail", { from: "Junk <junk@spam.example>", subject: "Unread spam", body: "x", labels: ["SPAM", "UNREAD"] });
+  await until("Spam above More while it has unread mail", () => aboveMore("SPAM"), 30_000);
+  // Remembered after a restart: the settings come back from storage.
+  check(((await api.settings()) as Record<string, Record<string, string>>).systemLabels?.STARRED === "hide", "the choice wasn't saved");
+  await setSetting("systemLabels", {});
+  await until("defaults back", () => aboveMore("STARRED") && !aboveMore("ALL"));
 });
 
 step("every settings page opens cleanly at desktop, rail and phone widths", async () => {
