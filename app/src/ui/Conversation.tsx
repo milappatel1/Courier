@@ -52,6 +52,8 @@ async function parsedFor(accountId: string, id: string): Promise<ParsedMessage> 
 export function Conversation({ split }: { split?: boolean }) {
   const ref = useMail((s) => s.route.thread);
   const { detail, loading, error } = useMail((s) => s.thread);
+  // Until the messages are here (a few milliseconds from this Mac), the subject from the list row holds the place.
+  const placeholder = useMail((s) => (s.thread.detail ? null : (s.list.result?.threads.find((t) => t.threadId === s.route.thread?.threadId)?.subject ?? null)));
   const composes = useMail((s) => s.composes);
   const advanced = useMail((s) => s.settings.advancedToolbar);
   const textLabels = useMail((s) => s.settings.buttonLabels === "text");
@@ -188,6 +190,13 @@ export function Conversation({ split }: { split?: boolean }) {
       {filter && <FilterDialog criteria={filter} onClose={() => setFilter(null)} accountId={ref.accountId} />}
       <div className="conv conv-card selectable-off">
         {loading && !detail && <div className="loading-bar" />}
+        {!detail && !error && placeholder != null && (
+          <div className="conv-head">
+            <h2 className="conv-subject" data-testid="conv-subject">
+              {placeholder || "(no subject)"}
+            </h2>
+          </div>
+        )}
         {error && <div className="empty">{error}</div>}
         {detail && (
           <>

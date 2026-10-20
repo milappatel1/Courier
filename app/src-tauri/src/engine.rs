@@ -802,14 +802,36 @@ impl Engine {
 
     // ---- reading ----
 
-    pub async fn open_thread(&self, account: &str, thread_id: &str) -> Result<()> {
-        if self.kind(account)? == "gmail" && self.online.load(Ordering::SeqCst) {
-            let g = self.gmail(account)?;
-            match gmail::ensure_thread(&g, &self.db, account, thread_id).await {
-                Ok(()) => {}
-                Err(e) if e.is_offline() => self.set_online(false),
-                Err(e) => return Err(e),
-            }
+    /// Make sure a conversation is on this Mac before it's shown. One that's already here in full shows at once;
+    /// the server is asked in the background, and the view refreshes only if the conversation changed there.
+    pub async fn open_thread(self: &Arc<Self>, account: &str, thread_id: &str) -> Result<()> {
+        if self.kind(account)? != "gmail" || !self.online.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        let snapshot = |e: &Engine| e.db.thread_messages(account, thread_id).map(|ms| ms.into_iter().map(|m| (m.id, m.labels, m.has_raw)).collect::<Vec<_>>());
+        let before = snapshot(self)?;
+        if !before.is_empty() && before.iter().all(|(_, _, raw)| *raw) {
+            let (e, a, t) = (self.clone(), account.to_string(), thread_id.to_string());
+            tokio::spawn(async move {
+                let Ok(g) = e.gmail(&a) else { return };
+                match gmail::ensure_thread(&g, &e.db, &a, &t).await {
+                    Ok(()) => {
+                        let after = e.db.thread_messages(&a, &t).map(|ms| ms.into_iter().map(|m| (m.id, m.labels, m.has_raw)).collect::<Vec<_>>());
+                        if after.ok().as_ref() != Some(&before) {
+                            e.changed(&a, "thread");
+                        }
+                    }
+                    Err(err) if err.is_offline() => e.set_online(false),
+                    Err(_) => {}
+                }
+            });
+            return Ok(());
+        }
+        let g = self.gmail(account)?;
+        match gmail::ensure_thread(&g, &self.db, account, thread_id).await {
+            Ok(()) => {}
+            Err(e) if e.is_offline() => self.set_online(false),
+            Err(e) => return Err(e),
         }
         Ok(())
     }
