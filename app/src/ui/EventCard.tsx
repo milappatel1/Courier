@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { eventWhen, parseIcal, replyIcal, replySubject, type IcalEvent, type Partstat } from "../core/ical";
 import type { ParsedAttachment } from "../core/mime/parse";
 import { buildMime } from "../core/mime/build";
-import { api, errorText } from "../ipc/api";
+import { api, failureText } from "../ipc/api";
 import { openInApp } from "../state/files";
 import { accountById, toast } from "../state/store";
 import { Icon } from "./common";
@@ -67,7 +67,7 @@ export function EventCard({ accountId, part }: { accountId: string; part: Parsed
       setAnswer(p);
       toast(`Reply sent to ${ev.organizer.name || ev.organizer.email}.`);
     } catch (e) {
-      toast(`Couldn't send your reply: ${errorText(e)}`);
+      toast(failureText(`send your reply`, e));
     } finally {
       setBusy(false);
     }

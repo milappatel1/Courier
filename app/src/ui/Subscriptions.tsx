@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { listDate } from "../core/dates";
 import { parseListUnsubscribe } from "../core/unsubscribe";
-import { api, errorText, on } from "../ipc/api";
+import { api, errorText, failureText, on } from "../ipc/api";
 import type { Subscription } from "../ipc/types";
 import { unsubscribe } from "../state/actions";
 import { sendSimple } from "../state/compose";
@@ -143,13 +143,14 @@ function clearSender(r: Subscription) {
             [],
             [],
           )
-          .then((ids) => {
-            withUndo(`${ids.length} message${ids.length === 1 ? "" : "s"} from ${name} moved to Trash.`, () =>
-              api.modifyMessages(r.accountId, ids, [], ["TRASH"]),
+          .then((out) => {
+            const n = out.conversations;
+            withUndo(`${n === 1 ? "Conversation" : `${n.toLocaleString()} conversations`} from ${name} moved to Trash.`, () =>
+              api.modifyMessages(r.accountId, out.ids, [], ["TRASH"]),
             );
             void loadLabels(r.accountId);
           })
-          .catch((e) => toast(`Couldn't move them: ${errorText(e)}`)),
+          .catch((e) => toast(failureText(`move the mail from ${name} to Trash`, e))),
     },
   });
 }

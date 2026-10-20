@@ -376,6 +376,30 @@ step(
   200_000,
 );
 
+step("deleting when the server refuses: a passing refusal is retried, a lasting one says so plainly and can be tried again", async () => {
+  await backToInbox();
+  for (const n of [1, 2]) await api.e2eControl("deliver-gmail", { from: "Refusal Test <refuse@test.example>", subject: `Refused ${n}`, body: "x" });
+  await until("the test rows", () => row("Refused 1") && row("Refused 2"), 30_000);
+  // Once: the engine waits and sends the same request again.
+  await api.e2eControl("gmail-behaviour", { preconditionNext: 1 });
+  click(await el("hover-delete", row("Refused 1")!));
+  await until("in Trash on the server", async () => (await msgsWith("Refused 1")).every((m) => m.labels.includes("TRASH")) || null, 20_000);
+  await until("the usual toast", () => toastWith(/^Conversation moved to Trash/));
+  // Every time: the row comes back and the toast says what failed, in words.
+  const id = (await msgsWith("Refused 2"))[0].id;
+  await api.e2eControl("gmail-behaviour", { preconditionIds: [id] });
+  click(await el("row-checkbox", row("Refused 2")!));
+  click(await el("tb-delete"));
+  const t = await until("the failure toast", () => toastWith(/Couldn't move the conversation to Trash/), 20_000);
+  check(t.textContent?.includes("The mail server didn't accept the request."), `toast: ${t.textContent}`);
+  await until("the row is back", () => row("Refused 2"));
+  check(!getState().hiddenThreads.length, "a row is still hidden");
+  await api.e2eControl("gmail-behaviour", { preconditionIds: [] });
+  click(await el("toast-action", t));
+  await until("Try again moved it", async () => (await msgsWith("Refused 2")).every((m) => m.labels.includes("TRASH")) || null, 20_000);
+  await until("the row leaves", () => !row("Refused 2"));
+});
+
 step("labels (simplified toolbar ▸ More ▸ Label as) and stars", async () => {
   const r = await until("lunch row", () => row("Lunch on Friday?"));
   click(await el("row-checkbox", r));
@@ -1521,7 +1545,17 @@ step("signs out of the IMAP account (removes it and its cache)", async () => {
 const appErrors: string[] = [];
 
 let started = false;
+/** Every toast shown during the run: none may carry a server's or a library's own error text. */
+const toastsSeen = new Set<string>();
+const RAW_ERROR =
+  /\b[45]\d\d:|\([45]\d\d\)|precondition|failedPrecondition|error sending request|^(server|network|imap|smtp|json|io|database|not found):|\bat line\b/i;
+
 export async function runE2E() {
+  new MutationObserver(() => qa("toast").forEach((t) => toastsSeen.add(t.firstChild?.textContent ?? t.textContent ?? ""))).observe(document.body, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+  });
   if (started) return;
   started = true;
   window.addEventListener("error", (e) => appErrors.push(`${e.message} (${e.filename?.split("/").pop()}:${e.lineno})`));
@@ -1583,6 +1617,9 @@ export async function runE2E() {
   log(
     `${appErrors.length ? "  FAILED" : "  ok"} no uncaught errors or unhandled rejections${appErrors.length ? `: ${appErrors.slice(0, 5).join(" | ")}` : ""}`,
   );
+  const raw = [...toastsSeen].filter((t) => RAW_ERROR.test(t));
+  results.push({ name: "no toast showed a raw error", ok: raw.length === 0, ms: 0, error: raw.length ? raw.slice(0, 5).join(" | ") : undefined });
+  log(`${raw.length ? "  FAILED" : "  ok"} no toast showed a raw error${raw.length ? `: ${raw.slice(0, 5).join(" | ")}` : ""}`);
   const failed = results.filter((r) => !r.ok).length;
   const report = {
     app: getState().info?.version ?? "dev",

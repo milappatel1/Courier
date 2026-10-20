@@ -67,8 +67,8 @@ export const api = {
   deleteForever: (accountId: string, threadIds: string[]) => call<void>("delete_forever", { accountId, threadIds }),
   subscriptions: (accountId: string) => call<Subscription[]>("subscriptions", { accountId }),
   markUnsubscribed: (accountId: string, email: string) => call<void>("mark_unsubscribed", { accountId, email }),
-  bulkModify: (view: ViewQuery, add: string[], remove: string[], keep: string[]) => call<string[]>("bulk_modify", { view, add, remove, keep }),
-  bulkDeleteForever: (view: ViewQuery, keep: string[]) => call<number>("bulk_delete_forever", { view, keep }),
+  bulkModify: (view: ViewQuery, add: string[], remove: string[], keep: string[]) => call<BulkOutcome>("bulk_modify", { view, add, remove, keep }),
+  bulkDeleteForever: (view: ViewQuery, keep: string[]) => call<BulkOutcome>("bulk_delete_forever", { view, keep }),
   emptyLabel: (accountId: string, label: string) => call<number>("empty_label", { accountId, label }),
   snooze: (accountId: string, threadIds: string[], until: number) => call<void>("snooze_threads", { accountId, threadIds, until }),
   unsnooze: (accountId: string, threadIds: string[]) => call<void>("unsnooze_threads", { accountId, threadIds }),
@@ -154,11 +154,45 @@ export function on<T>(event: string, handler: (payload: T) => void): Promise<Unl
   return listen<T>(event, (e) => handler(e.payload));
 }
 
-/** Errors come back as strings with a prefix ("offline: …", "auth: …"). */
+/** What a whole-view action did: the messages changed (for Undo), conversations changed and not changed. */
+export interface BulkOutcome {
+  ids: string[];
+  conversations: number;
+  failedConversations: number;
+}
+
+/**
+ * Why something failed, as a sentence to show. Errors come back as strings with a prefix ("offline: …",
+ * "server: …"); the text after a prefix is the server's or a library's own and goes to the log, never on
+ * screen. Unprefixed errors were written for people and are shown as they are.
+ */
 export function errorText(e: unknown): string {
   const s = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
-  return s.replace(/^(offline|network|server|auth|imap|smtp|not found|json|io|database): /, "");
+  const kind = /^(offline|network|server|auth|imap|smtp|not found|json|io|database): /.exec(s)?.[1];
+  switch (kind) {
+    case undefined:
+      return s;
+    case "offline":
+      return "You're offline.";
+    case "auth":
+      return "The account needs you to sign in again (Settings ▸ Accounts).";
+    case "not found":
+      return "It's no longer on the server.";
+    case "server":
+      return "The mail server didn't accept the request.";
+    case "network":
+      return "The connection to the mail server broke off.";
+    case "imap":
+      return "The mail server didn't accept the request.";
+    case "smtp":
+      return "The outgoing mail server didn't take the message.";
+    default:
+      return "Courier couldn't read or save its own data.";
+  }
 }
+
+/** "Couldn't <what>. <why>" for a toast. */
+export const failureText = (what: string, e: unknown) => `Couldn't ${what}. ${errorText(e)}`;
 
 export const isOfflineError = (e: unknown) => String(e).startsWith("offline:");
 export const isAuthError = (e: unknown) => String(e).startsWith("auth:");

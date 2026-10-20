@@ -1,6 +1,6 @@
 // Actions on conversations, with the toast + Undo the web client shows.
 import { parseListUnsubscribe } from "../core/unsubscribe";
-import { api, errorText, on } from "../ipc/api";
+import { api, errorText, failureText, on, type BulkOutcome } from "../ipc/api";
 import type { ThreadSummary, ViewQuery } from "../ipc/types";
 import { nextStar } from "./settings";
 import {
@@ -92,6 +92,28 @@ const RULES: Record<ActionKind, { add: string[]; remove: string[]; text: (n: num
   unsnooze: { add: [], remove: [], text: (n) => `${plural(n, "Conversation", "conversations")} unsnoozed.`, leaves: (l) => l === "SNOOZED" },
 };
 
+/** What an action does, for "Couldn't …" when it fails. */
+const DOING: Record<ActionKind, string> = {
+  archive: "archive {c}",
+  inbox: "move {c} to Inbox",
+  trash: "move {c} to Trash",
+  restore: "move {c} to Inbox",
+  "delete-forever": "delete {c} forever",
+  spam: "mark {c} as spam",
+  "not-spam": "move {c} out of Spam",
+  phishing: "report {c} as phishing",
+  read: "mark {c} as read",
+  unread: "mark {c} as unread",
+  star: "star {c}",
+  unstar: "remove the star from {c}",
+  important: "mark {c} as important",
+  "not-important": "mark {c} as not important",
+  mute: "mute {c}",
+  unmute: "unmute {c}",
+  unsnooze: "unsnooze {c}",
+};
+const doing = (kind: ActionKind, n: number) => DOING[kind].replace("{c}", n === 1 ? "the conversation" : `${n.toLocaleString()} conversations`);
+
 /** After removing the open conversation from view: next one (auto-advance) or back to the list. */
 function advanceAfter(leaving: boolean) {
   const s = getState();
@@ -142,7 +164,7 @@ export async function act(kind: ActionKind, targets: Target[] = currentTargets()
     } else withUndo(rule.text(count), undo);
     ok = true;
   } catch (e) {
-    toast(`Couldn't do that: ${errorText(e)}`);
+    toast(failureText(doing(kind, count), e), { action: { label: "Try again", run: () => void act(kind, targets) } });
   } finally {
     settleThreads(moved, ok);
     void loadList({ quiet: true });
@@ -160,7 +182,7 @@ async function deleteForever(targets: Target[], count: number) {
     toast(RULES["delete-forever"].text(count));
     ok = true;
   } catch (e) {
-    toast(`Couldn't delete: ${errorText(e)}`);
+    toast(failureText(doing("delete-forever", count), e), { action: { label: "Try again", run: () => void deleteForever(targets, count) } });
   }
   settleThreads(gone, ok);
   void loadList({ quiet: true });
@@ -194,7 +216,9 @@ export async function applyLabels(add: string[], remove: string[], opts: { move?
     });
     ok = true;
   } catch (e) {
-    toast(`Couldn't change labels: ${errorText(e)}`);
+    toast(failureText(`change the labels on ${count === 1 ? "the conversation" : `${count} conversations`}`, e), {
+      action: { label: "Try again", run: () => void applyLabels(add, remove, { ...opts, targets }) },
+    });
   }
   settleThreads(moved, ok);
   void loadList({ quiet: true });
@@ -217,7 +241,9 @@ export async function snooze(until: number, targets: Target[] = currentTargets()
     });
     ok = true;
   } catch (e) {
-    toast(`Couldn't snooze: ${errorText(e)}`);
+    toast(failureText(`snooze ${count === 1 ? "the conversation" : `${count} conversations`}`, e), {
+      action: { label: "Try again", run: () => void snooze(until, targets) },
+    });
   }
   settleThreads(moved, ok);
   void loadList({ quiet: true });
@@ -245,7 +271,7 @@ export async function toggleStar(t: ThreadSummary) {
     if (next) await api.star(t.accountId, lastMessage, next);
     else await api.modifyThreads(t.accountId, [t.threadId], [], ["STARRED"]);
   } catch (e) {
-    toast(`Couldn't star: ${errorText(e)}`);
+    toast(failureText(`star`, e));
   }
   void loadList({ quiet: true });
 }
@@ -313,7 +339,7 @@ export async function unsubscribe(
           void api
             .unsubscribeOneClick(m.url)
             .then(() => (toast(`Unsubscribed from ${senderName}.`), onDone?.()))
-            .catch((e) => toast(`Couldn't unsubscribe: ${errorText(e)}`));
+            .catch((e) => toast(failureText(`unsubscribe`, e)));
         else if (m.kind === "mailto") void sendMail(m.to, m.subject, m.body).then(() => (toast(`Unsubscribe request sent to ${senderName}.`), onDone?.()));
         else void api.openExternal(m.url).then(() => onDone?.());
       },
@@ -453,29 +479,37 @@ async function runBulk(kind: ActionKind, keep: string[], currentView: (page?: nu
       replaceToast(progress, `Working… ${(p.done ?? 0).toLocaleString()} of ${p.total.toLocaleString()} messages`, { ms: 600000 });
   });
   const changed: { accountId: string; ids: string[] }[] = [];
-  let count = 0;
+  let done = 0;
+  let failed = 0;
+  const again = () => void runBulk(kind, keep, currentView, rule, accounts);
   try {
     for (const accountId of accounts) {
       const v = { ...currentView(0), accountId, ...(accounts.length > 1 ? { label: "INBOX", category: null } : {}) };
-      if (kind === "delete-forever") count += await api.bulkDeleteForever(v, keep);
-      else {
-        const ids = await api.bulkModify(v, rule.add, rule.remove, keep);
-        changed.push({ accountId, ids });
-        count += ids.length;
-      }
+      const out: BulkOutcome = kind === "delete-forever" ? await api.bulkDeleteForever(v, keep) : await api.bulkModify(v, rule.add, rule.remove, keep);
+      if (kind !== "delete-forever") changed.push({ accountId, ids: out.ids });
+      done += out.conversations;
+      failed += out.failedConversations;
     }
     off();
     dismissToast(progress);
-    const text = `${count.toLocaleString()} message${count === 1 ? "" : "s"} ${BULK_TEXT[kind]?.done ?? "changed"}.`;
-    if (kind === "delete-forever") toast(text);
-    else
-      withUndo(text, async () => {
-        for (const c of changed) await api.modifyMessages(c.accountId, c.ids, rule.remove, rule.add);
+    const what = BULK_TEXT[kind]?.done ?? "changed";
+    const text = done === 1 ? `Conversation ${what}.` : `${done.toLocaleString()} conversations ${what}.`;
+    const undo = async () => {
+      for (const c of changed) await api.modifyMessages(c.accountId, c.ids, rule.remove, rule.add);
+    };
+    if (failed) {
+      const rest = `Couldn't do it for the other ${failed === 1 ? "one" : failed.toLocaleString()}.`;
+      toast(`${text} ${rest}`, {
+        sticky: true,
+        action: { label: "Try again", run: again },
+        secondary: kind === "delete-forever" ? undefined : { label: "Undo", run: () => void undo() },
       });
+    } else if (kind === "delete-forever") toast(text);
+    else withUndo(text, undo);
   } catch (e) {
     off();
     dismissToast(progress);
-    toast(`Couldn't finish: ${errorText(e)}`);
+    toast(failureText(DOING[kind].replace("{c}", "the conversations"), e), { action: { label: "Try again", run: again } });
   } finally {
     setState({ selected: [], selectAllMatching: false, keepThreads: [], hiddenThreads: [] });
     void loadList({ quiet: true });

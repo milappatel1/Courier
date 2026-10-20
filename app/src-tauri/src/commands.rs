@@ -349,12 +349,12 @@ pub fn mark_unsubscribed(st: S, account_id: String, email: String) -> Result<()>
 
 /// "Select all conversations in this view" actions: every page, on the server, minus the ones to keep.
 #[tauri::command]
-pub async fn bulk_modify(st: S<'_>, view: ViewQuery, add: Vec<String>, remove: Vec<String>, keep: Vec<String>) -> Result<Vec<String>> {
+pub async fn bulk_modify(st: S<'_>, view: ViewQuery, add: Vec<String>, remove: Vec<String>, keep: Vec<String>) -> Result<crate::engine::BulkOutcome> {
     st.engine.bulk_modify(&view, &add, &remove, &keep).await
 }
 
 #[tauri::command]
-pub async fn bulk_delete_forever(st: S<'_>, view: ViewQuery, keep: Vec<String>) -> Result<usize> {
+pub async fn bulk_delete_forever(st: S<'_>, view: ViewQuery, keep: Vec<String>) -> Result<crate::engine::BulkOutcome> {
     st.engine.bulk_delete_forever(&view, &keep).await
 }
 

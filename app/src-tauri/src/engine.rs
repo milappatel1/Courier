@@ -954,11 +954,11 @@ impl Engine {
     /// Every message in a view — all pages, from the server for Gmail and for IMAP folders — except the
     /// conversations in `keep`. Whole conversations, as the web client acts on them: the cached messages of
     /// each matching conversation come along (a reply in Sent goes to Trash with the rest).
-    pub async fn view_message_ids(&self, v: &ViewQuery, keep: &HashSet<String>) -> Result<Vec<String>> {
+    pub async fn view_message_ids(&self, v: &ViewQuery, keep: &HashSet<String>) -> Result<Vec<(String, String)>> {
         let account = v.account_id.as_str();
         let label = v.label.clone().unwrap_or_default();
         let kind = self.kind(account)?;
-        let mut ids: Vec<String> = Vec::new();
+        let mut ids: Vec<(String, String)> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
         let mut threads: HashSet<String> = HashSet::new();
         let local_only = matches!(label.as_str(), "SNOOZED" | "SCHEDULED" | "OUTBOX");
@@ -976,7 +976,7 @@ impl Engine {
                     }
                     threads.insert(t.to_string());
                     if seen.insert(id.to_string()) {
-                        ids.push(id.to_string());
+                        ids.push((id.to_string(), t.to_string()));
                     }
                 }
                 self.emit("bulk-progress", json!({"accountId": account, "phase": "finding", "found": ids.len()}));
@@ -1010,7 +1010,9 @@ impl Engine {
                     for uid in uids.into_iter().rev() {
                         let id = imap::message_id_for(&path, uv as u32, uid);
                         if !kept.contains(&id) && seen.insert(id.clone()) {
-                            ids.push(id);
+                            // Uncached mail has no conversation yet: it counts as its own.
+                            let thread = self.db.message(account, &id)?.map(|m| m.thread_id).unwrap_or_else(|| id.clone());
+                            ids.push((id, thread));
                         }
                     }
                 }
@@ -1037,62 +1039,77 @@ impl Engine {
         for t in &threads {
             for m in self.db.thread_messages(account, t)? {
                 if seen.insert(m.id.clone()) {
-                    ids.push(m.id);
+                    ids.push((m.id, t.clone()));
                 }
             }
         }
         Ok(ids)
     }
 
-    /// Apply a label change to everything in a view except `keep`; returns the message ids changed (for Undo).
-    pub async fn bulk_modify(&self, v: &ViewQuery, add: &[String], remove: &[String], keep: &[String]) -> Result<Vec<String>> {
+    /// Apply a label change to everything in a view except `keep`. A batch the server refuses doesn't stop the
+    /// rest; the outcome says how many conversations changed and how many didn't, and which messages changed
+    /// (for Undo).
+    pub async fn bulk_modify(&self, v: &ViewQuery, add: &[String], remove: &[String], keep: &[String]) -> Result<BulkOutcome> {
         let account = v.account_id.clone();
         let keep: HashSet<String> = keep.iter().cloned().collect();
         let ids = self.view_message_ids(v, &keep).await?;
         let total = ids.len();
         self.emit("bulk-progress", json!({"accountId": account, "phase": "working", "done": 0, "total": total}));
-        if self.kind(&account)? == "gmail" {
-            let mut done = 0;
-            for chunk in ids.chunks(1000) {
-                self.modify_messages(&account, chunk, add, remove).await?;
-                done += chunk.len();
-                self.emit("bulk-progress", json!({"accountId": account, "phase": "working", "done": done, "total": total}));
+        let chunk = if self.kind(&account)? == "gmail" { 1000 } else { total.max(1) };
+        let mut out = BulkTally::default();
+        for part in ids.chunks(chunk) {
+            let only: Vec<String> = part.iter().map(|(id, _)| id.clone()).collect();
+            match self.modify_messages(&account, &only, add, remove).await {
+                Ok(()) => out.done(part),
+                Err(e) if e.is_offline() || e.is_auth() || out.ids.is_empty() && part.len() == total => return Err(e),
+                Err(e) => out.failed(part, e),
             }
-            if let Ok(g) = self.gmail(&account) {
-                let _ = gmail::refresh_labels(&g, &self.db, &account).await;
-            }
-        } else {
-            self.modify_messages(&account, &ids, add, remove).await?;
+            self.emit("bulk-progress", json!({"accountId": account, "phase": "working", "done": out.ids.len() + out.failed_ids, "total": total}));
+        }
+        if let Ok(g) = self.gmail(&account) {
+            let _ = gmail::refresh_labels(&g, &self.db, &account).await;
         }
         self.emit("bulk-progress", json!({"accountId": account, "phase": "done", "done": total, "total": total}));
         self.changed(&account, "bulk");
-        Ok(ids)
+        out.finish()
     }
 
-    /// Delete forever everything in Trash or Spam (or a search inside them) except `keep`.
-    pub async fn bulk_delete_forever(&self, v: &ViewQuery, keep: &[String]) -> Result<usize> {
+    /// Delete forever everything in Trash or Spam (or a search inside them) except `keep`. As with
+    /// `bulk_modify`, a refused batch doesn't stop the rest.
+    pub async fn bulk_delete_forever(&self, v: &ViewQuery, keep: &[String]) -> Result<BulkOutcome> {
         let account = v.account_id.clone();
         let label = v.label.clone().unwrap_or_default();
         if label != "TRASH" && label != "SPAM" {
             return Err(Error::msg("Only conversations in Trash or Spam can be deleted forever."));
         }
         let keep: HashSet<String> = keep.iter().cloned().collect();
-        let ids = self.view_message_ids(v, &keep).await?;
-        let total = ids.len();
+        let pairs = self.view_message_ids(v, &keep).await?;
+        let total = pairs.len();
         self.emit("bulk-progress", json!({"accountId": account, "phase": "working", "done": 0, "total": total}));
         if self.kind(&account)? == "gmail" {
             let g = self.gmail(&account)?;
-            let mut done = 0;
-            for chunk in ids.chunks(1000) {
-                g.batch_delete(chunk).await?;
-                for id in chunk {
-                    self.db.delete_message(&account, id)?;
+            let mut out = BulkTally::default();
+            for part in pairs.chunks(1000) {
+                let only: Vec<String> = part.iter().map(|(id, _)| id.clone()).collect();
+                match g.batch_delete(&only).await {
+                    Ok(()) => {
+                        for id in &only {
+                            self.db.delete_message(&account, id)?;
+                        }
+                        out.done(part);
+                    }
+                    Err(e) if e.is_offline() || e.is_auth() || out.ids.is_empty() && part.len() == total => return Err(e),
+                    Err(e) => out.failed(part, e),
                 }
-                done += chunk.len();
-                self.emit("bulk-progress", json!({"accountId": account, "phase": "working", "done": done, "total": total}));
+                self.emit("bulk-progress", json!({"accountId": account, "phase": "working", "done": out.ids.len() + out.failed_ids, "total": total}));
             }
             let _ = gmail::refresh_labels(&g, &self.db, &account).await;
-        } else {
+            self.emit("bulk-progress", json!({"accountId": account, "phase": "done", "done": total, "total": total}));
+            self.changed(&account, "delete");
+            return out.finish();
+        }
+        let ids: Vec<String> = pairs.iter().map(|(id, _)| id.clone()).collect();
+        {
             let acc = self.imap_account(&account)?;
             let mut g = acc.session().await?;
             let mut by_folder: HashMap<String, Vec<u32>> = HashMap::new();
@@ -1114,7 +1131,9 @@ impl Engine {
         }
         self.emit("bulk-progress", json!({"accountId": account, "phase": "done", "done": total, "total": total}));
         self.changed(&account, "delete");
-        Ok(total)
+        let mut out = BulkTally::default();
+        out.done(&pairs);
+        out.finish()
     }
 
     fn thread_ids_of(&self, account: &str, ids: &[String]) -> Vec<String> {
@@ -1222,7 +1241,21 @@ impl Engine {
         let threads = self.thread_ids_of(account, &ids);
         let before = self.db.label_thread_stats(account, &threads)?;
         if gmail {
-            self.gmail(account)?.batch_delete(&ids).await?;
+            // Batch by batch, so the cache drops what the server deleted even if a later batch is refused.
+            let g = self.gmail(account)?;
+            for part in ids.chunks(1000) {
+                let r = g.batch_delete(part).await;
+                if r.is_ok() {
+                    for id in part {
+                        self.db.delete_message(account, id)?;
+                    }
+                }
+                if let Err(e) = r {
+                    let _ = gmail::refresh_labels(&g, &self.db, account).await;
+                    self.changed(account, "delete");
+                    return Err(e);
+                }
+            }
         } else {
             let acc = self.imap_account(account)?;
             let mut g = acc.session().await?;
@@ -1781,6 +1814,48 @@ fn expand_label_rules(add: &[String], remove: &[String]) -> (Vec<String>, Vec<St
     }
     add.retain(|l| !remove.contains(l));
     (add, remove)
+}
+
+/// What a whole-view action did: the messages changed (for Undo) and how many conversations changed or didn't.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkOutcome {
+    pub ids: Vec<String>,
+    pub conversations: usize,
+    pub failed_conversations: usize,
+}
+
+#[derive(Default)]
+struct BulkTally {
+    ids: Vec<String>,
+    threads: HashSet<String>,
+    failed_threads: HashSet<String>,
+    failed_ids: usize,
+    error: Option<Error>,
+}
+
+impl BulkTally {
+    fn done(&mut self, part: &[(String, String)]) {
+        for (id, t) in part {
+            self.ids.push(id.clone());
+            self.threads.insert(t.clone());
+        }
+    }
+    fn failed(&mut self, part: &[(String, String)], e: Error) {
+        self.failed_ids += part.len();
+        self.failed_threads.extend(part.iter().map(|(_, t)| t.clone()));
+        self.error = Some(e);
+    }
+    /// A conversation split across a done and a refused batch counts as not done.
+    fn finish(self) -> Result<BulkOutcome> {
+        if self.ids.is_empty() {
+            if let Some(e) = self.error {
+                return Err(e);
+            }
+        }
+        let conversations = self.threads.iter().filter(|t| !self.failed_threads.contains(*t)).count();
+        Ok(BulkOutcome { ids: self.ids, conversations, failed_conversations: self.failed_threads.len() })
+    }
 }
 
 pub fn outbox_summary(r: &OutboxRow) -> ThreadSummary {

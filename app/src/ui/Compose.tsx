@@ -9,7 +9,7 @@ import { schedulePresets } from "../core/dates";
 import { encodedSize, SEND_LIMIT_BYTES } from "../core/mime/build";
 import { signatureHtml } from "../core/compose";
 import { htmlToText } from "../core/text";
-import { api, errorText } from "../ipc/api";
+import { api, errorText, failureText } from "../ipc/api";
 import type { Contact, Signature, Template } from "../ipc/types";
 import {
   attachmentFromFile,
@@ -1197,7 +1197,7 @@ async function attachConversations(composeId: string, drop: { accountId: string;
     const c = useMail.getState().composes.find((x) => x.id === composeId);
     if (c && add.length) changeCompose(composeId, { forwarded: [...c.forwarded, ...add] });
   } catch (e) {
-    toast(`Couldn't attach that: ${errorText(e)}`);
+    toast(failureText(`attach that`, e));
   }
 }
 

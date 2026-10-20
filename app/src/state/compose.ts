@@ -9,7 +9,7 @@ import { parseMessage } from "../core/mime/parse";
 import { escapeHtml, htmlToText, textToHtml } from "../core/text";
 import { parseMailto } from "../core/unsubscribe";
 import { mimeFromName } from "../core/files";
-import { api, errorText } from "../ipc/api";
+import { api, failureText } from "../ipc/api";
 import type { Account, MessageRow } from "../ipc/types";
 import { act } from "./actions";
 import { FONTS, SIZES } from "./settings";
@@ -307,7 +307,7 @@ export async function closeCompose(id: string) {
       await api.draftSave(c.accountId, c.draftId, raw, c.threadId);
       toast("Draft saved.");
     } catch (e) {
-      toast(`Couldn't save the draft: ${errorText(e)}`);
+      toast(failureText(`save the draft`, e));
     }
   }
 }
@@ -352,7 +352,7 @@ export async function sendCompose(id: string, opts: { sendAt?: number; archiveTh
   try {
     outboxId = await api.send(latest.accountId, raw, { sendAt: opts.sendAt ?? null, scheduled, threadId: latest.threadId, draftId: latest.draftId, undoMs });
   } catch (e) {
-    toast(`Couldn't send: ${errorText(e)}`);
+    toast(failureText(`send`, e));
     return;
   }
   removeCompose(id);

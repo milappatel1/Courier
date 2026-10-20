@@ -397,8 +397,9 @@ async fn select_all_in_a_view_reaches_uncached_mail_and_keeps_the_unticked() {
     assert!(w.engine.db.message("g1", &ids[0]).unwrap().is_none(), "old mail isn't cached");
     let kept = w.engine.db.message("g1", &ids[4]).unwrap().unwrap().thread_id;
 
-    let changed = w.engine.bulk_modify(&view("g1", "INBOX"), &["TRASH".into()], &[], std::slice::from_ref(&kept)).await.unwrap();
-    assert_eq!(changed.len(), 4);
+    let out = w.engine.bulk_modify(&view("g1", "INBOX"), &["TRASH".into()], &[], std::slice::from_ref(&kept)).await.unwrap();
+    assert_eq!((out.ids.len(), out.conversations, out.failed_conversations), (4, 4, 0));
+    let changed = out.ids;
     for id in &ids[..4] {
         assert!(w.gmail.message(id).unwrap().labels.contains(&"TRASH".into()), "{id} trashed on the server");
     }
@@ -415,7 +416,7 @@ async fn select_all_in_a_view_reaches_uncached_mail_and_keeps_the_unticked() {
     // Delete forever only inside Trash/Spam.
     w.engine.bulk_modify(&view("g1", "INBOX"), &["TRASH".into()], &[], std::slice::from_ref(&kept)).await.unwrap();
     assert!(w.engine.bulk_delete_forever(&view("g1", "INBOX"), &[]).await.is_err());
-    assert_eq!(w.engine.bulk_delete_forever(&view("g1", "TRASH"), &[]).await.unwrap(), 4);
+    assert_eq!(w.engine.bulk_delete_forever(&view("g1", "TRASH"), &[]).await.unwrap().conversations, 4);
     assert!(ids[..4].iter().all(|id| w.gmail.message(id).is_none()));
     assert!(w.gmail.message(&ids[4]).is_some());
     assert_eq!(w.engine.db.label("g1", "TRASH").unwrap().unwrap().threads_total, 0);
@@ -548,8 +549,19 @@ async fn bulk_delete_goes_on_past_a_refused_batch() {
     w.gmail.state.lock().precondition_ids = vec![ids[1099].clone()];
     let r = w.engine.bulk_modify(&view("g1", "Label_7"), &["TRASH".into()], &[], &[]).await;
     assert!(r.is_ok(), "the whole bulk delete failed: {:?}", r.err());
+    let out = r.unwrap();
     let trashed = ids.iter().filter(|id| w.gmail.message(id).unwrap().labels.contains(&"TRASH".into())).count();
     assert!(trashed >= 100 && trashed < 1100, "{trashed} of 1100 trashed");
+    assert_eq!((out.conversations, out.failed_conversations), (trashed, 1100 - trashed), "the outcome counts what moved and what didn't");
+    // Doing it again for what's left (the toast's Try again) finishes the job once the server takes it.
+    w.gmail.state.lock().precondition_ids.clear();
+    let again = w.engine.bulk_modify(&view("g1", "Label_7"), &["TRASH".into()], &[], &[]).await.unwrap();
+    assert_eq!((again.conversations, again.failed_conversations), (1100 - trashed, 0));
+    // When every batch is refused, the action fails as a whole.
+    w.gmail.state.lock().precondition_ids = vec![ids[0].clone()];
+    let mut back = view("g1", "TRASH");
+    back.query = Some("Deal 0".into());
+    assert!(w.engine.bulk_modify(&back, &[], &["TRASH".into()], &[]).await.is_err());
 }
 
 #[tokio::test]
@@ -572,4 +584,22 @@ async fn a_sync_while_a_change_is_on_its_way_keeps_the_change() {
     delete.await.unwrap().unwrap();
     let labels = w.engine.db.message("g1", &id).unwrap().unwrap().labels;
     assert!(labels.contains(&"TRASH".to_string()) && labels.contains(&"STARRED".to_string()) && !labels.contains(&"INBOX".to_string()), "{labels:?}");
+}
+
+#[tokio::test]
+async fn delete_forever_in_bulk_goes_on_past_a_refused_batch() {
+    let w = world().await;
+    let old = courier_lib::error::now_ms() - 90 * 86_400_000;
+    let mut ids = Vec::new();
+    for i in 0..1050 {
+        let id = w.gmail.deliver(&sample_mail("Shop <news@shop.example>", "pat@example.com", &format!("Gone {i}"), "offer", ""), &["TRASH"]);
+        w.gmail.state.lock().messages.get_mut(&id).unwrap().internal_date = old - i;
+        ids.push(id);
+    }
+    w.engine.sync_account("g1").await.unwrap();
+    w.gmail.state.lock().precondition_ids = vec![ids[1049].clone()];
+    let out = w.engine.bulk_delete_forever(&view("g1", "TRASH"), &[]).await.unwrap();
+    let gone = ids.iter().filter(|id| w.gmail.message(id).is_none()).count();
+    assert!(gone >= 50 && gone < 1050, "{gone} of 1050 deleted");
+    assert_eq!((out.conversations, out.failed_conversations), (gone, 1050 - gone));
 }

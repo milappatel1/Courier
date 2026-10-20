@@ -3,7 +3,7 @@
 import { sizeFor, type ViewSize } from "../core/layout";
 import { create } from "zustand";
 import type { Address } from "../core/addresses";
-import { api, errorText, on } from "../ipc/api";
+import { api, errorText, failureText, on } from "../ipc/api";
 import type { Account, AppInfo, Label, ThreadDetail, ThreadSummary, ViewQuery, ViewResult } from "../ipc/types";
 import { DEFAULTS, mergeSettings, type Settings } from "./settings";
 import { applyTheme } from "./themes";
@@ -614,7 +614,7 @@ export async function runUndo() {
     await u.run();
     replaceToast(id, "Action undone.");
   } catch (e) {
-    replaceToast(id, `Couldn't undo: ${errorText(e)}`);
+    replaceToast(id, failureText(`undo`, e));
   }
   void loadList({ quiet: true });
 }

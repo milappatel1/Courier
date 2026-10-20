@@ -70,12 +70,19 @@ impl Gmail {
                 tokio::time::sleep(rate_limit_wait(attempt)).await;
                 continue;
             }
+            // Now and then the API refuses a request with 400 failedPrecondition and takes the same request a
+            // moment later (seen on lists, label changes and sends alike); it changed nothing, so try again.
+            if status == 400 && is_failed_precondition(&v) && attempt < 4 {
+                tokio::time::sleep(rate_limit_wait(attempt) / 2).await;
+                continue;
+            }
+            crate::applog::warn(&format!("mail API {} {} → {status} {}: {msg}", method, api_path(url), api_reason(&v)));
             return Err(match status {
                 401 => Error::Auth(msg),
                 404 => Error::NotFound(msg),
                 // Still limited, busy or down after the retries above: treat like no connection, so sends wait in
                 // the outbox and sync backs off, instead of failing for good.
-                _ if limited => Error::RateLimited(format!("Gmail is limiting requests ({status}); Courier will try again shortly")),
+                _ if limited => Error::RateLimited("Gmail is busy right now. Courier will try again shortly.".into()),
                 500..=599 => Error::Offline(format!("server unavailable ({status})")),
                 _ => Error::Server(format!("{status}: {msg}")),
             });
@@ -758,6 +765,27 @@ pub async fn sync_people(g: &Gmail, db: &Db, account: &str) -> Result<usize> {
 
 /// Whether a Gmail error body is a rate limit (403 `userRateLimitExceeded` / `rateLimitExceeded`, or
 /// `RESOURCE_EXHAUSTED`) rather than a real permission problem.
+pub fn is_failed_precondition(v: &Value) -> bool {
+    v["error"]["status"].as_str() == Some("FAILED_PRECONDITION") || api_reason(v) == "failedPrecondition"
+}
+
+fn api_reason(v: &Value) -> &str {
+    v["error"]["errors"][0]["reason"].as_str().or(v["error"]["status"].as_str()).unwrap_or("")
+}
+
+/// A request's path for the log, with message, thread and draft ids left out.
+fn api_path(url: &str) -> String {
+    let path = url.split('?').next().unwrap_or(url);
+    let path = path.split("/users/me").nth(1).unwrap_or(path);
+    let mut out = Vec::new();
+    let mut prev = "";
+    for seg in path.split('/') {
+        out.push(if matches!(prev, "messages" | "threads" | "drafts") && !matches!(seg, "batchModify" | "batchDelete" | "send" | "import" | "insert") { "{id}" } else { seg });
+        prev = seg;
+    }
+    out.join("/")
+}
+
 pub fn is_rate_limit(v: &Value) -> bool {
     let e = &v["error"];
     let reasons = e["errors"].as_array().map(|a| a.iter().filter_map(|x| x["reason"].as_str()).any(|r| r.ends_with("ateLimitExceeded") || r == "quotaExceeded")).unwrap_or(false);

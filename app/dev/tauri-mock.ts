@@ -734,19 +734,16 @@ const handlers: Record<string, (a: Args) => unknown> = {
     emit("bulk-progress", { accountId: v.accountId, phase: "working", done: 0, total: ids.length });
     modify(String(v.accountId), ids, a.add as string[], a.remove as string[]);
     emit("bulk-progress", { accountId: v.accountId, phase: "done", done: ids.length, total: ids.length });
-    return ids;
+    return { ids, conversations: threads.length, failedConversations: 0 };
   },
   bulk_delete_forever: (a) => {
     const v = { ...(a.view as ViewQuery), page: 0, pageSize: 100000 };
     const keep = new Set(a.keep as string[]);
-    const ids = new Set(
-      list(v)
-        .threads.filter((t) => !keep.has(t.threadId))
-        .flatMap((t) => threadMsgIds(t.accountId, [t.threadId])),
-    );
+    const threads = list(v).threads.filter((t) => !keep.has(t.threadId));
+    const ids = new Set(threads.flatMap((t) => threadMsgIds(t.accountId, [t.threadId])));
     for (let i = msgs.length - 1; i >= 0; i--) if (ids.has(msgs[i].id)) msgs.splice(i, 1);
     emit("mail-changed", { accountId: v.accountId });
-    return ids.size;
+    return { ids: [...ids], conversations: threads.length, failedConversations: 0 };
   },
   delete_forever: (a) => {
     const ids = new Set(threadMsgIds(String(a.accountId), a.threadIds as string[]));
