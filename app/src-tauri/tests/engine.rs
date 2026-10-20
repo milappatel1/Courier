@@ -287,7 +287,8 @@ async fn snooze_mute_block_filters_and_notifications() {
     w.engine.block("i1", "spammer@x.io").await.unwrap();
     w.imap.deliver("INBOX", &sample_mail("Spam <spammer@x.io>", "pat@example.org", "Win", "prize", ""), &[]);
     w.engine.sync_account("i1").await.unwrap();
-    assert_eq!(w.imap.folder("Junk").unwrap().msgs.len(), 1);
+    // The background loop may be the sync that saw it first; its move to Junk can still be under way.
+    wait_until(|| w.imap.folder("Junk").map(|f| f.msgs.len()) == Some(1), "blocked mail moved to Junk").await;
     assert!(w.imap.folder("INBOX").unwrap().msgs.is_empty());
 }
 
@@ -460,4 +461,46 @@ async fn manage_subscriptions_lists_senders_with_an_unsubscribe_option() {
     w.engine.mark_unsubscribed("g1", "Hello@News.example").unwrap();
     assert!(w.engine.subscriptions("g1").unwrap()[0].unsubscribed.is_some());
     assert_eq!(w.engine.subscriptions("all").unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn starred_in_primary_and_the_auto_contacts_setting() {
+    let w = world().await;
+    w.gmail.deliver(&sample_mail("Shop <deals@shop.example>", "pat@example.com", "Starred deal", "x", ""), &["INBOX", "CATEGORY_PROMOTIONS", "STARRED"]);
+    w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Plain note", "y", ""), &["INBOX", "CATEGORY_PERSONAL"]);
+    w.engine.sync_account("g1").await.unwrap();
+    let mut primary = view("g1", "INBOX");
+    primary.category = Some("primary".into());
+    let mut server = primary.clone();
+    server.mode = Some("server".into());
+    let subjects = |r: courier_lib::engine::ViewResult| r.threads.into_iter().map(|t| t.subject).collect::<Vec<_>>();
+    assert_eq!(subjects(w.engine.list(&primary).await.unwrap()), vec!["Plain note"]);
+    assert_eq!(subjects(w.engine.list(&server).await.unwrap()), vec!["Plain note"]);
+    // Settings ▸ Inbox ▸ Include starred in Primary.
+    w.engine.db.kv_set("includeStarredInPrimary", &json!(true)).unwrap();
+    assert!(subjects(w.engine.list(&primary).await.unwrap()).contains(&"Starred deal".to_string()));
+    assert!(subjects(w.engine.list(&server).await.unwrap()).contains(&"Starred deal".to_string()));
+
+    // Settings ▸ General ▸ Create contacts for auto-complete: off means mail no longer adds new people.
+    let known = |e: &str| w.engine.db.search_contacts(Some("g1"), e, 5).unwrap().iter().any(|c| c.email == e);
+    w.engine.db.kv_set("autoContacts", &json!(false)).unwrap();
+    w.gmail.deliver(&sample_mail("New Person <new@person.example>", "pat@example.com", "Hello", "z", ""), &["INBOX", "UNREAD", "CATEGORY_PERSONAL"]);
+    w.engine.sync_account("g1").await.unwrap();
+    assert!(!known("new@person.example"), "added while auto-complete contacts are off");
+    w.engine.db.kv_set("autoContacts", &json!(true)).unwrap();
+    w.gmail.deliver(&sample_mail("Other Person <other@person.example>", "pat@example.com", "Hi", "z", ""), &["INBOX", "UNREAD", "CATEGORY_PERSONAL"]);
+    w.engine.sync_account("g1").await.unwrap();
+    assert!(known("other@person.example"));
+}
+
+#[tokio::test]
+async fn conversations_say_whether_they_were_sent_to_me_or_only_to_me() {
+    let w = world().await;
+    w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Just you", "x", ""), &["INBOX", "CATEGORY_PERSONAL"]);
+    w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com, bo@x.io", "You and Bo", "x", ""), &["INBOX", "CATEGORY_PERSONAL"]);
+    w.gmail.deliver(&sample_mail("List <list@lists.example>", "everyone@lists.example", "List mail", "x", "List-Id: <news.lists.example>\r\n"), &["INBOX", "CATEGORY_PERSONAL"]);
+    w.engine.sync_account("g1").await.unwrap();
+    let r = w.engine.list(&view("g1", "INBOX")).await.unwrap();
+    let level = |s: &str| r.threads.iter().find(|t| t.subject == s).map(|t| t.to_me).unwrap();
+    assert_eq!((level("Just you"), level("You and Bo"), level("List mail")), (2, 1, 0));
 }

@@ -47,24 +47,21 @@ export function Subscriptions() {
   };
   return (
     <div className="subs" data-testid="subscriptions">
-      <div className="toolbar subs-bar">
-        <IconButton icon="arrow_back" label="Back to Inbox" onClick={() => go({ label: "INBOX" })} />
-        <h2 className="subs-title">Manage subscriptions</h2>
-        <div className="grow" />
-        <label className="subs-sort">
-          <span className="light">Sort by</span>
-          <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} data-testid="subs-sort" aria-label="Sort subscriptions">
-            <option value="volume">Most mail</option>
-            <option value="recent">Newest</option>
-            <option value="name">Name</option>
-          </select>
-        </label>
-      </div>
+      <h1 className="subs-title">Manage subscriptions</h1>
       <div className="subs-scroll">
-        <p className="subs-intro">
-          Senders whose mail includes an unsubscribe option, from the mail on this Mac. Unsubscribing asks the sender to stop; mail you already have stays until
-          you clear it.
-        </p>
+        <div className="subs-head">
+          <span className="subs-intro">
+            Senders whose mail offers a way to unsubscribe, from the mail on this Mac. Mail you already have stays until you clear it.
+          </span>
+          <label className="subs-sort">
+            <span className="light">Sort by</span>
+            <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} data-testid="subs-sort" aria-label="Sort subscriptions">
+              <option value="volume">Most mail</option>
+              <option value="recent">Newest</option>
+              <option value="name">Name</option>
+            </select>
+          </label>
+        </div>
         {error && <div className="empty">{error}</div>}
         {rows && !rows.length && (
           <div className="empty" data-testid="subs-empty">
@@ -115,17 +112,15 @@ function SubRow({ r, onDone }: { r: Subscription; onDone: () => void }) {
             <Icon name="check" size={18} /> Unsubscribed
           </span>
         ) : (
-          <button
-            type="button"
-            className="btn outline sm"
+          <IconButton
+            icon="unsubscribe"
+            label={how ? `Unsubscribe from ${name}` : "No unsubscribe option"}
             disabled={!how}
             onClick={() =>
               void unsubscribe(r.accountId, r.listUnsubscribe, r.listUnsubscribePost, name, (to, s, b) => sendSimple(r.accountId, to, s, b), onDone)
             }
-            data-testid="sub-unsubscribe"
-          >
-            Unsubscribe
-          </button>
+            testId="sub-unsubscribe"
+          />
         )}
       </div>
     </div>

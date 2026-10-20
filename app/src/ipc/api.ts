@@ -126,6 +126,7 @@ export const api = {
   tempFile: (name: string, data: Uint8Array) => call<string>("temp_file", { name, data: base64Encode(data) }),
   writeFile: (path: string, data: Uint8Array) => call<void>("write_file", { path, data: base64Encode(data) }),
   readFile: async (path: string) => bytes(await call<unknown>("read_file", { path })),
+  clipboardText: () => call<string | null>("clipboard_text"),
   saveDownload: (name: string, data: Uint8Array) => call<string>("save_download", { name, data: base64Encode(data) }),
   openFile: (name: string, data: Uint8Array) => call<string>("open_file", { name, data: base64Encode(data) }),
   revealFile: (path: string) => call<void>("reveal_file", { path }),

@@ -27,7 +27,7 @@ import {
 } from "./state/store";
 import { Dialogs, Toasts } from "./ui/Dialogs";
 import { ComposeDock } from "./ui/Compose";
-import { Conversation } from "./ui/Conversation";
+import { Conversation, shareOpenConversation } from "./ui/Conversation";
 import { Header } from "./ui/Header";
 import { ListView } from "./ui/ListView";
 import { Nav } from "./ui/Nav";
@@ -49,6 +49,7 @@ export function App() {
   const drawer = useMail((s) => s.drawer);
   const peek = useMail((s) => s.peek);
   useViewportSize();
+  useFrameFocusReturn();
   useChromeInset();
   useShortcuts();
   useMenuCommands();
@@ -174,6 +175,35 @@ function Welcome() {
 }
 
 /** Room for the window's traffic lights in the header (not in full screen or the browser preview). */
+/**
+ * Clicking into a message's body moves focus into its frame, where WebKit never hands key presses to the app,
+ * so shortcuts (e, j, k, r…) would stop working. As soon as the click is over, and unless text is being
+ * selected there (to copy), focus comes back to the app — inside the same window, never activating it.
+ */
+function useFrameFocusReturn() {
+  useEffect(() => {
+    let timer = 0;
+    const check = () => {
+      const f = document.activeElement;
+      if (!(f instanceof HTMLIFrameElement) || !f.classList.contains("msg-frame")) return void window.clearInterval(timer);
+      const sel = f.contentWindow?.getSelection();
+      if (!sel || sel.isCollapsed) {
+        window.clearInterval(timer);
+        f.blur();
+      }
+    };
+    const onBlur = () => {
+      window.clearInterval(timer);
+      timer = window.setInterval(check, 150);
+    };
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      window.clearInterval(timer);
+    };
+  }, []);
+}
+
 /** Follow the window's width: data-size on <html> for the CSS, and the store for layout choices. */
 function useViewportSize() {
   useEffect(() => {
@@ -228,6 +258,20 @@ async function replyTo(kind: "reply" | "reply-all" | "forward") {
   }
   const last = d?.messages.filter((m) => !m.labels.includes("DRAFT")).at(-1);
   if (d && last) await openReply(d.accountId, last, kind);
+}
+
+/** Edit ▸ Paste and Match Style: the clipboard's text, without its formatting, where the cursor is. */
+async function pastePlain() {
+  const target = document.activeElement as HTMLElement | null;
+  const text = await api.clipboardText().catch(() => null);
+  if (!text || !target) return;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+    const [a, b] = [target.selectionStart ?? target.value.length, target.selectionEnd ?? target.value.length];
+    target.setRangeText(text, a, b, "end");
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+  } else if (target.isContentEditable) {
+    document.execCommand("insertText", false, text);
+  }
 }
 
 export function runCommand(a: ShortcutAction | string) {
@@ -481,7 +525,9 @@ function useMenuCommands() {
           document.querySelector<HTMLButtonElement>('[data-testid="unsubscribe"]')?.click();
           return;
         case "share":
-          return;
+          return void shareOpenConversation();
+        case "paste-plain":
+          return void pastePlain();
         case "spelling":
           document.querySelector<HTMLButtonElement>('[data-testid="compose-more"]')?.click();
           return;

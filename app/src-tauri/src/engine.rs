@@ -515,13 +515,25 @@ impl Engine {
         Ok(())
     }
 
+    /// Settings ▸ General ▸ Create contacts for auto-complete (on unless turned off).
+    fn auto_contacts(&self) -> bool {
+        self.db.kv_get("autoContacts").ok().flatten().and_then(|v| v.as_bool()).unwrap_or(true)
+    }
+
+    /// Remember someone for auto-complete: anyone when that's on, otherwise only people already known.
+    fn note_contact(&self, account: &str, email: &str, name: &str, sent_to: bool, at: i64) {
+        if self.auto_contacts() || self.db.has_contact(account, email).unwrap_or(false) {
+            let _ = self.db.touch_contact(account, email, name, sent_to, at);
+        }
+    }
+
     /// New mail: contacts, muted threads, local filters (IMAP), notifications.
     async fn after_new_mail(&self, account: &str, a: &AccountRow, msgs: Vec<crate::db::MessageRow>) {
         let me = a.email.to_lowercase();
         let mut notify = Vec::new();
         for m in &msgs {
             if !m.from_email.is_empty() && m.from_email.to_lowercase() != me {
-                let _ = self.db.touch_contact(account, &m.from_email, &m.from_name, false, m.internal_date);
+                self.note_contact(account, &m.from_email, &m.from_name, false, m.internal_date);
             }
             if m.has("INBOX") && self.db.is_muted(account, &m.thread_id).unwrap_or(false) {
                 let _ = self.modify_messages(account, std::slice::from_ref(&m.id), &[], &["INBOX".into()]).await;
@@ -625,7 +637,9 @@ impl Engine {
             if cat == "primary" {
                 let others: Vec<String> = CATEGORY_LABELS.iter().filter(|(k, _)| enabled.contains(&k.to_string())).map(|(_, id)| format!("m.labels LIKE '% {id} %'")).collect();
                 if !others.is_empty() {
-                    parts.push(format!("NOT ({})", others.join(" OR ")));
+                    // Settings ▸ Inbox ▸ Include starred in Primary.
+                    let starred = if self.starred_in_primary() { " OR m.labels LIKE '% STARRED %'" } else { "" };
+                    parts.push(format!("(NOT ({}){starred})", others.join(" OR ")));
                 }
             } else if let Some((_, id)) = CATEGORY_LABELS.iter().find(|(k, _)| *k == cat) {
                 parts.push(format!("m.labels LIKE '% {id} %'"));
@@ -737,6 +751,19 @@ impl Engine {
         Ok(ViewResult { has_more: offset + limit < total, total, threads, source: "cache".into(), ..Default::default() })
     }
 
+    fn starred_in_primary(&self) -> bool {
+        self.db.kv_get("includeStarredInPrimary").ok().flatten().and_then(|v| v.as_bool()).unwrap_or(false)
+    }
+
+    /// A view as a Gmail API listing, with Settings ▸ Inbox ▸ Include starred in Primary applied.
+    fn gmail_view_query_for(&self, v: &ViewQuery) -> (Vec<String>, String) {
+        let (ids, q) = Self::gmail_view_query(v);
+        if v.category.as_deref() == Some("primary") && self.starred_in_primary() {
+            return (ids, q.replacen("category:primary", "{category:primary is:starred}", 1));
+        }
+        (ids, q)
+    }
+
     /// A view as a Gmail API listing: label ids and a search query.
     fn gmail_view_query(v: &ViewQuery) -> (Vec<String>, String) {
         let label = v.label.clone().unwrap_or_default();
@@ -758,7 +785,7 @@ impl Engine {
     async fn server_list(&self, account: &str, v: &ViewQuery, limit: i64) -> Result<ViewResult> {
         let g = self.gmail(account)?;
         let label = v.label.clone().unwrap_or_default();
-        let (label_ids, q) = Self::gmail_view_query(v);
+        let (label_ids, q) = self.gmail_view_query_for(v);
         let include_spam_trash = label == "TRASH" || label == "SPAM";
         let (ids, next, estimate) = gmail::list_page(&g, &self.db, account, &label_ids, Some(&q), v.page_token.as_deref(), limit as u32, include_spam_trash).await?;
         // Locally snoozed threads stay hidden from the inbox.
@@ -936,7 +963,7 @@ impl Engine {
         let has_query = v.query.as_deref().map(|q| !q.trim().is_empty()).unwrap_or(false) || v.category.as_deref().map(|c| !c.is_empty()).unwrap_or(false);
         if kind == "gmail" && !local_only {
             let g = self.gmail(account)?;
-            let (label_ids, q) = Self::gmail_view_query(v);
+            let (label_ids, q) = self.gmail_view_query_for(v);
             let mut page: Option<String> = None;
             loop {
                 let r = g.messages_list(Some(&q), &label_ids, page.as_deref(), 500).await?;
@@ -1648,7 +1675,7 @@ impl Engine {
             }
         }
         for r in &row.recipients {
-            let _ = self.db.touch_contact(&row.account_id, r, "", true, now_ms());
+            self.note_contact(&row.account_id, r, "", true, now_ms());
         }
         Ok(())
     }

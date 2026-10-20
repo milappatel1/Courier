@@ -510,6 +510,7 @@ export function viewSentThread(threadId: string, accountId: string) {
     outboxId: null,
     scheduledAt: null,
     listUnsubscribe: false,
+    toMe: 0,
   });
 }
 

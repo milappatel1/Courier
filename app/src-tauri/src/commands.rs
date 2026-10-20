@@ -767,6 +767,15 @@ pub fn open_external(st: S, url: String) -> Result<()> {
     tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| Error::msg(e.to_string()))
 }
 
+/// The clipboard as plain text, for Paste and Match Style. End-to-end runs never read the real clipboard.
+#[tauri::command]
+pub fn clipboard_text(st: S) -> Option<String> {
+    if st.e2e.is_some() {
+        return Some("Pasted as plain text".into());
+    }
+    crate::macos::pasteboard_text()
+}
+
 #[tauri::command]
 pub fn spell_check(app: AppHandle, texts: Vec<String>) -> Result<Vec<Vec<crate::macos::SpellIssue>>> {
     #[cfg(target_os = "macos")]
@@ -779,7 +788,12 @@ pub fn spell_check(app: AppHandle, texts: Vec<String>) -> Result<Vec<Vec<crate::
 }
 
 #[tauri::command]
-pub fn share(window: tauri::WebviewWindow, paths: Vec<String>, text: Option<String>, x: f64, y: f64) -> Result<()> {
+pub fn share(st: S, window: tauri::WebviewWindow, paths: Vec<String>, text: Option<String>, x: f64, y: f64) -> Result<()> {
+    // End-to-end runs record what would be shared instead of showing the Share menu.
+    if let Some(e2e) = &st.e2e {
+        e2e.opened.lock().push(format!("share:{}", paths.join("|")));
+        return Ok(());
+    }
     #[cfg(target_os = "macos")]
     return crate::macos::share(&window, paths, text, x, y).map_err(Error::msg);
     #[cfg(not(target_os = "macos"))]

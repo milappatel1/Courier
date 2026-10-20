@@ -98,6 +98,8 @@ export interface ThreadSummary {
   outboxId: number | null;
   scheduledAt: number | null;
   listUnsubscribe: boolean;
+  /** Personal level: 0 not addressed to me, 1 to me among others, 2 to me alone. */
+  toMe: number;
 }
 
 export interface ViewQuery {

@@ -25,7 +25,7 @@ import {
 import { FONTS, SIZES } from "../state/settings";
 import { useShallow } from "zustand/react/shallow";
 import { removeCompose, toast, ui, updateCompose, useMail, addCompose, newComposeId, type Attachment, type ComposeData } from "../state/store";
-import { Avatar, Dialog, FileIcon, Icon, IconButton, Menu, anchorOf, type MenuEntry } from "./common";
+import { Avatar, Dialog, FileIcon, Icon, IconButton, Menu, anchorOf, useFollowAnchor, type MenuEntry } from "./common";
 
 type Anchor = ReturnType<typeof anchorOf>;
 
@@ -181,6 +181,7 @@ function ComposeBody({ c, inline, onPopOut }: { c: ComposeData; inline?: boolean
     }
     changeCompose(c.id, { attachments: [...latest.attachments, ...others], inlineImages: inlineMap, html: editor.current?.innerHTML ?? latest.html });
   };
+  const sendAndArchive = useMail((s) => s.settings.sendAndArchive);
   const doSend = async (opts: { sendAt?: number; archive?: boolean } = {}) => {
     sync();
     const latest = useMail.getState().composes.find((x) => x.id === c.id) ?? c;
@@ -546,6 +547,20 @@ function ComposeBody({ c, inline, onPopOut }: { c: ComposeData; inline?: boolean
             <Icon name="arrow_drop_down" />
           </button>
         </span>
+        {c.reply && sendAndArchive && (
+          // Settings ▸ General ▸ Send and Archive: one click sends the reply and archives the conversation.
+          <button
+            type="button"
+            className="send-archive"
+            onClick={() => void doSend({ archive: true })}
+            aria-label="Send and archive"
+            data-tip="Send and archive"
+            data-testid="compose-send-archive"
+          >
+            <Icon name="send" size={18} />
+            <Icon name="archive" size={18} />
+          </button>
+        )}
         <IconButton icon="text_format" label="Formatting options" on={fmt} onClick={() => setFmt(!fmt)} testId="compose-format" />
         <IconButton icon="attach_file" label="Attach files" onClick={() => fileInput.current?.click()} testId="compose-attach" />
         <IconButton icon="link" label="Insert link (⌘K)" onClick={() => (saveRange(), setDialog("link"))} testId="compose-link" />
@@ -1154,13 +1169,16 @@ function EmojiPicker({ anchor, onClose, onPick }: { anchor: Anchor; onClose: () 
     setTimeout(() => document.addEventListener("mousedown", f), 0);
     return () => document.removeEventListener("mousedown", f);
   }, []);
+  // Follows its button when an inline reply scrolls with the conversation.
+  const [at, setAt] = useState(anchor);
+  useFollowAnchor(ref, anchor, setAt, onClose);
   const shown = (list ?? []).filter((x) => (q ? x.label.includes(q.toLowerCase()) : x.group === group)).slice(0, 400);
-  const top = Math.max(8, anchor.y - 348);
+  const top = Math.max(8, at.y - 348);
   return createPortal(
     <div
       className="emoji-pop"
       ref={ref}
-      style={{ left: Math.min(anchor.x, window.innerWidth - 344), top }}
+      style={{ left: Math.min(at.x, window.innerWidth - 344), top }}
       role="dialog"
       aria-label="Insert emoji"
       data-testid="emoji-picker"

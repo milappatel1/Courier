@@ -175,6 +175,8 @@ pub struct ThreadSummary {
     pub outbox_id: Option<i64>,
     pub scheduled_at: Option<i64>,
     pub list_unsubscribe: bool,
+    /// Personal level: 0 = not addressed to me (a list, Bcc), 1 = to me among others, 2 = to me alone.
+    pub to_me: u8,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -870,6 +872,13 @@ impl Db {
     /// Build list rows for threads. `in_trash_or_spam` keeps those messages (when viewing Trash/Spam).
     pub fn thread_summaries(&self, account: &str, ids: &[(String, i64)], in_trash_or_spam: bool) -> Result<Vec<ThreadSummary>> {
         let mut out = Vec::new();
+        // My addresses, for the personal level markers (› to me, » only to me).
+        let mine: Vec<String> = match self.account(account) {
+            Ok(a) => std::iter::once(a.email.to_lowercase())
+                .chain(a.state["aliases"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(|s| s.to_lowercase())))
+                .collect(),
+            Err(_) => vec![],
+        };
         for (tid, sort_date) in ids {
             let msgs = self.thread_messages(account, tid)?;
             let visible: Vec<&MessageRow> = msgs.iter().filter(|m| in_trash_or_spam || !(m.has("TRASH") || m.has("SPAM"))).collect();
@@ -879,6 +888,19 @@ impl Db {
             }
             let last = visible.iter().filter(|m| !m.has("DRAFT")).last().copied().unwrap_or(visible[visible.len() - 1]);
             let first = visible[0];
+            let received = visible.iter().filter(|m| !m.has("DRAFT") && !m.has("SENT")).last().copied();
+            let to_me = received
+                .map(|m| {
+                    let to: Vec<String> = m.to.iter().chain(m.cc.iter()).map(|a| a.email.to_lowercase()).collect();
+                    if !to.iter().any(|e| mine.contains(e)) || !m.list_id.is_empty() {
+                        0
+                    } else if to.len() == 1 {
+                        2
+                    } else {
+                        1
+                    }
+                })
+                .unwrap_or(0);
             let mut labels: Vec<String> = Vec::new();
             for m in &visible {
                 for l in &m.labels {
@@ -929,6 +951,7 @@ impl Db {
                 muted,
                 message_ids: visible.iter().map(|m| m.id.clone()).collect(),
                 draft_ids,
+                to_me,
                 outbox_id: None,
                 scheduled_at: None,
                 list_unsubscribe: visible.iter().any(|m| !m.list_unsubscribe.is_empty()),
@@ -1116,6 +1139,11 @@ impl Db {
             )
         })?;
         Ok(())
+    }
+
+    pub fn has_contact(&self, account: &str, email: &str) -> Result<bool> {
+        let email = email.trim().to_lowercase();
+        self.with(|c| Ok(c.query_row("SELECT 1 FROM contacts WHERE account_id=? AND email=?", params![account, email], |_| Ok(())).optional()?.is_some()))
     }
 
     pub fn search_contacts(&self, account: Option<&str>, q: &str, limit: i64) -> Result<Vec<Contact>> {

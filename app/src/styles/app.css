@@ -1719,9 +1719,19 @@ a {
 .conv-foot .btn .ic {
   font-size: 20px;
 }
+.msg-to-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
 .details-pop {
   position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
   z-index: 40;
+  width: max-content;
+  max-width: min(560px, calc(100vw - 48px));
+  overflow-wrap: anywhere;
   background: #fff;
   box-shadow: var(--shadow-menu);
   border-radius: 4px;
@@ -3120,7 +3130,7 @@ a {
   white-space: nowrap;
 }
 
-/* ---- Manage subscriptions ---- */
+/* ---- Manage subscriptions (proportions measured from the reference page) ---- */
 .subs {
   display: flex;
   flex-direction: column;
@@ -3128,46 +3138,55 @@ a {
   min-height: 0;
   min-width: 0;
 }
-.subs-bar {
-  gap: 8px;
-}
 .subs-title {
-  font: 400 18px/24px var(--font);
-  color: var(--text);
+  flex: none;
+  height: 48px;
   margin: 0;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  font: 400 22px/28px var(--font);
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.subs-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 5px 0 24px;
+}
+.subs-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 40px;
+  padding: 0 16px 0 12px;
+}
+.subs-intro {
+  flex: 1;
+  min-width: 0;
+  font: 400 12px/20px var(--font);
+  color: var(--text-2);
 }
 .subs-sort {
   display: flex;
   align-items: center;
   gap: 8px;
-  font: 400 14px/20px var(--font);
+  font: 400 12px/20px var(--font);
   color: var(--text-2);
   white-space: nowrap;
 }
 .subs-sort select {
-  font: inherit;
+  font: 400 13px var(--font);
   color: var(--text);
   background: transparent;
   border: 1px solid var(--outline);
   border-radius: 8px;
-  padding: 4px 8px;
-}
-.subs-scroll {
-  flex: 1;
-  overflow: auto;
-  padding: 0 0 24px;
-}
-.subs-intro {
-  margin: 8px 16px 16px;
-  font: 400 14px/20px var(--font);
-  color: var(--text-2);
-  max-width: 720px;
+  padding: 3px 8px;
 }
 .subs-section {
-  margin: 24px 16px 8px;
+  margin: 24px 16px 8px 12px;
   font: 500 14px/20px var(--font);
   color: var(--text-2);
 }
@@ -3175,8 +3194,9 @@ a {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--row-divider);
+  min-height: 86px;
+  box-sizing: border-box;
+  padding: 10px 16px 10px 12px;
   min-width: 0;
 }
 .sub-row:hover {
@@ -3184,13 +3204,13 @@ a {
 }
 .sub-main {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 16px;
   flex: 1;
   min-width: 0;
   border: 0;
   background: transparent;
-  padding: 4px 0;
+  padding: 0;
   text-align: left;
   cursor: pointer;
   color: inherit;
@@ -3203,14 +3223,14 @@ a {
 }
 .sub-name {
   font: 500 14px/20px var(--font);
-  color: var(--text);
+  color: var(--text-strong);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .sub-meta {
-  font: 400 12px/16px var(--font);
-  color: var(--text-2);
+  font: 400 14px/20px var(--font);
+  color: var(--icon);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3218,7 +3238,7 @@ a {
 .sub-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   flex: none;
 }
 .sub-done {
@@ -3745,4 +3765,53 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+/* Settings ▸ General ▸ Button labels: Text — toolbar buttons show words instead of icons */
+.icon-btn .ib-label {
+  display: none;
+}
+.toolbar.text-labels .icon-btn:has(> .ib-label):not(.page-btn):not(.tb-more) {
+  width: auto;
+  padding: 0 12px;
+  border-radius: 4px;
+}
+.toolbar.text-labels .icon-btn:has(> .ib-label):not(.page-btn):not(.tb-more) > .ic {
+  display: none;
+}
+.toolbar.text-labels .icon-btn:has(> .ib-label):not(.page-btn):not(.tb-more) > .ib-label {
+  display: inline;
+  font: 500 14px/20px var(--font);
+  color: var(--text);
+  white-space: nowrap;
+}
+.toolbar.text-labels {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+/* Settings ▸ General ▸ Personal level indicators */
+.row .sender .pli {
+  display: inline-block;
+  width: 14px;
+  color: var(--date-read);
+  font-weight: 400;
+}
+
+/* Send and archive (replies) */
+.send-archive {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 36px;
+  margin-left: 8px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--primary);
+  color: var(--primary-text);
+  cursor: pointer;
+}
+.send-archive:hover {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }

@@ -461,6 +461,7 @@ function summary(accountId: string, threadId: string, inTrash: boolean): ThreadS
     outboxId: null,
     scheduledAt: null,
     listUnsubscribe: !!lp.listUnsubscribe,
+    toMe: lp.to.some((a) => a.email.startsWith("pat@")) ? (lp.to.length + lp.cc.length === 1 ? 2 : 1) : 0,
   };
 }
 
@@ -494,6 +495,7 @@ function list(v: ViewQuery) {
           outboxId: o.id,
           scheduledAt: o.scheduled ? o.sendAt : null,
           listUnsubscribe: false,
+          toMe: 0,
         });
       }
       continue;

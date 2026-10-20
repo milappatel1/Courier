@@ -185,6 +185,16 @@ pub fn order_back(window: &tauri::WebviewWindow) {
     }
 }
 
+/// The main window comes back at the size and place it was left (AppKit keeps the frame under this name).
+#[cfg(target_os = "macos")]
+pub fn remember_frame(window: &tauri::WebviewWindow, name: &str) {
+    if let Ok(ptr) = window.ns_window() {
+        // Called on the main thread from setup; the pointer is the live NSWindow.
+        let w = unsafe { &*(ptr as *const objc2_app_kit::NSWindow) };
+        let _ = w.setFrameAutosaveName(&objc2_foundation::NSString::from_str(name));
+    }
+}
+
 /// Two-finger swipes go back and forward, as in Safari and the web client (Courier's screens are history entries).
 /// Tauri doesn't pass this WebKit option through yet, so it's set on the native web view.
 #[cfg(target_os = "macos")]
@@ -200,6 +210,19 @@ pub fn enable_swipe_navigation(window: &tauri::WebviewWindow) {
     });
 }
 
+
+/// The clipboard's plain text (Edit ▸ Paste and Match Style).
+#[cfg(target_os = "macos")]
+pub fn pasteboard_text() -> Option<String> {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+    // SAFETY: a constant from AppKit.
+    let kind = unsafe { NSPasteboardTypeString };
+    NSPasteboard::generalPasteboard().stringForType(kind).map(|s| s.to_string())
+}
+#[cfg(not(target_os = "macos"))]
+pub fn pasteboard_text() -> Option<String> {
+    None
+}
 
 /// Read back the setting above (end-to-end check).
 #[cfg(target_os = "macos")]

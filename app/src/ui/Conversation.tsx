@@ -30,7 +30,7 @@ import {
   openDraft,
 } from "../state/store";
 import { ComposeInline } from "./Compose";
-import { Avatar, FileIcon, Icon, IconButton, Menu, anchorOf, type MenuEntry } from "./common";
+import { Avatar, FileIcon, Icon, IconButton, Menu, anchorOf, useFollowAnchor, type MenuEntry } from "./common";
 import { FilterDialog } from "./FilterDialog";
 import { MessageFrame, type FrameState } from "./MessageFrame";
 import { LabelAsBody, LabelAsMenu, MoveToMenu, SnoozeMenu } from "./menus";
@@ -53,6 +53,7 @@ export function Conversation({ split }: { split?: boolean }) {
   const { detail, loading, error } = useMail((s) => s.thread);
   const composes = useMail((s) => s.composes);
   const advanced = useMail((s) => s.settings.advancedToolbar);
+  const textLabels = useMail((s) => s.settings.buttonLabels === "text");
   const [expandAll, setExpandAll] = useState<boolean | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<{ kind: "label" | "move" | "snooze" | "more"; anchor: Anchor } | null>(null);
@@ -124,7 +125,7 @@ export function Conversation({ split }: { split?: boolean }) {
   ];
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }} data-testid="conversation">
-      <div className="toolbar conv-toolbar" role="toolbar" aria-label="Conversation actions">
+      <div className={["toolbar", "conv-toolbar", textLabels ? "text-labels" : ""].join(" ")} role="toolbar" aria-label="Conversation actions">
         {!split && <IconButton icon="arrow_back" label="Back to list" onClick={closeThread} testId="conv-back" />}
         {allLabels.includes("TRASH") ? (
           <IconButton icon="restore_from_trash" label="Move to Inbox" onClick={() => void act("restore", target)} />
@@ -299,7 +300,7 @@ function Message({
   const [quoted, setQuoted] = useState(false);
   const [frame, setFrame] = useState<FrameState | null>(null);
   const [menu, setMenu] = useState<Anchor | null>(null);
-  const [details, setDetails] = useState<Anchor | null>(null);
+  const [details, setDetails] = useState(false);
   const [filter, setFilter] = useState<Record<string, unknown> | null>(null);
   const settings = useMail((s) => s.settings);
   const acct = useMail((s) => s.accounts.find((a) => a.id === accountId));
@@ -409,8 +410,12 @@ function Message({
                 </button>
               )}
             </div>
-            <span className="msg-to" onClick={(e) => (e.stopPropagation(), setDetails(details ? null : anchorOf(e.currentTarget)))} data-testid="msg-details">
-              {toLine} <Icon name="arrow_drop_down" size={18} />
+            {/* The details box hangs under "to …" inside the message, so it scrolls with it. */}
+            <span className="msg-to-wrap">
+              <span className="msg-to" onClick={(e) => (e.stopPropagation(), setDetails(!details))} data-testid="msg-details">
+                {toLine} <Icon name="arrow_drop_down" size={18} />
+              </span>
+              {details && parsed && <Details m={m} p={parsed} onClose={() => setDetails(false)} />}
             </span>
           </div>
           <span className="msg-time" title={fullDate(m.internalDate)}>
@@ -446,7 +451,6 @@ function Message({
         </div>
         {menu && <Menu anchor={menu} items={items()} onClose={() => setMenu(null)} className="icons" label="Message options" />}
         {filter && <FilterDialog criteria={filter} onClose={() => setFilter(null)} accountId={accountId} />}
-        {details && parsed && <Details m={m} p={parsed} anchor={details} onClose={() => setDetails(null)} />}
         <div className="msg-body selectable">
           {frame?.hasRemote && !allowRemote && frame.blocked > 0 && (
             <div className="images-banner" data-testid="images-banner">
@@ -486,7 +490,7 @@ function Message({
   );
 }
 
-function Details({ m, p, anchor, onClose }: { m: MessageRow; p: ParsedMessage; anchor: Anchor; onClose: () => void }) {
+function Details({ m, p, onClose }: { m: MessageRow; p: ParsedMessage; onClose: () => void }) {
   const auth = authResults(p);
   const mailedBy = (p.header("return-path") ?? "").replace(/[<>]/g, "").split("@")[1] ?? "";
   const signedBy = (p.headerAll("dkim-signature")[0]?.match(/\bd=([^;\s]+)/) ?? [])[1] ?? "";
@@ -503,12 +507,7 @@ function Details({ m, p, anchor, onClose }: { m: MessageRow; p: ParsedMessage; a
       </>
     ) : null;
   return (
-    <div
-      className="details-pop"
-      style={{ left: anchor.x, top: anchor.y + (anchor.h ?? 0) + 4, position: "fixed" }}
-      onMouseDown={(e) => e.stopPropagation()}
-      data-testid="details-popup"
-    >
+    <div className="details-pop" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} data-testid="details-popup">
       {row("from", p.from.map(formatAddress).join(", ") || m.fromEmail)}
       {row("reply-to", p.replyTo.map(formatAddress).join(", "))}
       {row("to", p.to.map(formatAddress).join(", "))}
@@ -527,6 +526,14 @@ function Details({ m, p, anchor, onClose }: { m: MessageRow; p: ParsedMessage; a
 function SenderCard({ accountId, name, email, children }: { accountId: string; name: string; email: string; children: React.ReactNode }) {
   const [at, setAt] = useState<{ x: number; y: number } | null>(null);
   const ref = useRef<HTMLSpanElement>(null);
+  const card = useRef<HTMLDivElement>(null);
+  // The card follows the name when the conversation scrolls, and goes once the name is out of sight.
+  useFollowAnchor(
+    card,
+    { x: 0, y: 0, el: ref.current ?? undefined },
+    (a) => at && setAt({ x: Math.min(a.x, window.innerWidth - 336), y: a.y + (a.h ?? 0) + 6 }),
+    () => at && setAt(null),
+  );
   const timer = useRef(0);
   const later = (f: () => void, ms: number) => {
     window.clearTimeout(timer.current);
@@ -545,6 +552,7 @@ function SenderCard({ accountId, name, email, children }: { accountId: string; n
       {at &&
         createPortal(
           <div
+            ref={card}
             className="sender-card"
             style={{ left: Math.max(8, at.x), top: at.y }}
             onMouseEnter={() => window.clearTimeout(timer.current)}
@@ -592,6 +600,15 @@ function doUnsubscribe(accountId: string, m: MessageRow) {
 
 async function downloadEml(accountId: string, m: MessageRow) {
   await download(downloadName(m.subject, "eml"), await api.raw(accountId, m.id));
+}
+
+/** File ▸ Share…: the open conversation's latest message, as an .eml, through the Share menu. */
+export async function shareOpenConversation() {
+  const s = getState();
+  const d = s.thread.detail;
+  if (!s.route.thread || !d) return void toast("Open a conversation to share it.");
+  const m = [...d.messages].reverse().find((x) => !x.labels.includes("DRAFT")) ?? d.messages[d.messages.length - 1];
+  if (m) await shareMessage(s.route.thread.accountId, m);
 }
 
 async function shareMessage(accountId: string, m: MessageRow) {

@@ -473,6 +473,8 @@ pub fn run() {
                 macos::enable_swipe_navigation(&main);
                 if e2e_state.is_some() {
                     macos::order_back(&main);
+                } else {
+                    macos::remember_frame(&main, "CourierMain");
                 }
             }
             let _ = main;
@@ -546,6 +548,7 @@ pub fn run() {
             commands::mark_unsubscribed,
             commands::bulk_modify,
             commands::bulk_delete_forever,
+            commands::clipboard_text,
             commands::save_download,
             commands::open_file,
             commands::reveal_file,

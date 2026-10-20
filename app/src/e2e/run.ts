@@ -901,6 +901,48 @@ step("right-click a row: the menu acts on that conversation", async () => {
   await backToInbox();
 });
 
+/** Scrolls a box as a person would (and fires the event a covered background window holds back). */
+async function scrollBy(box: Element, dy: number) {
+  box.scrollTop += dy;
+  box.dispatchEvent(new Event("scroll"));
+  await sleep(150);
+}
+
+step("popups stay with what they belong to when the conversation scrolls", async () => {
+  await backToInbox();
+  click(await until("the long message", () => row("A very long message")));
+  const conv = await until("the conversation", () => document.querySelector<HTMLElement>(".conv"));
+  await until("its frame", () => frameDoc()?.getElementById("last"));
+  // The details under "to me": inside the message, so it moves with it.
+  const to = qa("msg-details").pop()!;
+  click(to);
+  const pop = await el("details-popup");
+  const gap = () => Math.round(pop.getBoundingClientRect().top - to.getBoundingClientRect().bottom);
+  const g0 = gap();
+  await scrollBy(conv, 140);
+  check(Math.abs(gap() - g0) <= 1, `the details box stayed put while the message scrolled (${g0} → ${gap()})`);
+  document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  await until("details closed", () => !q("details-popup"));
+  conv.scrollTop = 0;
+  // A menu follows its button, and closes once the button scrolls out of sight.
+  const more = qa("msg-more").pop()!;
+  click(more);
+  const menu = await until("the message menu", () => document.querySelector<HTMLElement>(".menu"));
+  const icon = more.querySelector(".ic") ?? more;
+  const m0 = Math.round(menu.getBoundingClientRect().top - icon.getBoundingClientRect().bottom);
+  await scrollBy(conv, 40);
+  check(Math.abs(Math.round(menu.getBoundingClientRect().top - icon.getBoundingClientRect().bottom) - m0) <= 1, "the menu didn't follow its button");
+  await scrollBy(conv, 3000);
+  await until("the menu closed once its button left the view", () => !document.querySelector(".menu"));
+  await backToInbox();
+  // A right-click menu closes when the list scrolls.
+  const r = await until("a row", () => row("Your application"));
+  r.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 400, clientY: r.getBoundingClientRect().top + 10 }));
+  await el("ctx-reply");
+  await scrollBy(await until("the list", () => document.querySelector(".list")), 20);
+  await until("the right-click menu closed", () => !q("ctx-reply"));
+});
+
 step("people: the To label picks recipients from a list; a sender's name shows their card", async () => {
   await backToInbox();
   const w = await newCompose();
@@ -1004,6 +1046,33 @@ step("two compose windows in a narrow window: the older folds to its title bar, 
   }
 });
 
+step("every settings page opens cleanly at desktop, rail and phone widths", async () => {
+  const problems: string[] = [];
+  try {
+    for (const [w, h] of [
+      [1280, 800],
+      [800, 700],
+      [420, 820],
+    ]) {
+      await setWindowSize(w, h);
+      await backToInbox();
+      click(await el("settings-gear"));
+      click(await el("see-all-settings"));
+      await el("settings");
+      const tabs = qa("settings-tab-general")[0]?.parentElement;
+      for (const tab of [...(tabs?.querySelectorAll<HTMLElement>("[data-testid^='settings-tab-']") ?? [])]) {
+        click(tab);
+        await sleep(250);
+        problems.push(...layoutIssues().map((p) => `${w}px ${tab.dataset.testid}: ${p}`));
+      }
+      click(await el("settings-close"));
+    }
+  } finally {
+    await setWindowSize(1280, 800);
+  }
+  check(!problems.length, problems.slice(0, 10).join("\n"));
+});
+
 step("phone width: menu drawer with the inbox tabs, rows with pictures, floating Compose", async () => {
   try {
     await setWindowSize(420, 820);
@@ -1034,6 +1103,69 @@ step("phone width: menu drawer with the inbox tabs, rows with pictures, floating
     click(await el("compose-discard", w));
   } finally {
     await setWindowSize(1280, 800);
+  }
+  await backToInbox();
+});
+
+step("shortcuts keep working after a click inside a message's body", async () => {
+  await backToInbox();
+  click(await until("a conversation", () => row("Quarterly planning notes")));
+  await el("conversation");
+  const frame = await until("the message frame", () => frameEl());
+  frame.focus();
+  check(document.activeElement === frame, "the message frame didn't take focus (nothing to test)");
+  window.dispatchEvent(new Event("blur"));
+  await until("focus back in the app", () => document.activeElement !== frame, 5_000);
+  // u goes back to the list, as a shortcut does from anywhere in the app.
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "u", bubbles: true }));
+  await until("back to the list", () => !getState().route.thread);
+});
+
+step("menu bar: Share sends the open conversation to the Share menu; Paste and Match Style pastes plain text", async () => {
+  await backToInbox();
+  click(await until("a conversation", () => row("Quarterly planning notes")));
+  await el("conversation");
+  await until("loaded", () => getState().thread.detail?.messages.length);
+  await emit("menu", { id: "share" });
+  await until("shared as a message file", async () => (await server()).opened.some((u) => u.startsWith("share:") && u.endsWith(".eml")));
+  await backToInbox();
+  const w = await newCompose();
+  const body = await el("compose-body", w);
+  body.focus();
+  await emit("menu", { id: "paste-plain" });
+  await until("pasted", () => body.textContent?.includes("Pasted as plain text"));
+  click(await el("compose-discard", w));
+});
+
+step("settings that change the list and replies: text button labels, personal markers, send and archive", async () => {
+  await backToInbox();
+  await setSetting("buttonLabels", "text");
+  await setSetting("personalIndicators", true);
+  await setSetting("sendAndArchive", true);
+  try {
+    const lunch = await until("a row", () => row("Lunch on Friday?"));
+    click(await el("row-checkbox", lunch));
+    const del = await el("tb-delete");
+    await until("words instead of icons", () => del.textContent?.includes("Delete") && getComputedStyle(del.querySelector(".ic")!).display === "none");
+    click(await el("row-checkbox", row("Lunch on Friday?")!));
+    await until("› / » markers", () => qa("row-pli").some((x) => x.textContent === "»"));
+    // Send and archive from a reply.
+    click(await until("a conversation", () => row("Your application")));
+    await el("conversation");
+    click(await el("reply"));
+    const box = await el("inline-compose");
+    setHtml(await el("compose-body", box), "<div>Thanks for confirming.</div>");
+    click(await el("compose-send-archive", box));
+    await until("the reply sent", () => sentWith("Re: Your application"), 30_000);
+    await until(
+      "the conversation archived",
+      async () => ((await server()).gmailMessages.filter((m) => m.subject === "Your application").every((m) => !m.labels.includes("INBOX")) ? true : null),
+      20_000,
+    );
+  } finally {
+    await setSetting("buttonLabels", "icons");
+    await setSetting("personalIndicators", false);
+    await setSetting("sendAndArchive", false);
   }
   await backToInbox();
 });

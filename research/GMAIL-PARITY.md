@@ -95,7 +95,9 @@ Status: ✅ done · 🔧 fixed in this round · ➕ added in this round · ⛔ l
 ## Settings
 
 General, Labels, Inbox, Accounts, Filters and blocked addresses, Forwarding and POP/IMAP, Advanced, Offline,
-Themes: ✅ (see `research/VERIFY-P4.md`). Added: swipe actions ➕.
+Themes: ✅ (see `research/VERIFY-P4.md`). Added: swipe actions ➕. Fixed in 1.0.4 (they did nothing before): Send
+and Archive, Button labels (text), Personal level indicators, Include starred in Primary, Create contacts for
+auto-complete 🔧.
 
 ## Layout at every size
 

@@ -94,6 +94,7 @@ function ListToolbar() {
   const size = useMail((s) => s.settings.pageSize);
   const allMatching = useMail((s) => s.selectAllMatching);
   const advanced = useMail((s) => s.settings.advancedToolbar);
+  const textLabels = useMail((s) => s.settings.buttonLabels === "text");
   const [menu, setMenu] = useState<{ kind: "label" | "move" | "snooze" | "more"; anchor: Anchor } | null>(null);
   const [filter, setFilter] = useState<Record<string, unknown> | null>(null);
   const threads = visibleThreads();
@@ -177,7 +178,7 @@ function ListToolbar() {
   const inSpam = label === "SPAM";
   const inbox = label === "INBOX";
   return (
-    <div className="toolbar" role="toolbar" aria-label="Conversation actions">
+    <div className={["toolbar", textLabels ? "text-labels" : ""].join(" ")} role="toolbar" aria-label="Conversation actions">
       <div className="select-btn" style={{ padding: 0 }}>
         <button
           type="button"
@@ -880,6 +881,11 @@ function Row({ t, index, open }: { t: ThreadSummary; index: number; open: boolea
         <span className="imp-cell" />
       )}
       <span className="sender" data-testid="row-sender">
+        {settings.personalIndicators && (
+          <span className="pli" title={t.toMe === 2 ? "Sent only to you" : t.toMe === 1 ? "Sent to you" : undefined} data-testid="row-pli">
+            {t.toMe === 2 ? "»" : t.toMe === 1 ? "›" : ""}
+          </span>
+        )}
         {sentTo ? (
           <span>To: {sentTo}</span>
         ) : (

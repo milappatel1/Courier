@@ -52,6 +52,10 @@ export function IconButton(props: {
       }}
     >
       <Icon name={props.icon} fill={props.fill} size={props.iconSize} />
+      {/* Shown instead of the icon in toolbars when Settings ▸ General ▸ Button labels is Text. */}
+      <span className="ib-label" aria-hidden="true">
+        {props.label.replace(/\s*\(.*\)$/, "")}
+      </span>
     </button>
   );
 }
@@ -132,13 +136,56 @@ interface Anchor {
   w?: number;
   h?: number;
   align?: "left" | "right";
+  /** The element the menu hangs off, so the menu can follow it when its container scrolls. */
+  el?: Element;
 }
 
 export function anchorOf(el: Element, align: "left" | "right" = "left"): Anchor {
   // Menus hang off the 20 px icon, not the 40 px hover circle around it (as in the reference).
   const icon = el.classList.contains("icon-btn") ? el.querySelector(":scope > .ic") : null;
   const r = (icon ?? el).getBoundingClientRect();
-  return { x: r.left, y: r.top, w: r.width, h: r.height, align };
+  return { x: r.left, y: r.top, w: r.width, h: r.height, align, el: icon ?? el };
+}
+
+/** Where an anchor's element is now, or null once it has scrolled out of its scrolling box (or gone). */
+function liveAnchor(a: Anchor): Anchor | null {
+  if (!a.el) return a;
+  if (!a.el.isConnected) return null;
+  const r = a.el.getBoundingClientRect();
+  for (let p = a.el.parentElement; p; p = p.parentElement) {
+    const cs = getComputedStyle(p);
+    if (/(auto|scroll|hidden)/.test(cs.overflowY + cs.overflowX)) {
+      const box = p.getBoundingClientRect();
+      if (r.bottom <= box.top || r.top >= box.bottom || r.right <= box.left || r.left >= box.right) return null;
+    }
+  }
+  return { ...a, x: r.left, y: r.top, w: r.width, h: r.height };
+}
+
+/**
+ * Keeps a popup with what it's attached to: when anything outside the popup scrolls (or the window resizes) it
+ * moves with its anchor, and closes once the anchor is out of sight — or, for popups at a point (a right-click),
+ * closes at once, as menus do.
+ */
+export function useFollowAnchor(ref: React.RefObject<HTMLElement | null>, anchor: Anchor, onMove: (a: Anchor) => void, onClose: () => void) {
+  const fns = useRef({ onMove, onClose, anchor });
+  fns.current = { onMove, onClose, anchor };
+  useEffect(() => {
+    const follow = (e: Event) => {
+      if (e.type === "scroll" && e.target instanceof Node && ref.current?.contains(e.target)) return;
+      const { anchor: a } = fns.current;
+      if (!a.el) return void (e.type === "scroll" && fns.current.onClose());
+      const live = liveAnchor(a);
+      if (!live) fns.current.onClose();
+      else fns.current.onMove(live);
+    };
+    document.addEventListener("scroll", follow, true);
+    window.addEventListener("resize", follow);
+    return () => {
+      document.removeEventListener("scroll", follow, true);
+      window.removeEventListener("resize", follow);
+    };
+  }, [ref]);
 }
 
 function place(menu: HTMLElement, a: Anchor, side: "below" | "right") {
@@ -184,9 +231,22 @@ export function Menu({
   const ref = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(-1);
   const [sub, setSub] = useState<{ i: number; anchor: Anchor } | null>(null);
+  // Where the anchor is now (it moves when its container scrolls); a new anchor from the caller starts over.
+  const given = useRef(anchor);
+  const at = useRef(anchor);
+  if (given.current !== anchor) given.current = at.current = anchor;
   useLayoutEffect(() => {
-    if (ref.current) place(ref.current, anchor, side);
+    if (ref.current) place(ref.current, at.current, side);
   });
+  useFollowAnchor(
+    ref,
+    anchor,
+    (a) => {
+      at.current = a;
+      if (ref.current) place(ref.current, a, side);
+    },
+    onClose,
+  );
   useEffect(() => {
     const down = (e: MouseEvent) => {
       const t = e.target as Node;
@@ -408,10 +468,13 @@ export function TooltipHost() {
     document.addEventListener("mouseover", over);
     document.addEventListener("mousedown", hide);
     document.addEventListener("keydown", hide);
+    // A tooltip belongs to what's under the pointer; scrolling moves that away.
+    document.addEventListener("scroll", hide, true);
     return () => {
       document.removeEventListener("mouseover", over);
       document.removeEventListener("mousedown", hide);
       document.removeEventListener("keydown", hide);
+      document.removeEventListener("scroll", hide, true);
     };
   }, []);
   if (!tip) return null;
