@@ -415,6 +415,10 @@ impl FakeGmail {
                         seen.push(m.thread_id.clone());
                     }
                 }
+                // Like the real API: a conversation sorts by its newest message (a sent reply moves it up).
+                let include = req.q("includeSpamTrash") == Some("true") || req.q_all("labelIds").iter().any(|l| l == "SPAM" || l == "TRASH");
+                let newest = |t: &String| s.messages.values().filter(|m| &m.thread_id == t && (include || !m.labels.iter().any(|l| l == "SPAM" || l == "TRASH"))).map(|m| m.internal_date).max().unwrap_or(0);
+                seen.sort_by_key(|t| std::cmp::Reverse(newest(t)));
                 let max: usize = req.q("maxResults").and_then(|x| x.parse().ok()).unwrap_or(100);
                 let start: usize = req.q("pageToken").and_then(|x| x.parse().ok()).unwrap_or(0);
                 let page: Vec<Value> = seen.iter().skip(start).take(max).map(|t| json!({"id": t, "snippet": "", "historyId": s.history_id.to_string()})).collect();

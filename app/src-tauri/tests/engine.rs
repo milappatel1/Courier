@@ -648,3 +648,26 @@ async fn delete_forever_in_bulk_goes_on_past_a_refused_batch() {
     assert!(gone >= 50 && gone < 1050, "{gone} of 1050 deleted");
     assert_eq!((out.conversations, out.failed_conversations), (gone, 1050 - gone));
 }
+
+#[tokio::test]
+async fn a_full_resync_drops_mail_deleted_on_the_server_and_refreshes_what_moved() {
+    let w = world().await;
+    let gone = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Deleted elsewhere", "x", ""), &["INBOX"]);
+    let moved = w.gmail.deliver(&sample_mail("Bo <bo@x.io>", "pat@example.com", "Trashed elsewhere", "x", ""), &["INBOX"]);
+    let kept = w.gmail.deliver(&sample_mail("Cy <cy@x.io>", "pat@example.com", "Still here", "x", ""), &["INBOX"]);
+    w.engine.sync_account("g1").await.unwrap();
+    // Changes made elsewhere while Courier was away for longer than the server keeps its history.
+    {
+        let mut s = w.gmail.state.lock();
+        s.messages.remove(&gone);
+        s.messages.get_mut(&moved).unwrap().labels = vec!["TRASH".into()];
+        s.history.clear();
+        s.history_floor = s.history_id + 1;
+    }
+    w.engine.sync_account("g1").await.unwrap();
+    assert!(w.engine.db.message("g1", &gone).unwrap().is_none(), "mail deleted on the server is still on this Mac");
+    assert_eq!(w.engine.db.message("g1", &moved).unwrap().unwrap().labels, vec!["TRASH".to_string()], "mail trashed elsewhere still shows in the Inbox");
+    assert!(w.engine.db.message("g1", &kept).is_ok());
+    let inbox = w.engine.list(&view("g1", "INBOX")).await.unwrap();
+    assert_eq!(inbox.threads.iter().map(|t| t.subject.as_str()).collect::<Vec<_>>(), vec!["Still here"]);
+}
