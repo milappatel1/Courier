@@ -4,6 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Courier</title>
+    <script>
+      // The last theme, on before the first frame (a dark theme otherwise starts light for a moment).
+      try {
+        const t = JSON.parse(localStorage.getItem("courier.theme") || "null");
+        if (t) {
+          const r = document.documentElement;
+          r.dataset.family = t.family;
+          r.dataset.theme = t.id;
+          if (t.backdrop) r.style.setProperty("--backdrop", t.backdrop);
+          r.style.colorScheme = t.family === "dark" || t.family === "dark-panel" ? "dark" : "light";
+          r.style.background = t.backdrop && !t.backdrop.includes("(") ? t.backdrop : t.family.startsWith("dark") ? "#111111" : "#f8fafd";
+        }
+      } catch {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

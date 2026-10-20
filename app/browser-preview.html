@@ -4,6 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Courier (browser preview)</title>
+    <script>
+      try {
+        const t = JSON.parse(localStorage.getItem("courier.theme") || "null");
+        if (t) {
+          const r = document.documentElement;
+          r.dataset.family = t.family;
+          r.dataset.theme = t.id;
+          if (t.backdrop) r.style.setProperty("--backdrop", t.backdrop);
+        }
+      } catch {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

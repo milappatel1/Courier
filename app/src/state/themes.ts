@@ -66,4 +66,13 @@ export function applyTheme(id: string, customImage: string | null) {
   if (t.snippet) root.style.setProperty("--snippet", t.snippet);
   else root.style.removeProperty("--snippet");
   root.style.colorScheme = t.family === "dark" || t.family === "dark-panel" ? "dark" : "light";
+  root.style.removeProperty("background");
+  // For index.html, which puts the theme on before anything is drawn (the settings arrive later).
+  try {
+    localStorage.setItem(THEME_KEY, JSON.stringify({ id: t.id, family: t.family, backdrop: t.id === "custom" ? null : t.backdrop }));
+  } catch {
+    // Storage off: the first frame uses the default theme.
+  }
 }
+
+export const THEME_KEY = "courier.theme";
