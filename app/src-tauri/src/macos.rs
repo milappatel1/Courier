@@ -185,9 +185,33 @@ pub fn order_back(window: &tauri::WebviewWindow) {
     }
 }
 
-/// Quick Look a file (the system preview panel, in its own process).
-pub fn quick_look(path: &str) -> Result<(), String> {
-    std::process::Command::new("/usr/bin/qlmanage").args(["-p", path]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().map(|_| ()).map_err(|e| e.to_string())
+/// Two-finger swipes go back and forward, as in Safari and the web client (Courier's screens are history entries).
+/// Tauri doesn't pass this WebKit option through yet, so it's set on the native web view.
+#[cfg(target_os = "macos")]
+pub fn enable_swipe_navigation(window: &tauri::WebviewWindow) {
+    let _ = window.with_webview(|pv| {
+        let wk = pv.inner() as *mut objc2::runtime::AnyObject;
+        if !wk.is_null() {
+            // SAFETY: on macOS `inner()` is the live WKWebView, and this runs on the main thread.
+            unsafe {
+                let _: () = objc2::msg_send![&*wk, setAllowsBackForwardNavigationGestures: true];
+            }
+        }
+    });
+}
+
+
+/// Read back the setting above (end-to-end check).
+#[cfg(target_os = "macos")]
+pub async fn swipe_navigation_enabled(window: &tauri::WebviewWindow) -> bool {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let _ = window.with_webview(move |pv| {
+        let wk = pv.inner() as *mut objc2::runtime::AnyObject;
+        // SAFETY: as above.
+        let on: bool = !wk.is_null() && unsafe { objc2::msg_send![&*wk, allowsBackForwardNavigationGestures] };
+        let _ = tx.send(on);
+    });
+    rx.await.unwrap_or(false)
 }
 
 #[cfg(not(target_os = "macos"))]

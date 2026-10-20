@@ -2,6 +2,7 @@
 // Rust side so every screen can be checked in a plain browser. The sample mailbox matches the recon seed
 // (research/tools/seed-recon.mjs) so the preview can be compared with the goldens. Not part of the app build.
 import { buildMime } from "../src/core/mime/build";
+import "../src/e2e/layout";
 import { parseMessage } from "../src/core/mime/parse";
 import { base64Decode, base64Encode } from "../src/core/bytes";
 import { matches, type SearchableMessage } from "../src/core/search/evaluate";
@@ -271,6 +272,34 @@ add("i1", {
   date: at(2, 14, 0),
   labels: ["INBOX", "F:Club"],
 });
+// Layout stress tests (shapes real newsletters use): a full-height page, a fixed-width layout, a long message.
+add("g1", {
+  from: { name: "Full Height News", email: "news@tall.example" },
+  to: [ME],
+  subject: "Full-height newsletter",
+  html: '<style>html,body{height:100%;margin:0}.wrap{min-height:100vh}</style><table width="100%" height="100%" style="height:100%"><tr><td class="wrap" style="height:100%;vertical-align:top"><h2>Autumn issue</h2><p>Short body in a page that asks for the full window height.</p><p>TALL-END</p></td></tr></table>',
+  date: at(0, 7, 30),
+  labels: ["INBOX", "CATEGORY_PERSONAL"],
+});
+add("g1", {
+  from: { name: "Wide Layout Co", email: "hello@wide.example" },
+  to: [ME],
+  subject: "Fixed-width newsletter",
+  html: '<table width="760" style="width:760px;border-collapse:collapse"><tr><td style="width:460px;background:#eef">Left column with the main story.</td><td style="width:300px;background:#fee">Right column WIDE-RIGHT-END</td></tr></table>',
+  date: at(0, 7, 20),
+  labels: ["INBOX", "CATEGORY_PERSONAL"],
+});
+add("g1", {
+  from: { name: "Long Letter", email: "long@letters.example" },
+  to: [ME],
+  subject: "A very long message",
+  html:
+    '<img alt="banner" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22600%22 height=%22400%22%3E%3Crect width=%22600%22 height=%22400%22 fill=%22%23cde%22/%3E%3C/svg%3E">' +
+    Array.from({ length: 120 }, (_, i) => `<p>Paragraph ${i + 1} of a long letter.</p>`).join("") +
+    "<p>LONG-LAST-LINE</p>",
+  date: at(0, 7, 10),
+  labels: ["INBOX", "CATEGORY_PERSONAL"],
+});
 // The offsite photo goes in as an inline image.
 {
   const m = msgs.find((x) => parseMessage(x.raw).subject === "Photos from the offsite")!;
@@ -317,6 +346,7 @@ function emit(event: string, payload: unknown) {
   }
 }
 
+const unsubscribed = new Map<string, number>();
 const parsedCache = new Map<string, ReturnType<typeof parseMessage>>();
 const parsed = (m: Msg) => {
   let p = parsedCache.get(m.id);
@@ -675,6 +705,28 @@ const handlers: Record<string, (a: Args) => unknown> = {
   message_raw: (a) => msgs.find((m) => m.id === a.messageId)?.raw.slice().buffer ?? new ArrayBuffer(0),
   modify_threads: (a) => modify(String(a.accountId), threadMsgIds(String(a.accountId), a.threadIds as string[]), a.add as string[], a.remove as string[]),
   modify_messages: (a) => modify(String(a.accountId), a.messageIds as string[], a.add as string[], a.remove as string[]),
+  bulk_modify: (a) => {
+    const v = { ...(a.view as ViewQuery), page: 0, pageSize: 100000 };
+    const keep = new Set(a.keep as string[]);
+    const threads = list(v).threads.filter((t) => !keep.has(t.threadId));
+    const ids = threads.flatMap((t) => threadMsgIds(t.accountId, [t.threadId]));
+    emit("bulk-progress", { accountId: v.accountId, phase: "working", done: 0, total: ids.length });
+    modify(String(v.accountId), ids, a.add as string[], a.remove as string[]);
+    emit("bulk-progress", { accountId: v.accountId, phase: "done", done: ids.length, total: ids.length });
+    return ids;
+  },
+  bulk_delete_forever: (a) => {
+    const v = { ...(a.view as ViewQuery), page: 0, pageSize: 100000 };
+    const keep = new Set(a.keep as string[]);
+    const ids = new Set(
+      list(v)
+        .threads.filter((t) => !keep.has(t.threadId))
+        .flatMap((t) => threadMsgIds(t.accountId, [t.threadId])),
+    );
+    for (let i = msgs.length - 1; i >= 0; i--) if (ids.has(msgs[i].id)) msgs.splice(i, 1);
+    emit("mail-changed", { accountId: v.accountId });
+    return ids.size;
+  },
   delete_forever: (a) => {
     const ids = new Set(threadMsgIds(String(a.accountId), a.threadIds as string[]));
     for (let i = msgs.length - 1; i >= 0; i--) if (ids.has(msgs[i].id)) msgs.splice(i, 1);
@@ -837,11 +889,40 @@ const handlers: Record<string, (a: Args) => unknown> = {
   forwarding_add: () => null,
   forwarding_remove: () => null,
   unsubscribe_one_click: () => null,
+  subscriptions: (a) => {
+    const by = new Map<string, Record<string, unknown>>();
+    const since = Date.now() - 30 * 86400000;
+    for (const m of msgs.filter((x) => (a.accountId === "all" || x.accountId === a.accountId) && !has(x, "SENT"))) {
+      const p = parsed(m);
+      const from = p.from[0];
+      if (!p.listUnsubscribe || !from) continue;
+      const key = `${m.accountId}:${from.email.toLowerCase()}`;
+      const cur = by.get(key) ?? {
+        accountId: m.accountId,
+        email: from.email.toLowerCase(),
+        name: from.name,
+        lastDate: 0,
+        total: 0,
+        recent: 0,
+        listId: "",
+        unsubscribed: unsubscribed.get(key) ?? null,
+      };
+      cur.total = (cur.total as number) + 1;
+      if (m.date >= since) cur.recent = (cur.recent as number) + 1;
+      if (m.date > (cur.lastDate as number))
+        Object.assign(cur, { lastDate: m.date, listUnsubscribe: p.listUnsubscribe, listUnsubscribePost: p.listUnsubscribePost ?? "", name: from.name });
+      by.set(key, cur);
+    }
+    return [...by.values()].sort((x, y) => (y.recent as number) - (x.recent as number));
+  },
+  mark_unsubscribed: (a) => (unsubscribed.set(`${a.accountId}:${String(a.email).toLowerCase()}`, Date.now()), null),
   sync_now: () => null,
   temp_file: (a) => `/tmp/preview/${a.name}`,
   write_file: () => null,
   read_file: () => msgs[0].raw.slice().buffer,
-  quick_look: () => null,
+  save_download: (a) => (console.info("[preview] download", a.name), `/Users/you/Downloads/${a.name}`),
+  open_file: (a) => (console.info("[preview] open file", a.name), `/tmp/preview/${a.name}`),
+  reveal_file: () => null,
   open_external: (a) => (console.info("[preview] open", a.url), null),
   spell_check: (a) =>
     (a.texts as string[]).map((t) =>

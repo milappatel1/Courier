@@ -11,7 +11,10 @@ import { api } from "../ipc/api";
 import type { Label, ThreadSummary, ViewQuery, ViewResult } from "../ipc/types";
 import {
   act,
+  allExceptSelected,
   allMatchingTargets,
+  BULK_KINDS,
+  bulkAct,
   currentTargets,
   emptyLabel,
   selectAllMatching,
@@ -20,8 +23,8 @@ import {
   toggleSelect,
   toggleStar,
 } from "../state/actions";
-import { forwardAsAttachment } from "../state/compose";
-import { STAR_TYPES } from "../state/settings";
+import { forwardAsAttachment, openReply } from "../state/compose";
+import { STAR_TYPES, SWIPE_ACTIONS, type SwipeAction } from "../state/settings";
 import {
   accountById,
   currentView,
@@ -34,11 +37,13 @@ import {
   useMail,
   visibleThreads,
   getState,
+  labelName,
+  search,
   setState,
   setSetting,
   NO_LABELS,
 } from "../state/store";
-import { FileIcon, Icon, IconButton, Menu, MenuButton, anchorOf, type MenuEntry } from "./common";
+import { Avatar, FileIcon, Icon, IconButton, Menu, MenuButton, anchorOf, type MenuEntry } from "./common";
 import { FilterDialog } from "./FilterDialog";
 import { LabelAsBody, LabelAsMenu, MoveToMenu, SnoozeMenu } from "./menus";
 
@@ -54,6 +59,13 @@ export function ListView() {
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }} data-testid="list-view">
       {route.list.query && <SearchChips query={route.list.query} />}
+      <div className="phone-title" data-testid="phone-title">
+        {route.list.query
+          ? "Search results"
+          : route.list.label === "INBOX" && showTabs
+            ? (CATEGORIES.find((c) => c.key === (route.list.category ?? "primary"))?.name ?? "Inbox")
+            : labelName(accountId === "all" ? "" : accountId, route.list.label ?? "INBOX")}
+      </div>
       <ListToolbar />
       <SelectAllBanner />
       {showTabs && <CategoryTabs />}
@@ -85,14 +97,34 @@ function ListToolbar() {
   const [menu, setMenu] = useState<{ kind: "label" | "move" | "snooze" | "more"; anchor: Anchor } | null>(null);
   const [filter, setFilter] = useState<Record<string, unknown> | null>(null);
   const threads = visibleThreads();
-  const any = selected.length > 0;
+  const any = selected.length > 0 || allMatching;
   const label = route.list.query ? null : route.list.label;
   const accountId = useMail.getState().accountId;
   const selThreads = threads.filter((t) => selected.includes(t.threadId));
   const allUnread = selThreads.length > 0 && selThreads.every((t) => t.unread);
   const r = list.result;
+  const keep = useMail((s) => s.keepThreads);
   const targets = async () => (allMatching ? await allMatchingTargets() : currentTargets());
-  const run = async (k: Parameters<typeof act>[0]) => act(k, await targets());
+  const viewTotal = r && !r.estimate ? r.total : null;
+  // With the whole view selected, the action runs on the server over every page (minus the unticked rows).
+  const run = async (k: Parameters<typeof act>[0]) => (allMatching && BULK_KINDS.includes(k) ? bulkAct(k, keep, viewTotal) : act(k, await targets()));
+  const exceptSelected: MenuEntry[] =
+    any && !allMatching
+      ? [
+          { sep: true },
+          label === "TRASH" || label === "SPAM"
+            ? {
+                label: "Delete all except selected",
+                icon: "delete_forever",
+                run: () => allExceptSelected("delete-forever", viewTotal),
+                testId: "except-delete",
+              }
+            : { label: "Delete all except selected", icon: "delete_sweep", run: () => allExceptSelected("trash", viewTotal), testId: "except-delete" },
+          ...(label === "INBOX" && !route.list.query
+            ? [{ label: "Archive all except selected", icon: "archive", run: () => allExceptSelected("archive", viewTotal), testId: "except-archive" }]
+            : []),
+        ]
+      : [];
   const box = selected.length === 0 ? "check_box_outline_blank" : selected.length === threads.length ? "check_box" : "indeterminate_check_box";
   const toolbarSwitch: MenuEntry = advanced
     ? { label: "Switch to simplified toolbar", icon: "sync_alt", run: () => void setSetting("advancedToolbar", false), testId: "toolbar-simplified" }
@@ -110,6 +142,7 @@ function ListToolbar() {
             { label: "Forward as attachment", icon: "forward", run: () => void fwdAttach(selThreads) },
             { label: "Filter messages like these", icon: "filter_alt", run: () => setFilter(likeThese(selThreads)) },
             { label: "Mute", icon: "notifications_off", run: () => void run("mute") },
+            ...exceptSelected,
             { sep: true },
             toolbarSwitch,
           ]
@@ -127,6 +160,7 @@ function ListToolbar() {
             { label: "Forward as attachment", icon: "forward", run: () => void fwdAttach(selThreads) },
             { label: "Filter messages like these", icon: "filter_alt", run: () => setFilter(likeThese(selThreads)) },
             { label: "Mute", icon: "notifications_off", run: () => void run("mute") },
+            ...exceptSelected,
             { sep: true },
             toolbarSwitch,
           ]
@@ -280,14 +314,20 @@ function SelectAllBanner() {
   const selected = useMail((s) => s.selected);
   const list = useMail((s) => s.list.result);
   const matching = useMail((s) => s.selectAllMatching);
+  const keep = useMail((s) => s.keepThreads);
   const threads = visibleThreads();
-  if (!list || selected.length !== threads.length || !threads.length || !list.hasMore) return null;
+  if (!list || !threads.length) return null;
+  if (!matching && (selected.length !== threads.length || !list.hasMore)) return null;
+  const n = list.estimate ? "" : `${list.total.toLocaleString()} `;
   return (
     <div className="select-all-banner" data-testid="select-all-banner">
       {matching ? (
         <>
-          All {list.estimate ? "" : list.total.toLocaleString()} conversations are selected.
-          <button onClick={() => (selectWhere("none"), setState({ selectAllMatching: false }))}>Clear selection</button>
+          All {n}conversations in this view are selected
+          {keep.length ? `, except ${keep.length === 1 ? "the one" : `the ${keep.length}`} you unticked (kept)` : ""}.
+          <button onClick={() => (selectWhere("none"), setState({ selectAllMatching: false, keepThreads: [] }))} data-testid="clear-selection">
+            Clear selection
+          </button>
         </>
       ) : (
         <>
@@ -340,7 +380,7 @@ function CategoryTabs() {
             <Icon name={t.icon} fill={active} />
             <span className="tab-text">
               <span className="tab-label">
-                {t.name}
+                <span className="tab-name">{t.name}</span>
                 {!active && sub?.unread ? (
                   <span className="new-badge" style={{ background: colors[t.key] }}>
                     {sub.unread} new
@@ -613,27 +653,27 @@ function ListFooter() {
 function EmptyList() {
   const route = useMail((s) => s.route);
   const l = route.list;
-  let title = "No conversations";
+  // Courier's own wording throughout.
+  let title = "Nothing here.";
   let body = "";
   if (l.query) {
-    title = "No messages matched your search.";
-    body = "Try using search options such as sender, date, size and more.";
+    title = "Nothing matches that search.";
+    body = "Try fewer words, or narrow it down with the search options (sender, dates, size…).";
   } else if (l.label === "INBOX") {
     const cat = l.category && l.category !== "primary" ? CATEGORIES.find((c) => c.key === l.category)?.name : null;
-    title = cat ? `Your ${cat} tab is empty.` : "Your inbox is empty.";
-    body = cat ? "Messages that belong here will appear in this tab." : "Nice work.";
+    title = cat ? `Nothing in ${cat}.` : "Inbox is clear.";
+    body = cat ? `New ${cat.toLowerCase()} mail will show up here.` : "New mail will show up here.";
   } else if (l.label === "STARRED") {
-    title = "No starred messages.";
-    body =
-      "Stars let you give messages a special status to make them easier to find. To star a message, click on the star outline beside any message or conversation.";
+    title = "No starred conversations.";
+    body = "Click the star next to a conversation to keep it here.";
   } else if (l.label === "SNOOZED") {
     title = "Nothing snoozed.";
-    body = "Snoozed messages come back to your inbox at the time you pick.";
-  } else if (l.label === "SENT") title = "No sent messages! Send one now!";
-  else if (l.label === "DRAFT") title = "You don't have any saved drafts.";
+    body = "Snoozed conversations come back to your inbox at the time you pick.";
+  } else if (l.label === "SENT") title = "Nothing sent yet.";
+  else if (l.label === "DRAFT") title = "No drafts.";
   else if (l.label === "SCHEDULED") title = "Nothing scheduled.";
-  else if (l.label === "SPAM") title = "Hooray, no spam here!";
-  else if (l.label === "TRASH") title = "No conversations in Trash.";
+  else if (l.label === "SPAM") title = "Spam is empty.";
+  else if (l.label === "TRASH") title = "Trash is empty.";
   return (
     <div className="empty" data-testid="empty-list">
       <h3>{title}</h3>
@@ -651,6 +691,9 @@ function Row({ t, index, open }: { t: ThreadSummary; index: number; open: boolea
   const labels = useMail((s) => s.labels[t.accountId] ?? NO_LABELS);
   const acct = useMail((s) => s.accounts.find((a) => a.id === t.accountId));
   const [snooze, setSnooze] = useState<Anchor | null>(null);
+  const [ctx, setCtx] = useState<{ at: Anchor; picked: boolean } | null>(null);
+  const [ctxSub, setCtxSub] = useState<{ kind: "move"; at: Anchor } | null>(null);
+  const keepTicked = useRef(false);
   const rowRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (cursor) rowRef.current?.scrollIntoView({ block: "nearest" });
@@ -673,6 +716,7 @@ function Row({ t, index, open }: { t: ThreadSummary; index: number; open: boolea
     return l.messageListVisibility !== "hide";
   });
   const lastSender = people.parts;
+  const face = t.participants.find((p) => !self.includes(p.email)) ?? t.participants[0];
   const star = STAR_TYPES.find((s) => s.id === (t.starType ?? "yellow-star"));
   const date = t.scheduledAt ? scheduledWhen(t.scheduledAt) : viewing === "SNOOZED" && t.snoozedUntil ? shortWhen(t.snoozedUntil) : listDate(t.lastDate);
   const archiveLike =
@@ -685,6 +729,34 @@ function Row({ t, index, open }: { t: ThreadSummary; index: number; open: boolea
     !isSystemLabel(viewing ?? "");
   const target = [{ accountId: t.accountId, threadIds: [t.threadId] }];
   const showAttachments = settings.density === "default" && t.attachments.length > 0;
+  // Two-finger swipe across the row (the phone app's swipe actions).
+  const swipeAction = (dir: "left" | "right"): SwipeAction => {
+    const a = dir === "left" ? settings.swipeLeft : settings.swipeRight;
+    return a === "archive" && !archiveLike ? "none" : a;
+  };
+  useRowSwipe(
+    rowRef,
+    (dir) => swipeAction(dir) !== "none",
+    (dir) => {
+      const a = swipeAction(dir);
+      if (a === "archive") void act("archive", target);
+      else if (a === "trash") void act(viewing === "TRASH" || viewing === "SPAM" ? "delete-forever" : "trash", target);
+      else if (a === "read") void act(t.unread ? "read" : "unread", target);
+      else if (a === "snooze") {
+        const r = rowRef.current?.getBoundingClientRect();
+        setSnooze({ x: r ? r.right - 280 : 200, y: r ? r.bottom : 200 });
+      }
+    },
+  );
+  const strip = (dir: "left" | "right") => {
+    const a = SWIPE_ACTIONS.find((x) => x.id === swipeAction(dir)) ?? SWIPE_ACTIONS[4];
+    const icon = a.id === "read" ? (t.unread ? "drafts" : "mark_email_unread") : a.icon;
+    return (
+      <span className={`swipe-strip ${dir}`} style={{ background: a.color }} aria-hidden="true">
+        <Icon name={icon} />
+      </span>
+    );
+  };
   const acctColor = accountId === "all" ? acct?.color : null;
   return (
     <div
@@ -726,8 +798,37 @@ function Row({ t, index, open }: { t: ThreadSummary; index: number; open: boolea
         useMail.setState({ cursor: index });
         openThread(t);
       }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        // The menu acts on the selection when this row is part of it, otherwise on this row alone.
+        const picked = !getState().selected.includes(t.threadId);
+        if (picked) setState({ selected: [t.threadId], selectAllMatching: false, keepThreads: [] });
+        setCtx({ at: { x: e.clientX, y: e.clientY }, picked });
+      }}
     >
-      {acctColor ? <span style={{ background: acctColor, width: 3, height: 20, borderRadius: 2 }} /> : <span className="drag-handle" />}
+      {strip("left")}
+      {strip("right")}
+      {acctColor ? <span className="acct-bar" style={{ background: acctColor, width: 3, height: 20, borderRadius: 2 }} /> : <span className="drag-handle" />}
+      {/* Phone width: the sender's picture, which selects the row like the phone app's. */}
+      <span
+        className="row-avatar"
+        role="checkbox"
+        aria-checked={selected}
+        aria-label="Select conversation"
+        data-testid="row-avatar"
+        onClick={(e) => {
+          e.stopPropagation();
+          toggleSelect(t.threadId, e.shiftKey);
+        }}
+      >
+        {selected ? (
+          <span className="avatar sel">
+            <Icon name="check" />
+          </span>
+        ) : (
+          <Avatar name={face?.name ?? ""} email={face?.email ?? ""} size={40} />
+        )}
+      </span>
       <span className="cb">
         <button
           type="button"
@@ -762,7 +863,7 @@ function Row({ t, index, open }: { t: ThreadSummary; index: number; open: boolea
         </button>
       </span>
       {settings.importanceMarkers ? (
-        <span>
+        <span className="imp-cell">
           <button
             type="button"
             className={["imp-btn", t.important ? "on" : ""].join(" ")}
@@ -776,7 +877,7 @@ function Row({ t, index, open }: { t: ThreadSummary; index: number; open: boolea
           </button>
         </span>
       ) : (
-        <span />
+        <span className="imp-cell" />
       )}
       <span className="sender" data-testid="row-sender">
         {sentTo ? (
@@ -804,7 +905,12 @@ function Row({ t, index, open }: { t: ThreadSummary; index: number; open: boolea
           })}
           <span className="text">
             <span className="subj">{t.subject || "(no subject)"}</span>
-            {settings.snippets && t.snippet && <span className="snippet"> - {t.snippet}</span>}
+            {settings.snippets && t.snippet && (
+              <span className="snippet">
+                <span className="dash"> - </span>
+                {t.snippet}
+              </span>
+            )}
           </span>
         </span>
         {showAttachments && (
@@ -845,9 +951,150 @@ function Row({ t, index, open }: { t: ThreadSummary; index: number; open: boolea
         </span>
       )}
       {snooze && <SnoozeMenu anchor={snooze} onClose={() => setSnooze(null)} targets={target} />}
+      {ctx && (
+        <Menu
+          anchor={ctx.at}
+          className="icons row-menu"
+          label="Conversation"
+          items={rowMenu(
+            t,
+            viewing,
+            archiveLike,
+            (a) => setSnooze(a),
+            (a) => ((keepTicked.current = true), setCtxSub({ kind: "move", at: a })),
+            ctx.at,
+          )}
+          onClose={() => {
+            setCtx(null);
+            // Closed without a follow-up menu: the row ticked for the menu goes back to how it was.
+            if (ctx.picked && !keepTicked.current) setTimeout(() => getState().selected.join() === t.threadId && setState({ selected: [] }), 0);
+            keepTicked.current = false;
+          }}
+        />
+      )}
+      {ctxSub?.kind === "move" && <MoveToMenu anchor={ctxSub.at} onClose={() => (setCtxSub(null), setState({ selected: [] }))} accountId={t.accountId} />}
       {open && <span className="sr-only">open</span>}
     </div>
   );
+}
+
+/**
+ * Horizontal two-finger scrolling over a row slides it; past a third of the row (or 140 px) the action runs.
+ * The wheel listener isn't passive, so the swipe doesn't also scroll the page or go back.
+ */
+function useRowSwipe(ref: React.RefObject<HTMLDivElement | null>, allowed: (dir: "left" | "right") => boolean, commit: (dir: "left" | "right") => void) {
+  const fns = useRef({ allowed, commit });
+  fns.current = { allowed, commit };
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let dx = 0;
+    let axis: "x" | "y" | null = null;
+    let timer = 0;
+    const show = () => {
+      el.style.setProperty("--dx", `${dx}px`);
+      el.classList.toggle("swiping", dx !== 0);
+      el.dataset.dir = dx > 0 ? "right" : dx < 0 ? "left" : "";
+    };
+    const settle = (cls: string, then?: () => void) => {
+      el.classList.add(cls);
+      show();
+      window.setTimeout(() => {
+        el.classList.remove(cls);
+        then?.();
+      }, 180);
+    };
+    const end = () => {
+      axis = null;
+      const dir = dx > 0 ? "right" : "left";
+      if (Math.abs(dx) > Math.min(140, el.clientWidth / 3) && fns.current.allowed(dir)) {
+        dx = dir === "right" ? el.clientWidth : -el.clientWidth;
+        settle("swipe-go", () => {
+          fns.current.commit(dir);
+          dx = 0;
+          show();
+        });
+      } else {
+        dx = 0;
+        settle("swipe-back");
+      }
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (axis === null) {
+        axis = Math.abs(e.deltaX) > Math.abs(e.deltaY) * 1.5 && Math.abs(e.deltaX) > 1 ? "x" : "y";
+        // A direction with no action is the web view's own back/forward swipe: leave it alone.
+        if (axis === "x" && dx === 0 && !fns.current.allowed(e.deltaX < 0 ? "right" : "left")) axis = "y";
+      }
+      window.clearTimeout(timer);
+      if (axis === "y") {
+        timer = window.setTimeout(() => (axis = null), 160);
+        return;
+      }
+      e.preventDefault();
+      dx = Math.max(-el.clientWidth, Math.min(el.clientWidth, dx - e.deltaX));
+      if (dx !== 0 && !fns.current.allowed(dx > 0 ? "right" : "left")) dx = 0;
+      show();
+      timer = window.setTimeout(end, 140);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      window.clearTimeout(timer);
+    };
+  }, [ref]);
+}
+
+/** The row's right-click menu. Actions apply to the selection (this row, ticked for the menu, or more). */
+function rowMenu(
+  t: ThreadSummary,
+  viewing: string | null,
+  archiveLike: boolean,
+  snoozeAt: (a: Anchor) => void,
+  moveAt: (a: Anchor) => void,
+  at: Anchor,
+): MenuEntry[] {
+  const targets = () => currentTargets();
+  const lastMessage = async () => {
+    const d = await api.thread(t.accountId, t.threadId);
+    return [...d.messages].reverse().find((m) => !m.labels.includes("DRAFT")) ?? d.messages[d.messages.length - 1];
+  };
+  const reply = (kind: "reply" | "reply-all" | "forward") => void lastMessage().then((m) => m && openReply(t.accountId, m, kind));
+  const sender = [...t.participants].reverse().find((p) => p.email) ?? t.participants[0];
+  const inTrash = viewing === "TRASH";
+  const inSpam = viewing === "SPAM";
+  return [
+    { label: "Reply", icon: "reply", run: () => reply("reply"), testId: "ctx-reply" },
+    { label: "Reply all", icon: "reply_all", run: () => reply("reply-all") },
+    { label: "Forward", icon: "forward", run: () => reply("forward"), testId: "ctx-forward" },
+    { label: "Forward as attachment", icon: "attach_email", run: () => void fwdAttach([t]) },
+    { sep: true },
+    archiveLike
+      ? { label: "Archive", icon: "archive", run: () => void act("archive", targets()), testId: "ctx-archive" }
+      : { label: "Move to Inbox", icon: "move_to_inbox", run: () => void act(inTrash ? "restore" : inSpam ? "not-spam" : "inbox", targets()) },
+    inTrash || inSpam
+      ? { label: "Delete forever", icon: "delete_forever", run: () => void act("delete-forever", targets()) }
+      : { label: "Delete", icon: "delete", run: () => void act("trash", targets()), testId: "ctx-delete" },
+    t.unread
+      ? { label: "Mark as read", icon: "drafts", run: () => void act("read", targets()), testId: "ctx-read" }
+      : { label: "Mark as unread", icon: "mark_email_unread", run: () => void act("unread", targets()), testId: "ctx-unread" },
+    { label: "Snooze", icon: "schedule", run: () => snoozeAt(at) },
+    { sep: true },
+    { label: "Move to", icon: "drive_file_move", run: () => moveAt(at) },
+    {
+      label: "Label as",
+      icon: "label",
+      subClassName: "label-menu",
+      submenu: (close) => <LabelAsBody onClose={close} accountId={t.accountId} current={[t.labels]} />,
+    },
+    { label: "Mute", icon: "notifications_off", run: () => void act("mute", targets()) },
+    { sep: true },
+    ...(sender
+      ? [{ label: `Find emails from ${sender.name || sender.email}`, icon: "search", run: () => search(`from:${sender.email}`), testId: "ctx-find-from" }]
+      : []),
+    { label: "Find emails with this subject", icon: "manage_search", run: () => search(`subject:"${(t.subject || "").replace(/"/g, "")}"`) },
+    { sep: true },
+    { label: "Open in new window", icon: "open_in_new", run: () => void api.windowOpen("thread", { accountId: t.accountId, threadId: t.threadId }, t.subject) },
+  ];
 }
 
 export { parseQuery };

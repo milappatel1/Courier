@@ -305,6 +305,8 @@ a {
 .app {
   display: grid;
   grid-template-rows: var(--header-h) minmax(0, 1fr);
+  /* An explicit column: WebKit otherwise widens an auto track to the header's natural width (narrow windows). */
+  grid-template-columns: minmax(0, 1fr);
   height: 100vh;
 }
 .app.no-account {
@@ -3116,4 +3118,631 @@ a {
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+
+/* ---- Manage subscriptions ---- */
+.subs {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.subs-bar {
+  gap: 8px;
+}
+.subs-title {
+  font: 400 18px/24px var(--font);
+  color: var(--text);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.subs-sort {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 400 14px/20px var(--font);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.subs-sort select {
+  font: inherit;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--outline);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+.subs-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 0 0 24px;
+}
+.subs-intro {
+  margin: 8px 16px 16px;
+  font: 400 14px/20px var(--font);
+  color: var(--text-2);
+  max-width: 720px;
+}
+.subs-section {
+  margin: 24px 16px 8px;
+  font: 500 14px/20px var(--font);
+  color: var(--text-2);
+}
+.sub-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--row-divider);
+  min-width: 0;
+}
+.sub-row:hover {
+  background: var(--nav-hover);
+}
+.sub-main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 4px 0;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.sub-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.sub-name {
+  font: 500 14px/20px var(--font);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sub-meta {
+  font: 400 12px/16px var(--font);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sub-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.sub-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 500 14px/20px var(--font);
+  color: var(--text-2);
+  padding: 0 12px;
+}
+.att-head .att-all {
+  margin-left: 4px;
+}
+
+/* ======== Window sizes ========
+   wide ≥ 1024: the desktop layout above. medium 700–1023: the nav is a rail and opens over the content;
+   tabs lose their sender lines. phone < 700: the phone app's layout (drawer, rounded search bar with the
+   menu and account inside, two-line rows with pictures, floating Compose, full-window compose). */
+.row-avatar,
+.phone-title,
+.fab {
+  display: none;
+}
+.body {
+  position: relative;
+}
+/* Fixed cells, so a hidden nav doesn't shift the panels into its column. */
+.body > .nav {
+  grid-column: 1;
+  grid-row: 1;
+}
+.body > .main {
+  grid-column: 2;
+  grid-row: 1;
+}
+.body > .qs {
+  grid-column: 3;
+  grid-row: 1;
+}
+.body.nav-rail {
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+}
+.body.nav-hidden {
+  grid-template-columns: 0 minmax(0, 1fr) auto;
+}
+.body.nav-hidden:not(.drawer-open) > .nav {
+  display: none;
+}
+.body.drawer-open > .nav {
+  position: absolute;
+  z-index: 40;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--nav-w);
+  /* The theme's own backdrop (an image or a dark colour for dark themes), which the nav text is made for. */
+  background: var(--backdrop);
+  border-radius: 0 16px 16px 0;
+  box-shadow:
+    0 8px 10px 1px rgba(0, 0, 0, 0.14),
+    0 3px 14px 2px rgba(0, 0, 0, 0.12),
+    0 5px 5px -3px rgba(0, 0, 0, 0.2);
+}
+.drawer-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 39;
+  background: transparent;
+}
+
+/* medium */
+:root[data-size="medium"] .header-left,
+:root[data-size="phone"] .header-left {
+  width: auto;
+  padding-right: 8px;
+}
+:root[data-size="medium"] .search {
+  max-width: none;
+  min-width: 180px;
+}
+:root[data-size="medium"] .tab .tab-sub,
+:root[data-size="phone"] .tab .tab-sub {
+  display: none;
+}
+:root[data-size="medium"] .tab {
+  gap: 10px;
+  padding: 0 8px 0 12px;
+}
+.tab .tab-label {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.tab .tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.tab .new-badge {
+  flex: none;
+}
+:root[data-size="medium"] .row {
+  grid-template-columns: 3px 43px 30px var(--imp-col, 0px) clamp(120px, 20vw, 200px) minmax(0, 1fr) 30px 72px;
+}
+:root[data-size="medium"] .row .sender {
+  padding-right: 16px;
+}
+:root[data-size="medium"] .qs,
+:root[data-size="phone"] .qs {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 35;
+  margin: 0 8px 8px 0;
+  box-shadow: var(--shadow-menu);
+}
+:root[data-size="medium"] .main.with-qs,
+:root[data-size="phone"] .main.with-qs {
+  margin-right: 16px;
+}
+
+/* phone */
+:root[data-size="phone"] .header {
+  padding: 0 8px 0 calc(8px + var(--chrome-left));
+  gap: 4px;
+}
+:root[data-size="phone"] .header-left {
+  display: none;
+}
+:root[data-size="phone"] .search {
+  max-width: none;
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 48px;
+}
+:root[data-size="phone"] .search .avatar-btn.in-search {
+  margin-right: 4px;
+  flex: none;
+}
+:root[data-size="phone"] .header-right {
+  padding-left: 4px;
+  gap: 0;
+}
+:root[data-size="phone"] .header-right .menu-button,
+:root[data-size="phone"] .header-right > :not([data-testid="settings-gear"]):not(.offline-pill) {
+  display: none;
+}
+:root[data-size="phone"] .offline-pill {
+  padding: 0 8px;
+}
+:root[data-size="phone"] .main {
+  margin: 0;
+  border-radius: 0;
+}
+:root[data-size="phone"] .body.drawer-open > .nav {
+  width: min(304px, 85vw);
+}
+:root[data-size="phone"] .drawer-scrim {
+  background: rgba(0, 0, 0, 0.32);
+}
+:root[data-size="phone"] .tabs {
+  display: none;
+}
+:root[data-size="phone"] .phone-title {
+  display: block;
+  padding: 12px 16px 0;
+  font: 500 12px/16px var(--font);
+  letter-spacing: 0.3px;
+  color: var(--text-2);
+}
+:root[data-size="phone"] .page-info {
+  display: none;
+}
+:root[data-size="phone"] .list {
+  padding-right: 0;
+  padding-bottom: 88px;
+}
+:root[data-size="phone"] .row {
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "av sender date"
+    "av subj star";
+  align-items: center;
+  row-gap: 2px;
+  min-height: 0;
+  padding: 10px 0;
+  box-shadow: none;
+}
+:root[data-size="phone"] .row.read {
+  background: var(--row-unread);
+}
+:root[data-size="phone"] .row.selected {
+  background: var(--row-selected);
+}
+:root[data-size="phone"] .row > .drag-handle,
+:root[data-size="phone"] .row > .acct-bar,
+:root[data-size="phone"] .row > .cb,
+:root[data-size="phone"] .row > .imp-cell,
+:root[data-size="phone"] .row > .attach-cell,
+:root[data-size="phone"] .row > .hover-actions {
+  display: none !important;
+}
+:root[data-size="phone"] .row-avatar {
+  display: flex;
+  grid-area: av;
+  align-self: start;
+  justify-content: center;
+  padding-top: 2px;
+}
+:root[data-size="phone"] .row-avatar .avatar.sel {
+  width: 40px;
+  height: 40px;
+  background: var(--primary);
+  color: var(--primary-text);
+}
+:root[data-size="phone"] .row .sender {
+  grid-area: sender;
+  padding-right: 8px;
+  font-size: 16px;
+  line-height: 22px;
+  height: auto;
+}
+:root[data-size="phone"] .row .date {
+  grid-area: date;
+  padding-right: 16px;
+}
+:root[data-size="phone"] .row .subject-cell {
+  grid-area: subj;
+  padding-right: 8px;
+}
+:root[data-size="phone"] .row .subject-line {
+  height: auto;
+  align-items: flex-start;
+}
+:root[data-size="phone"] .row .subject-line .text {
+  display: flex;
+  flex-direction: column;
+  white-space: normal;
+}
+:root[data-size="phone"] .row .subj,
+:root[data-size="phone"] .row .snippet {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+:root[data-size="phone"] .row .snippet .dash {
+  display: none;
+}
+:root[data-size="phone"] .row .star {
+  grid-area: star;
+  justify-self: end;
+  align-self: end;
+  padding-right: 12px;
+}
+:root[data-size="phone"] .row .chip-label {
+  display: none;
+}
+:root[data-size="phone"] .fab {
+  display: inline-flex;
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 800;
+  align-items: center;
+  gap: 12px;
+  height: 56px;
+  padding: 0 20px 0 16px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--compose-bg);
+  color: var(--compose-text);
+  font: 500 14px/20px var(--font);
+  cursor: pointer;
+  box-shadow:
+    0 1px 3px 0 rgba(60, 64, 67, 0.3),
+    0 4px 8px 3px rgba(60, 64, 67, 0.15);
+}
+:root[data-size="phone"] .compose-dock {
+  right: 0;
+  left: 0;
+  justify-content: flex-start;
+}
+:root[data-size="phone"] .compose:not(.min) {
+  position: fixed;
+  inset: 0;
+  width: auto;
+  height: auto;
+  max-height: none;
+  margin: 0;
+  border-radius: 0;
+  transform: none;
+  z-index: 1600;
+}
+:root[data-size="phone"] .compose.min {
+  width: min(260px, calc(100vw - 32px));
+  margin-left: 16px;
+}
+:root[data-size="phone"] .conv {
+  padding-right: 8px;
+}
+:root[data-size="phone"] .subs-sort .light {
+  display: none;
+}
+:root[data-size="phone"] .toasts {
+  left: 8px;
+  right: 8px;
+  bottom: 84px;
+}
+:root[data-size="phone"] .toast {
+  max-width: none;
+}
+:root[data-size="phone"] .nav .compose-wrap {
+  display: none;
+}
+:root[data-size="phone"] .nav-scroll {
+  padding-top: 8px;
+}
+.when-short {
+  display: none;
+}
+:root[data-size="phone"] .when-short {
+  display: inline;
+}
+:root[data-size="phone"] .when-long {
+  display: none;
+}
+:root[data-size="phone"] .conv-head {
+  padding: 16px 0 0 16px;
+}
+:root[data-size="phone"] .conv-subject {
+  font-size: 20px;
+  line-height: 26px;
+}
+:root[data-size="phone"] .msg {
+  grid-template-columns: 56px minmax(0, 1fr);
+}
+:root[data-size="phone"] .msg .msg-avatar {
+  padding: 0 8px 0 12px;
+}
+:root[data-size="phone"] .collapsed-group {
+  margin-left: 56px;
+}
+:root[data-size="phone"] .collapsed-group button {
+  left: -46px;
+}
+:root[data-size="medium"] .srow {
+  grid-template-columns: 160px minmax(0, 1fr);
+}
+:root[data-size="phone"] .settings-tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+:root[data-size="phone"] .settings-tabs::-webkit-scrollbar {
+  display: none;
+}
+:root[data-size="phone"] .settings-tab {
+  flex: none;
+  white-space: nowrap;
+}
+:root[data-size="phone"] .settings-body {
+  padding: 0 16px 24px;
+  overflow-x: hidden;
+}
+:root[data-size="phone"] .srow {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px 0;
+}
+:root[data-size="phone"] .srow > .k {
+  padding-right: 0;
+}
+:root[data-size="phone"] .srow textarea,
+:root[data-size="phone"] .srow input[type="text"],
+:root[data-size="phone"] .srow input[type="email"] {
+  max-width: 100%;
+}
+
+/* Swipe actions on list rows */
+.row .swipe-strip {
+  display: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  align-items: center;
+  padding: 0 20px;
+  color: #fff;
+  pointer-events: none;
+  overflow: hidden;
+}
+.row.swiping[data-dir="right"] .swipe-strip.right {
+  display: flex;
+  left: 0;
+  width: var(--dx);
+  justify-content: flex-start;
+}
+.row.swiping[data-dir="left"] .swipe-strip.left {
+  display: flex;
+  right: 0;
+  width: calc(-1 * var(--dx));
+  justify-content: flex-end;
+}
+.row.swiping > :not(.swipe-strip) {
+  transform: translateX(var(--dx));
+}
+.row.swiping .hover-actions {
+  display: none !important;
+}
+.row.swipe-go > *,
+.row.swipe-back > * {
+  transition:
+    transform 0.18s ease,
+    width 0.18s ease;
+}
+
+/* Compose: the To/Cc/Bcc labels open the people picker */
+.cf-row .lab-btn {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 4px 2px 0;
+  border-radius: 4px;
+}
+.cf-row .lab-btn:hover {
+  text-decoration: underline;
+}
+.picker-filter {
+  width: 100%;
+  box-sizing: border-box;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--outline);
+  border-radius: 8px;
+  font: 400 14px var(--font);
+  color: var(--text);
+  background: transparent;
+  margin-bottom: 8px;
+}
+.picker-list {
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+  min-width: min(420px, 80vw);
+}
+.picker-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.picker-row:hover {
+  background: var(--nav-hover);
+}
+.picker-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.picker-name {
+  font: 500 14px/20px var(--font);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.picker-mail {
+  font: 400 12px/16px var(--font);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sender hover card */
+.sender-hover {
+  cursor: default;
+}
+.sender-card {
+  position: fixed;
+  z-index: 1200;
+  width: 320px;
+  background: var(--menu-bg);
+  color: var(--text);
+  border-radius: 12px;
+  box-shadow: var(--shadow-menu);
+  padding: 16px 16px 8px;
+}
+.sc-top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+.sc-who {
+  min-width: 0;
+}
+.sc-name {
+  font: 400 18px/24px var(--font);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sc-mail {
+  font: 400 13px/18px var(--font);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-top: 1px solid var(--row-divider);
+  padding-top: 8px;
+  margin: 0 -8px;
+}
+.sc-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }

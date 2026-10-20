@@ -75,3 +75,19 @@ describe("sanitiser", () => {
     expect(frameDocument("<p>x</p>", { allowRemote: false })).toContain("script-src 'none'");
   });
 });
+
+describe("message frame sizing", () => {
+  it("turns viewport heights into fixed ones so a page-height layout can't grow with its own frame", () => {
+    const r = clean(`<style>.wrap{min-height:100vh;height:50dvh}</style><div class="wrap" style="height:100vh">x</div>`);
+    expect(r.html).not.toMatch(/\d(vh|dvh)\b/);
+    expect(r.html).toContain("800px");
+    expect(r.html).toContain("400px");
+  });
+
+  it("lets wide mail scroll sideways and never pins the page height", () => {
+    const doc = frameDocument("<table width=1400><tr><td>x</td></tr></table>", { allowRemote: true });
+    expect(doc).toMatch(/overflow-x:auto/);
+    expect(doc).toMatch(/height:auto!important/);
+    expect(doc).not.toMatch(/table\{max-width:100%\}/);
+  });
+});

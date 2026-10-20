@@ -16,6 +16,7 @@ import type {
   ThreadDetail,
   ViewQuery,
   ViewResult,
+  Subscription,
 } from "./types";
 
 const call = <T>(cmd: string, args?: Record<string, unknown>) => invoke<T>(cmd, args);
@@ -27,6 +28,9 @@ const bytes = (v: unknown): Uint8Array => {
   if (typeof v === "string") return base64Decode(v);
   return new Uint8Array();
 };
+
+/** What the Mac hands Courier: a mailto: link, an .eml file to read, or files to send. */
+export type OpenItem = { kind: "mailto" | "eml" | "attach"; url?: string; path?: string; paths?: string[] };
 
 export const api = {
   appInfo: () => call<AppInfo>("app_info"),
@@ -61,6 +65,10 @@ export const api = {
   modifyMessages: (accountId: string, messageIds: string[], add: string[], remove: string[]) =>
     call<void>("modify_messages", { accountId, messageIds, add, remove }),
   deleteForever: (accountId: string, threadIds: string[]) => call<void>("delete_forever", { accountId, threadIds }),
+  subscriptions: (accountId: string) => call<Subscription[]>("subscriptions", { accountId }),
+  markUnsubscribed: (accountId: string, email: string) => call<void>("mark_unsubscribed", { accountId, email }),
+  bulkModify: (view: ViewQuery, add: string[], remove: string[], keep: string[]) => call<string[]>("bulk_modify", { view, add, remove, keep }),
+  bulkDeleteForever: (view: ViewQuery, keep: string[]) => call<number>("bulk_delete_forever", { view, keep }),
   emptyLabel: (accountId: string, label: string) => call<number>("empty_label", { accountId, label }),
   snooze: (accountId: string, threadIds: string[], until: number) => call<void>("snooze_threads", { accountId, threadIds, until }),
   unsnooze: (accountId: string, threadIds: string[]) => call<void>("unsnooze_threads", { accountId, threadIds }),
@@ -118,7 +126,9 @@ export const api = {
   tempFile: (name: string, data: Uint8Array) => call<string>("temp_file", { name, data: base64Encode(data) }),
   writeFile: (path: string, data: Uint8Array) => call<void>("write_file", { path, data: base64Encode(data) }),
   readFile: async (path: string) => bytes(await call<unknown>("read_file", { path })),
-  quickLook: (path: string) => call<void>("quick_look", { path }),
+  saveDownload: (name: string, data: Uint8Array) => call<string>("save_download", { name, data: base64Encode(data) }),
+  openFile: (name: string, data: Uint8Array) => call<string>("open_file", { name, data: base64Encode(data) }),
+  revealFile: (path: string) => call<void>("reveal_file", { path }),
   openExternal: (url: string) => call<void>("open_external", { url }),
   spellCheck: (texts: string[]) => call<SpellIssue[][]>("spell_check", { texts }),
   share: (paths: string[], text: string | null, x: number, y: number) => call<void>("share", { paths, text, x, y }),
@@ -128,7 +138,7 @@ export const api = {
   windowOpen: (kind: "compose" | "thread" | "print" | "eml", payload: unknown, title?: string) =>
     call<string>("window_open", { kind, payload, title: title ?? null }),
   windowTake: <T>(id: string) => call<T | null>("window_take", { id }),
-  pendingOpens: () => call<{ kind: "mailto" | "eml"; url?: string; path?: string }[]>("pending_opens"),
+  pendingOpens: () => call<OpenItem[]>("pending_opens"),
   printWindow: () => call<void>("print_window"),
   // end-to-end
   e2eInfo: () => call<Record<string, unknown>>("e2e_info"),

@@ -2,13 +2,16 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capabilities for Courier's windows",
-  "windows": ["*"],
+  "windows": [
+    "*"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
     "core:window:allow-set-title",
     "core:window:allow-close",
     "core:window:allow-set-focus",
+    "core:window:allow-set-size",
     "core:webview:allow-print",
     "dialog:default",
     "opener:default",

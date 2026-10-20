@@ -33,3 +33,6 @@ client_secret*.json
 # Local agent settings
 .claude/
 app/.claude/
+
+# TypeScript incremental build info
+*.tsbuildinfo

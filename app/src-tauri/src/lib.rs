@@ -66,15 +66,92 @@ impl Opener for BrowserOpener {
     }
 }
 
+/// A link from a message (or anywhere in the app) goes to the default browser or mail handler, never into
+/// Courier's own window. The app's own pages and the message frames' srcdoc/blob/data loads stay inside.
+fn keeps_inside(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "tauri" | "about" | "blob" | "data" | "asset" | "ipc" => true,
+        "http" | "https" => matches!(url.host_str(), Some("localhost") | Some("tauri.localhost") | Some("ipc.localhost")),
+        _ => false,
+    }
+}
+
+pub fn open_link(app: &AppHandle, url: &str) {
+    let ok = ["https://", "http://", "mailto:", "tel:"].iter().any(|p| url.to_ascii_lowercase().starts_with(p));
+    if !ok {
+        return;
+    }
+    if url.to_ascii_lowercase().starts_with("mailto:") {
+        // Courier writes the mail itself.
+        let _ = app.emit("open-item", json!({"kind": "mailto", "url": url}));
+        return;
+    }
+    if let Some(st) = app.try_state::<Arc<AppState>>() {
+        if let Some(e2e) = &st.e2e {
+            e2e.opened.lock().push(url.to_string());
+            return;
+        }
+    }
+    let _ = tauri_plugin_opener::open_url(url, None::<&str>);
+}
+
+/// Where WebKit's own downloads go (Download Image, Download Linked File from a message's context menu):
+/// the suggested ~/Downloads path with browser-style numbering, or the run's own folder during tests.
+static DOWNLOADS: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashMap<String, std::path::PathBuf>>> = std::sync::LazyLock::new(Default::default);
+
+fn on_download(app: &AppHandle, event: tauri::webview::DownloadEvent<'_>) -> bool {
+    match event {
+        tauri::webview::DownloadEvent::Requested { url, destination } => {
+            if let Some(st) = app.try_state::<Arc<AppState>>() {
+                if st.e2e.is_some() {
+                    let dir = st.data_dir.join("Downloads");
+                    let _ = std::fs::create_dir_all(&dir);
+                    let name = destination.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "download".into());
+                    *destination = commands::unique_path(&dir, &commands::safe_file_name(&name));
+                }
+            }
+            DOWNLOADS.lock().insert(url.to_string(), destination.clone());
+            true
+        }
+        tauri::webview::DownloadEvent::Finished { url, success, .. } => {
+            let path = DOWNLOADS.lock().remove(url.as_str());
+            let _ = app.emit("download-finished", json!({"path": path.map(|p| p.display().to_string()), "success": success}));
+            true
+        }
+        _ => true,
+    }
+}
+
 /// Main and secondary windows: overlay title bar, traffic lights inside the 64 px header.
 pub fn window_builder<'a>(app: &'a AppHandle, label: &str, url: &str, title: &str, e2e: bool) -> WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
     let b = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
         .title(title)
         .inner_size(1280.0, 800.0)
-        .min_inner_size(760.0, 520.0)
+        .min_inner_size(380.0, 480.0)
         .focused(!e2e)
         .background_throttling(if e2e { BackgroundThrottlingPolicy::Disabled } else { BackgroundThrottlingPolicy::Suspend })
-        .disable_drag_drop_handler();
+        .disable_drag_drop_handler()
+        .on_new_window({
+            let app = app.clone();
+            move |url, _| {
+                open_link(&app, url.as_str());
+                tauri::webview::NewWindowResponse::Deny
+            }
+        })
+        .on_download({
+            let app = app.clone();
+            move |_, event| on_download(&app, event)
+        })
+        .on_navigation({
+            let app = app.clone();
+            move |url| {
+                if keeps_inside(url) {
+                    return true;
+                }
+                open_link(&app, url.as_str());
+                false
+            }
+        });
     #[cfg(target_os = "macos")]
     let b = b.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true).traffic_light_position(LogicalPosition::new(20.0, 26.0));
     b
@@ -89,7 +166,11 @@ pub fn open_window(app: &AppHandle, kind: &str, id: &str, title: &str, e2e: bool
     } else if kind == "print" {
         b = b.inner_size(820.0, 900.0);
     }
-    b.build().map_err(|e| error::Error::msg(e.to_string()))?;
+    let _w = b.build().map_err(|e| error::Error::msg(e.to_string()))?;
+    #[cfg(target_os = "macos")]
+    if kind == "thread" {
+        macos::enable_swipe_navigation(&_w);
+    }
     Ok(())
 }
 
@@ -198,19 +279,48 @@ fn focused_or_main(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     windows.values().find(|w| w.is_focused().unwrap_or(false)).cloned().or_else(|| app.get_webview_window("main"))
 }
 
-/// mailto: links and .eml files, from the OS or a second launch.
+/// What the OS hands Courier: mailto: links, .eml files to read, and any other files, which become a new
+/// message with them attached (Open With, or another app's "Email this file").
+fn open_item_for(urls: &[String]) -> Vec<Value> {
+    let mut items = Vec::new();
+    let mut attach = Vec::new();
+    for url in urls {
+        let lower = url.to_ascii_lowercase();
+        if lower.starts_with("mailto:") {
+            items.push(json!({"kind": "mailto", "url": url}));
+        } else if lower.ends_with(".eml") {
+            items.push(json!({"kind": "eml", "path": url}));
+        } else if lower.starts_with("file://") {
+            attach.push(url.clone());
+        }
+    }
+    if !attach.is_empty() {
+        items.push(json!({"kind": "attach", "paths": attach}));
+    }
+    items
+}
+
+pub(crate) fn handle_opened(app: &AppHandle, urls: &[String]) {
+    for item in open_item_for(urls) {
+        deliver_open(app, item);
+    }
+}
+
 fn handle_open(app: &AppHandle, url: &str) {
-    let item = if url.starts_with("mailto:") {
-        json!({"kind": "mailto", "url": url})
-    } else if url.starts_with("file://") || url.ends_with(".eml") {
-        json!({"kind": "eml", "path": url})
-    } else {
-        return;
-    };
+    handle_opened(app, &[url.to_string()]);
+}
+
+fn deliver_open(app: &AppHandle, item: Value) {
+    let mut testing = false;
     if let Some(st) = app.try_state::<Arc<AppState>>() {
         st.pending_open.lock().push(item.clone());
+        testing = st.e2e.is_some();
     }
     let _ = app.emit("open-item", item);
+    // Bring the window forward for the person who opened something, never during an end-to-end run.
+    if testing {
+        return;
+    }
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
@@ -359,8 +469,11 @@ pub fn run() {
             let main = if e2e_state.is_some() { main.position(40.0, 60.0) } else { main };
             let main = main.build()?;
             #[cfg(target_os = "macos")]
-            if e2e_state.is_some() {
-                macos::order_back(&main);
+            {
+                macos::enable_swipe_navigation(&main);
+                if e2e_state.is_some() {
+                    macos::order_back(&main);
+                }
             }
             let _ = main;
             Ok(())
@@ -429,7 +542,13 @@ pub fn run() {
             commands::temp_file,
             commands::write_file,
             commands::read_file,
-            commands::quick_look,
+            commands::subscriptions,
+            commands::mark_unsubscribed,
+            commands::bulk_modify,
+            commands::bulk_delete_forever,
+            commands::save_download,
+            commands::open_file,
+            commands::reveal_file,
             commands::open_external,
             commands::spell_check,
             commands::share,
@@ -450,9 +569,7 @@ pub fn run() {
     app.run(|app, event| {
         #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Opened { urls } = &event {
-            for u in urls {
-                handle_open(app, u.as_str());
-            }
+            handle_opened(app, &urls.iter().map(|u| u.to_string()).collect::<Vec<_>>());
         }
         if let tauri::RunEvent::Reopen { has_visible_windows, .. } = &event {
             if !has_visible_windows {
@@ -464,4 +581,19 @@ pub fn run() {
         }
         let _ = (app, &event);
     });
+}
+
+#[cfg(test)]
+mod open_tests {
+    use super::open_item_for;
+
+    #[test]
+    fn files_handed_over_become_one_message_and_eml_files_open_to_read() {
+        let items = open_item_for(&["mailto:ana@x.io?subject=Hi".into(), "file:///tmp/a.docx".into(), "file:///tmp/b%20c.pdf".into(), "file:///tmp/m.EML".into()]);
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["kind"], "mailto");
+        assert_eq!(items[1]["kind"], "eml");
+        assert_eq!(items[2]["kind"], "attach");
+        assert_eq!(items[2]["paths"].as_array().unwrap().len(), 2);
+    }
 }

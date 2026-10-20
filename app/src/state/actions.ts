@@ -1,7 +1,7 @@
 // Actions on conversations, with the toast + Undo the web client shows.
 import { parseListUnsubscribe } from "../core/unsubscribe";
-import { api, errorText } from "../ipc/api";
-import type { ThreadSummary } from "../ipc/types";
+import { api, errorText, on } from "../ipc/api";
+import type { ThreadSummary, ViewQuery } from "../ipc/types";
 import { nextStar } from "./settings";
 import { accountById, closeThread, getState, labelName, loadList, setState, stepThread, toast, ui, visibleThreads, withUndo, type ThreadRef } from "./store";
 
@@ -131,7 +131,7 @@ export async function act(kind: ActionKind, targets: Target[] = currentTargets()
     toast(`Couldn't do that: ${errorText(e)}`);
   } finally {
     void loadList({ quiet: true });
-    setState({ selected: [], selectAllMatching: false });
+    setState({ selected: [], selectAllMatching: false, keepThreads: [] });
   }
 }
 
@@ -267,6 +267,7 @@ export async function unsubscribe(
   post: string,
   senderName: string,
   sendMail: (to: string, subject: string, body: string) => Promise<void>,
+  onDone?: () => void,
 ) {
   const m = parseListUnsubscribe(header || null, post || null);
   if (!m) return toast("This sender doesn't offer an unsubscribe link.");
@@ -284,10 +285,10 @@ export async function unsubscribe(
         if (m.kind === "one-click")
           void api
             .unsubscribeOneClick(m.url)
-            .then(() => toast(`Unsubscribed from ${senderName}.`))
+            .then(() => (toast(`Unsubscribed from ${senderName}.`), onDone?.()))
             .catch((e) => toast(`Couldn't unsubscribe: ${errorText(e)}`));
-        else if (m.kind === "mailto") void sendMail(m.to, m.subject, m.body).then(() => toast(`Unsubscribe request sent to ${senderName}.`));
-        else void api.openExternal(m.url);
+        else if (m.kind === "mailto") void sendMail(m.to, m.subject, m.body).then(() => (toast(`Unsubscribe request sent to ${senderName}.`), onDone?.()));
+        else void api.openExternal(m.url).then(() => onDone?.());
       },
     },
   });
@@ -322,6 +323,12 @@ export function toggleSelect(threadId: string, range = false) {
       const add = list.slice(lo, hi + 1);
       return { selected: [...new Set([...s.selected, ...add])] };
     }
+    if (s.selectAllMatching) {
+      // Everything in the view stays selected; an unticked row is kept out of the action.
+      const keep = s.keepThreads.includes(threadId) ? s.keepThreads.filter((x) => x !== threadId) : [...s.keepThreads, threadId];
+      const selected = s.selected.includes(threadId) ? s.selected.filter((x) => x !== threadId) : [...s.selected, threadId];
+      return { keepThreads: keep, selected };
+    }
     return { selected: s.selected.includes(threadId) ? s.selected.filter((x) => x !== threadId) : [...s.selected, threadId], selectAllMatching: false };
   });
 }
@@ -334,12 +341,124 @@ export function selectWhere(kind: "all" | "none" | "read" | "unread" | "starred"
     (kind === "unread" && t.unread) ||
     (kind === "starred" && t.starred) ||
     (kind === "unstarred" && !t.starred);
-  setState({ selected: kind === "none" ? [] : list.filter(pick).map((t) => t.threadId), selectAllMatching: false });
+  setState({ selected: kind === "none" ? [] : list.filter(pick).map((t) => t.threadId), selectAllMatching: false, keepThreads: [] });
 }
 
 /** "Select all N conversations in this view": the action then applies to every page. */
 export async function selectAllMatching() {
-  setState({ selectAllMatching: true });
+  setState({ selectAllMatching: true, keepThreads: [] });
+}
+
+/** Actions that can run over a whole view on the server (the rest use the cached listing). */
+export const BULK_KINDS: ActionKind[] = [
+  "archive",
+  "inbox",
+  "trash",
+  "restore",
+  "delete-forever",
+  "spam",
+  "not-spam",
+  "read",
+  "unread",
+  "star",
+  "unstar",
+  "important",
+  "not-important",
+];
+
+/** The question asked before a whole-view action, and what's said after it. */
+const BULK_TEXT: Partial<Record<ActionKind, { ask: (what: string) => string; done: string }>> = {
+  archive: { ask: (w) => `Archive ${w}?`, done: "archived" },
+  inbox: { ask: (w) => `Move ${w} to Inbox?`, done: "moved to Inbox" },
+  trash: { ask: (w) => `Move ${w} to Trash?`, done: "moved to Trash" },
+  restore: { ask: (w) => `Move ${w} to Inbox?`, done: "moved to Inbox" },
+  "delete-forever": { ask: (w) => `Delete ${w} forever?`, done: "deleted forever" },
+  spam: { ask: (w) => `Mark ${w} as spam?`, done: "marked as spam" },
+  "not-spam": { ask: (w) => `Move ${w} out of Spam?`, done: "moved out of Spam" },
+  read: { ask: (w) => `Mark ${w} as read?`, done: "marked as read" },
+  unread: { ask: (w) => `Mark ${w} as unread?`, done: "marked as unread" },
+  star: { ask: (w) => `Star ${w}?`, done: "starred" },
+  unstar: { ask: (w) => `Remove the star from ${w}?`, done: "unstarred" },
+  important: { ask: (w) => `Mark ${w} as important?`, done: "marked as important" },
+  "not-important": { ask: (w) => `Mark ${w} as not important?`, done: "marked as not important" },
+};
+
+/** Name of the current view for confirmations: "Inbox", "Promotions", a label, or "this search". */
+function viewName(): string {
+  const s = getState();
+  const l = s.route.list;
+  if (l.query) return "this search";
+  if (l.label === "INBOX" && l.category && l.category !== "primary") return l.category[0].toUpperCase() + l.category.slice(1);
+  return labelName(s.accountId === "all" ? (s.accounts[0]?.id ?? "") : s.accountId, l.label ?? "INBOX");
+}
+
+/**
+ * An action over every conversation in the view — all pages, on the server — except `keep`. Asks first,
+ * shows progress, then offers Undo. `estimate` is the count shown in the confirmation (null when unknown).
+ */
+export async function bulkAct(kind: ActionKind, keep: string[], estimate: number | null) {
+  const s = getState();
+  const { currentView } = await import("./store");
+  const rule = RULES[kind];
+  const where = viewName();
+  const n = estimate != null ? Math.max(0, estimate - keep.length) : null;
+  const what = `${n != null ? `${n.toLocaleString()} conversation${n === 1 ? "" : "s"}` : "every conversation"} in ${where}`;
+  const kept = keep.length
+    ? ` The ${keep.length === 1 ? "one" : keep.length} you kept ${keep.length === 1 ? "stays" : "stay"} as ${keep.length === 1 ? "it is" : "they are"}.`
+    : "";
+  const forever = kind === "delete-forever";
+  ui({
+    confirm: {
+      title: BULK_TEXT[kind]?.ask(what) ?? `Change ${what}?`,
+      body: `This applies to every page of ${where}, not just the one you see.${kept}${forever ? " Deleted conversations can't be recovered." : ""}`,
+      ok: forever ? "Delete forever" : "OK",
+      run: () => void runBulk(kind, keep, currentView, rule, s.accountId === "all" ? s.accounts.map((a) => a.id) : [s.accountId]),
+    },
+  });
+}
+
+async function runBulk(kind: ActionKind, keep: string[], currentView: (page?: number) => ViewQuery, rule: (typeof RULES)[ActionKind], accounts: string[]) {
+  const { replaceToast, dismissToast } = await import("./store");
+  const progress = toast("Finding conversations…", { sticky: true });
+  const off = await on<{ phase: string; found?: number; done?: number; total?: number }>("bulk-progress", (p) => {
+    if (p.phase === "finding") replaceToast(progress, `Finding conversations… ${(p.found ?? 0).toLocaleString()} messages so far`, { ms: 600000 });
+    else if (p.phase === "working" && p.total)
+      replaceToast(progress, `Working… ${(p.done ?? 0).toLocaleString()} of ${p.total.toLocaleString()} messages`, { ms: 600000 });
+  });
+  const changed: { accountId: string; ids: string[] }[] = [];
+  let count = 0;
+  try {
+    for (const accountId of accounts) {
+      const v = { ...currentView(0), accountId, ...(accounts.length > 1 ? { label: "INBOX", category: null } : {}) };
+      if (kind === "delete-forever") count += await api.bulkDeleteForever(v, keep);
+      else {
+        const ids = await api.bulkModify(v, rule.add, rule.remove, keep);
+        changed.push({ accountId, ids });
+        count += ids.length;
+      }
+    }
+    off();
+    dismissToast(progress);
+    const text = `${count.toLocaleString()} message${count === 1 ? "" : "s"} ${BULK_TEXT[kind]?.done ?? "changed"}.`;
+    if (kind === "delete-forever") toast(text);
+    else
+      withUndo(text, async () => {
+        for (const c of changed) await api.modifyMessages(c.accountId, c.ids, rule.remove, rule.add);
+      });
+  } catch (e) {
+    off();
+    dismissToast(progress);
+    toast(`Couldn't finish: ${errorText(e)}`);
+  } finally {
+    setState({ selected: [], selectAllMatching: false, keepThreads: [], hiddenThreads: [] });
+    void loadList({ quiet: true });
+  }
+}
+
+/** "Delete all except selected" (and archive): the ticked conversations stay, the rest of the view goes. */
+export function allExceptSelected(kind: "trash" | "archive" | "delete-forever", total: number | null) {
+  const keep = getState().selected;
+  void bulkAct(kind, keep, total);
 }
 
 /** Expand a select-all-matching selection to every thread id in the view (page through it). */

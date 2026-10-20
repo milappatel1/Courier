@@ -21,6 +21,24 @@ pub struct AttachmentMeta {
     pub size: i64,
 }
 
+/// A sender on the Manage subscriptions page.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Subscription {
+    pub account_id: String,
+    pub email: String,
+    pub name: String,
+    pub last_date: i64,
+    pub list_unsubscribe: String,
+    pub list_unsubscribe_post: String,
+    pub list_id: String,
+    pub total: i64,
+    /// Messages in the last 30 days.
+    pub recent: i64,
+    /// When Courier unsubscribed (ms), if it did.
+    pub unsubscribed: Option<i64>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageRow {
@@ -525,6 +543,102 @@ impl Db {
                 c.execute("UPDATE labels SET threads_total=?3, threads_unread=?4, messages_total=?5, messages_unread=?6 WHERE account_id=?1 AND id=?2", params![account, id, tt, tu, mt, mu])?;
             }
             Ok(())
+        })
+    }
+
+    /// For these conversations, per label: 1 if the conversation carries it and 1 if it's unread there, as the
+    /// sidebar counts conversations. A message in Trash or Spam counts only there, as on the server.
+    pub fn label_thread_stats(&self, account: &str, thread_ids: &[String]) -> Result<HashMap<String, (i64, i64)>> {
+        let mut out: HashMap<String, (i64, i64)> = HashMap::new();
+        let mut seen = HashSet::new();
+        for t in thread_ids {
+            if !seen.insert(t.as_str()) {
+                continue;
+            }
+            let mut has: HashSet<String> = HashSet::new();
+            let mut unread: HashSet<String> = HashSet::new();
+            for m in self.thread_messages(account, t)? {
+                let binned = m.has("TRASH") || m.has("SPAM");
+                for l in &m.labels {
+                    if binned && l != "TRASH" && l != "SPAM" {
+                        continue;
+                    }
+                    has.insert(l.clone());
+                    if m.has("UNREAD") {
+                        unread.insert(l.clone());
+                    }
+                }
+            }
+            for l in has {
+                let e = out.entry(l.clone()).or_default();
+                e.0 += 1;
+                if unread.contains(&l) {
+                    e.1 += 1;
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Move stored conversation counts by the difference between two `label_thread_stats` snapshots, so the
+    /// sidebar is right at once (the server's own counts replace these when they arrive).
+    pub fn apply_label_deltas(&self, account: &str, before: &HashMap<String, (i64, i64)>, after: &HashMap<String, (i64, i64)>) -> Result<()> {
+        let ids: HashSet<&String> = before.keys().chain(after.keys()).collect();
+        self.with(|c| {
+            for id in ids {
+                let (b, a) = (before.get(id).copied().unwrap_or_default(), after.get(id).copied().unwrap_or_default());
+                let (dt, du) = (a.0 - b.0, a.1 - b.1);
+                if dt != 0 || du != 0 {
+                    c.execute(
+                        "UPDATE labels SET threads_total=MAX(0, threads_total+?3), threads_unread=MAX(0, MIN(threads_unread+?4, threads_total+?3)) WHERE account_id=?1 AND id=?2",
+                        params![account, id, dt, du],
+                    )?;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    pub fn set_label_counts(&self, account: &str, id: &str, counts: (i64, i64, i64, i64)) -> Result<()> {
+        self.with(|c| {
+            c.execute("UPDATE labels SET threads_total=?3, threads_unread=?4, messages_total=?5, messages_unread=?6 WHERE account_id=?1 AND id=?2", params![account, id, counts.0, counts.1, counts.2, counts.3])?;
+            Ok(())
+        })
+    }
+
+    /// Senders whose mail offers a way to unsubscribe (List-Unsubscribe), busiest first: how many messages in
+    /// all and since `since_ms`, and the newest message's unsubscribe headers.
+    pub fn subscriptions(&self, account: &str, since_ms: i64) -> Result<Vec<Subscription>> {
+        self.with(|c| {
+            let mut st = c.prepare(
+                "WITH s AS (
+                   SELECT lower(from_email) AS e, from_name, internal_date, list_unsubscribe, list_unsubscribe_post, list_id,
+                          ROW_NUMBER() OVER (PARTITION BY lower(from_email) ORDER BY internal_date DESC) AS rn,
+                          COUNT(*) OVER (PARTITION BY lower(from_email)) AS total,
+                          SUM(CASE WHEN internal_date >= ?2 THEN 1 ELSE 0 END) OVER (PARTITION BY lower(from_email)) AS recent
+                   FROM messages
+                   WHERE account_id = ?1 AND list_unsubscribe != '' AND from_email != ''
+                     AND labels NOT LIKE '% SENT %' AND labels NOT LIKE '% DRAFT %')
+                 SELECT e, from_name, internal_date, list_unsubscribe, list_unsubscribe_post, list_id, total, recent
+                 FROM s WHERE rn = 1 ORDER BY recent DESC, internal_date DESC",
+            )?;
+            let rows = st
+                .query_map(params![account, since_ms], |r| {
+                    Ok(Subscription {
+                        account_id: account.to_string(),
+                        email: r.get(0)?,
+                        name: r.get(1)?,
+                        last_date: r.get(2)?,
+                        list_unsubscribe: r.get(3)?,
+                        list_unsubscribe_post: r.get(4)?,
+                        list_id: r.get(5)?,
+                        total: r.get(6)?,
+                        recent: r.get(7)?,
+                        unsubscribed: None,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
         })
     }
 

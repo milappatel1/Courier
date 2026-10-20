@@ -7,7 +7,9 @@ cd "$(dirname "$0")/.."
 VERSION=$(node -p 'require("./package.json").version')
 NAME="Courier-$VERSION-arm64"
 OUT="$(cd .. && pwd)/release"
-APP="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Courier.app"
+# Cargo's build directory (it can be moved with CARGO_TARGET_DIR or a .cargo/config.toml).
+TARGET=$(cd src-tauri && cargo metadata --format-version 1 --no-deps | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).target_directory))')
+APP="$TARGET/aarch64-apple-darwin/release/bundle/macos/Courier.app"
 mkdir -p "$OUT"
 rm -f "$OUT/$NAME.dmg" "$OUT/$NAME.zip"
 

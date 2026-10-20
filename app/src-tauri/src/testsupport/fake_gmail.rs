@@ -128,6 +128,14 @@ impl FakeGmail {
         id
     }
 
+    /// A label change made on another device (it shows up in history).
+    pub fn modify_elsewhere(&self, id: &str, add: &[&str], remove: &[&str]) {
+        let mut s = self.state.lock();
+        let add: Vec<String> = add.iter().map(|x| x.to_string()).collect();
+        let remove: Vec<String> = remove.iter().map(|x| x.to_string()).collect();
+        modify(&mut s, id, &add, &remove);
+    }
+
     pub fn message(&self, id: &str) -> Option<FMsg> {
         self.state.lock().messages.get(id).cloned()
     }
@@ -677,7 +685,9 @@ fn list_messages<'a>(s: &'a GState, req: &Request) -> Vec<&'a FMsg> {
 
 fn all_labels(s: &GState) -> Vec<Value> {
     let count = |id: &str| {
-        let msgs: Vec<&FMsg> = s.messages.values().filter(|m| m.labels.iter().any(|l| l == id)).collect();
+        // As on the server, mail in Trash or Spam counts only there.
+        let binned = |m: &FMsg| id != "TRASH" && id != "SPAM" && m.labels.iter().any(|l| l == "TRASH" || l == "SPAM");
+        let msgs: Vec<&FMsg> = s.messages.values().filter(|m| m.labels.iter().any(|l| l == id) && !binned(m)).collect();
         let unread = msgs.iter().filter(|m| m.labels.iter().any(|l| l == "UNREAD")).count();
         let threads: std::collections::HashSet<&String> = msgs.iter().map(|m| &m.thread_id).collect();
         let tunread: std::collections::HashSet<&String> = msgs.iter().filter(|m| m.labels.iter().any(|l| l == "UNREAD")).map(|m| &m.thread_id).collect();

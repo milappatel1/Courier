@@ -2,9 +2,9 @@
 // settings, compose dock, dialogs and toasts; plus global keyboard shortcuts and native menu commands.
 import { useEffect, useRef, useState } from "react";
 import { isTypingTarget, ShortcutMatcher, type ShortcutAction } from "./core/shortcuts";
-import { api, on } from "./ipc/api";
+import { api, on, type OpenItem } from "./ipc/api";
 import { act, currentTargets, emptyLabel, selectWhere, toggleStar } from "./state/actions";
-import { forwardAsAttachment, openCompose, openMailto, openReply } from "./state/compose";
+import { composeWithFiles, forwardAsAttachment, openCompose, openMailto, openReply } from "./state/compose";
 import {
   closeThread,
   getState,
@@ -16,8 +16,10 @@ import {
   setAccount,
   setSetting,
   setState,
+  applyViewportSize,
   stepThread,
   toast,
+  toggleNav,
   ui,
   useMail,
   visibleThreads,
@@ -31,6 +33,7 @@ import { ListView } from "./ui/ListView";
 import { Nav } from "./ui/Nav";
 import { QuickSettings, ThemePicker } from "./ui/QuickSettings";
 import { SettingsPage } from "./ui/Settings";
+import { Subscriptions } from "./ui/Subscriptions";
 import { Icon, LogoMark, TooltipHost, Menu } from "./ui/common";
 import { SnoozeMenu } from "./ui/menus";
 
@@ -42,6 +45,10 @@ export function App() {
   const themePicker = useMail((s) => s.ui.themePicker);
   const route = useMail((s) => s.route);
   const pane = useMail((s) => s.settings.readingPane);
+  const size = useMail((s) => s.size);
+  const drawer = useMail((s) => s.drawer);
+  const peek = useMail((s) => s.peek);
+  useViewportSize();
   useChromeInset();
   useShortcuts();
   useMenuCommands();
@@ -58,18 +65,40 @@ export function App() {
       </div>
     );
   }
-  const split = pane !== "none" && !route.settings && !route.list.query?.startsWith("__");
+  const subs = route.list.label === "SUBSCRIPTIONS" && !route.list.query && !route.thread;
+  // The phone layout has no room for a reading pane: a conversation fills the window.
+  const split = pane !== "none" && size !== "phone" && !route.settings && !subs && !route.list.query?.startsWith("__");
   const showQs = qs && !route.settings;
   return (
     <div className="app">
       <Header />
-      <div className={["body", navOpen ? "" : "nav-closed"].join(" ")}>
+      <div
+        className={[
+          "body",
+          size === "phone"
+            ? "nav-hidden"
+            : size === "medium" || !navOpen
+              ? // The rail; the whole menu slides out over the content from the menu button or a resting pointer.
+                drawer || peek
+                ? "nav-rail"
+                : "nav-closed"
+              : "",
+          (drawer && size !== "wide") || (peek && size !== "phone" && (size === "medium" || !navOpen)) ? "drawer-open" : "",
+        ].join(" ")}
+      >
         <Nav />
+        {drawer && <div className="drawer-scrim" onClick={() => useMail.setState({ drawer: false })} data-testid="drawer-scrim" />}
         <main className={["main", showQs ? "with-qs" : ""].join(" ")} aria-label="Mail">
-          {route.settings ? <SettingsPage /> : split ? <Split /> : route.thread ? <Conversation /> : <ListView />}
+          {route.settings ? <SettingsPage /> : subs ? <Subscriptions /> : split ? <Split /> : route.thread ? <Conversation /> : <ListView />}
         </main>
         {showQs ? <QuickSettings /> : <span />}
       </div>
+      {size === "phone" && !route.thread && !route.settings && !drawer && (
+        <button type="button" className="fab" onClick={() => void openCompose()} aria-label="Compose" data-testid="compose-fab">
+          <Icon name="edit" size={24} />
+          <span>Compose</span>
+        </button>
+      )}
       <ComposeDock />
       <Dialogs />
       {themePicker && <ThemePicker />}
@@ -145,6 +174,15 @@ function Welcome() {
 }
 
 /** Room for the window's traffic lights in the header (not in full screen or the browser preview). */
+/** Follow the window's width: data-size on <html> for the CSS, and the store for layout choices. */
+function useViewportSize() {
+  useEffect(() => {
+    applyViewportSize();
+    window.addEventListener("resize", applyViewportSize);
+    return () => window.removeEventListener("resize", applyViewportSize);
+  }, []);
+}
+
 function useChromeInset() {
   useEffect(() => {
     const tauri = "__TAURI_INTERNALS__" in window && !(window as unknown as { __COURIER_PREVIEW__?: boolean }).__COURIER_PREVIEW__;
@@ -405,7 +443,7 @@ function useMenuCommands() {
         case "advanced-search":
           return ui({ advancedSearch: true });
         case "toggle-nav":
-          return void setSetting("navOpen", !s.settings.navOpen);
+          return toggleNav();
         case "pane-none":
           return void setSetting("readingPane", "none");
         case "pane-right":
@@ -469,15 +507,16 @@ async function openEmlDialog() {
 
 function useOpenItems() {
   useEffect(() => {
-    const handle = (item: { kind: "mailto" | "eml"; url?: string; path?: string }) => {
+    const handle = (item: OpenItem) => {
       if (item.kind === "mailto" && item.url) void openMailto(item.url);
       if (item.kind === "eml" && item.path) void api.windowOpen("eml", { path: item.path }, item.path.split("/").pop());
+      if (item.kind === "attach" && item.paths?.length) void composeWithFiles(item.paths);
     };
     void api
       .pendingOpens()
       .then((list) => list.forEach(handle))
       .catch(() => {});
-    const p = on<{ kind: "mailto" | "eml"; url?: string; path?: string }>("open-item", (item) => {
+    const p = on<OpenItem>("open-item", (item) => {
       handle(item);
       void api.pendingOpens();
     });

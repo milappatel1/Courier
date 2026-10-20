@@ -8,6 +8,7 @@ import { buildMime, encodedSize, SEND_LIMIT_BYTES, type ComposeAttachment } from
 import { parseMessage } from "../core/mime/parse";
 import { escapeHtml, htmlToText, textToHtml } from "../core/text";
 import { parseMailto } from "../core/unsubscribe";
+import { mimeFromName } from "../core/files";
 import { api, errorText } from "../ipc/api";
 import type { Account, MessageRow } from "../ipc/types";
 import { act } from "./actions";
@@ -332,7 +333,7 @@ export function checkBeforeSend(c: ComposeData): SendCheck {
       ok: true,
       confirm: 'It seems like you forgot to attach a file. You wrote "attached" in your message, but there are no files attached. Send anyway?',
     };
-  if (!c.subject.trim() && !htmlToText(c.html).trim()) return { ok: true, confirm: "Send this message without a subject or text in the body?" };
+  if (!c.subject.trim() && !htmlToText(c.html).trim()) return { ok: true, confirm: "Send without a subject or any text?" };
   return { ok: true };
 }
 
@@ -368,7 +369,7 @@ export async function sendCompose(id: string, opts: { sendAt?: number; archiveTh
     const copy = undoCopies.get(outboxId);
     undoCopies.delete(outboxId);
     if (copy) addCompose({ ...copy, id: newComposeId(), minimized: false, placement: copy.placement === "inline" ? "dock" : copy.placement, dirty: true });
-    toast(scheduled ? "Scheduled send canceled." : "Sending undone.");
+    toast(scheduled ? "No longer scheduled." : "Not sent. You can keep editing.");
   };
   if (scheduled) {
     toast(`Send scheduled for ${scheduledWhen(opts.sendAt!)}`, {
@@ -442,7 +443,7 @@ async function openOutboxItem(id: number) {
         run: () =>
           void api.outboxCancel(id).then((back) => {
             if (back) addCompose(composeFromRaw(back.accountId, back.raw, { threadId: back.threadId, draftId: back.draftId }));
-            toast("Scheduled send canceled. The message was moved to Drafts.");
+            toast("No longer scheduled. It's back in Drafts.");
           }),
       },
     });
@@ -515,6 +516,21 @@ export function viewSentThread(threadId: string, accountId: string) {
 /** Insert a template: its subject when the subject is empty, its body at the start. */
 export function templateInto(c: ComposeData, t: { subject: string; html: string }): Partial<ComposeData> {
   return { subject: c.subject.trim() ? c.subject : t.subject, html: t.html + c.html };
+}
+
+export { mimeFromName };
+
+/** Files handed to Courier (Open With, or another app's "Email this file"): a new message with them attached. */
+export async function composeWithFiles(paths: string[]) {
+  const attachments: Attachment[] = [];
+  for (const p of paths) {
+    const path = p.startsWith("file://") ? decodeURIComponent(p.slice(7)) : p;
+    const data = await api.readFile(path);
+    const name = path.split("/").pop() || "attachment";
+    attachments.push({ id: randomToken(4), name, mime: mimeFromName(name), size: data.length, data });
+  }
+  if (!attachments.length) return;
+  await openCompose({ attachments, subject: attachments.length === 1 ? attachments[0].name.replace(/\.[^.]+$/, "") : "" });
 }
 
 export const attachmentFromFile = async (f: File): Promise<Attachment> => ({

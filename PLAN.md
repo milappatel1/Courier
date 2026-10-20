@@ -5,7 +5,7 @@ Google branding, Google's assets and Google-only services, with multiple account
 
 ## Status
 
-**1.0.2 released (2026-10-19)** — https://github.com/milappatel1/Courier/releases/tag/v1.0.2 (`Courier-1.0.2-arm64.dmg` and `.zip`, ad-hoc signed; SHA-256 in the release notes). Gmail rate limits no longer stall a first sync; an app log file. 1.0.1 (real-account fixes: first-run Gmail setup, Inbox count, Keychain prompts, notifications, the long-thread fold) and 1.0.0 are on the releases page.
+**1.0.3 (2026-10-19, not yet released)** — the real-use round: images on by default, message frames that never cut off or grow forever, links in the default browser, attachments in their own apps, downloads straight to Downloads, trackpad swipes, exact label counts after every action, server-wide "select all" with keep-the-unticked and "Delete all except selected", Manage subscriptions, a right-click menu, and a layout from 1440 px down to phone width. See `research/VERIFY-P7.md` and the feature brief `research/GMAIL-PARITY.md`. 1.0.2 and earlier are on the releases page.
 
 | Phase | State | Notes |
 | --- | --- | --- |
@@ -17,7 +17,8 @@ Google branding, Google's assets and Google-only services, with multiple account
 | P4 settings, themes, shortcuts | done | `research/VERIFY-P4.md` |
 | P5 Mac integration | done | `research/VERIFY-P5.md` — the e2e run never takes focus (checked by the app and the script) |
 | P6 snooze, schedule, unsubscribe… | done | `research/VERIFY-P6.md` |
-| Tests | passing | Vitest 82, Rust 36 (+2 opt-in live TLS checks), end to end 32 steps in ~60 s with an app-error trap |
+| P7 real-use round | done | `research/VERIFY-P7.md` |
+| Tests | passing | Vitest 86, Rust 42 (+2 opt-in live TLS checks), end to end 45 steps in ~90 s (window sizes 1440–420 px included) with an app-error trap |
 | Real-account check | done (read-only) | 2026-10-19 with the user's own OAuth client; found bugs (first-run client setup unreachable, Inbox count from a partial cache, endless Keychain prompts after an update), fixed in 1.0.1. See `research/VERIFY-P0.md`. |
 
 Open items: things not driven automatically (mailto/.eml/Quick Look/Share/drag-out,

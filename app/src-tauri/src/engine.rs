@@ -737,14 +737,13 @@ impl Engine {
         Ok(ViewResult { has_more: offset + limit < total, total, threads, source: "cache".into(), ..Default::default() })
     }
 
-    async fn server_list(&self, account: &str, v: &ViewQuery, limit: i64) -> Result<ViewResult> {
-        let g = self.gmail(account)?;
+    /// A view as a Gmail API listing: label ids and a search query.
+    fn gmail_view_query(v: &ViewQuery) -> (Vec<String>, String) {
         let label = v.label.clone().unwrap_or_default();
         let mut label_ids = Vec::new();
         let mut q_parts = Vec::new();
         match label.as_str() {
-            "" => {}
-            "ALL" => {}
+            "" | "ALL" => {}
             other => label_ids.push(other.to_string()),
         }
         if let Some(cat) = v.category.as_deref().filter(|c| !c.is_empty()) {
@@ -753,7 +752,13 @@ impl Engine {
         if let Some(q) = v.query.as_deref().filter(|q| !q.trim().is_empty()) {
             q_parts.push(q.to_string());
         }
-        let q = q_parts.join(" ");
+        (label_ids, q_parts.join(" "))
+    }
+
+    async fn server_list(&self, account: &str, v: &ViewQuery, limit: i64) -> Result<ViewResult> {
+        let g = self.gmail(account)?;
+        let label = v.label.clone().unwrap_or_default();
+        let (label_ids, q) = Self::gmail_view_query(v);
         let include_spam_trash = label == "TRASH" || label == "SPAM";
         let (ids, next, estimate) = gmail::list_page(&g, &self.db, account, &label_ids, Some(&q), v.page_token.as_deref(), limit as u32, include_spam_trash).await?;
         // Locally snoozed threads stay hidden from the inbox.
@@ -832,10 +837,19 @@ impl Engine {
         }
         let add = expand_label_rules(add, remove);
         let (add, remove) = (add.0, add.1);
-        // Optimistic local change first so the UI updates immediately.
+        let gmail = self.kind(account)? == "gmail";
+        // Optimistic local change first so the UI updates immediately, counts included.
+        let threads = self.thread_ids_of(account, ids);
+        let before = self.db.label_thread_stats(account, &threads)?;
         self.db.modify_labels(account, ids, &add, &remove)?;
+        let after = self.db.label_thread_stats(account, &threads)?;
+        if gmail {
+            self.db.apply_label_deltas(account, &before, &after)?;
+        } else {
+            self.db.recount_labels(account).ok();
+        }
         self.changed(account, "modify");
-        let result = if self.kind(account)? == "gmail" {
+        let result = if gmail {
             let g = self.gmail(account)?;
             let r = g.batch_modify(ids, &add, &remove).await;
             if r.is_ok() {
@@ -852,7 +866,15 @@ impl Engine {
         };
         match result {
             Ok(()) => {
-                self.db.recount_labels(account).ok();
+                if gmail {
+                    // The server's own counts for every label involved.
+                    let touched: Vec<String> = before.keys().chain(after.keys()).cloned().collect();
+                    if let Ok(g) = self.gmail(account) {
+                        let _ = gmail::refresh_label_counts(&g, &self.db, account, &touched).await;
+                    }
+                } else {
+                    self.db.recount_labels(account).ok();
+                }
                 self.trigger(account);
                 self.changed(account, "modify");
                 Ok(())
@@ -860,10 +882,210 @@ impl Engine {
             Err(e) => {
                 // Roll back the optimistic change.
                 self.db.modify_labels(account, ids, &remove, &add)?;
+                if gmail {
+                    self.db.apply_label_deltas(account, &after, &before)?;
+                } else {
+                    self.db.recount_labels(account).ok();
+                }
                 self.changed(account, "modify-failed");
                 Err(e)
             }
         }
+    }
+
+    // ---- Manage subscriptions ----
+
+    /// Senders offering an unsubscribe link, from the cached mail (all accounts for "all"), with the ones Courier
+    /// already unsubscribed from marked.
+    pub fn subscriptions(&self, account: &str) -> Result<Vec<crate::db::Subscription>> {
+        let accounts: Vec<String> = if account == "all" { self.db.accounts()?.into_iter().map(|a| a.id).collect() } else { vec![account.to_string()] };
+        let since = now_ms() - 30 * 86_400_000;
+        let mut out = Vec::new();
+        for a in accounts {
+            let done = self.db.kv_get(&format!("unsubscribed:{a}"))?.unwrap_or(json!({}));
+            for mut s in self.db.subscriptions(&a, since)? {
+                s.unsubscribed = done[&s.email].as_i64();
+                out.push(s);
+            }
+        }
+        out.sort_by(|x, y| y.recent.cmp(&x.recent).then(y.last_date.cmp(&x.last_date)));
+        Ok(out)
+    }
+
+    pub fn mark_unsubscribed(&self, account: &str, email: &str) -> Result<()> {
+        let key = format!("unsubscribed:{account}");
+        let mut done = self.db.kv_get(&key)?.unwrap_or(json!({}));
+        done[email.to_lowercase()] = json!(now_ms());
+        self.db.kv_set(&key, &done)?;
+        Ok(())
+    }
+
+    // ---- bulk actions ("select all conversations in this view") ----
+
+    /// Every message in a view — all pages, from the server for Gmail and for IMAP folders — except the
+    /// conversations in `keep`. Whole conversations, as the web client acts on them: the cached messages of
+    /// each matching conversation come along (a reply in Sent goes to Trash with the rest).
+    pub async fn view_message_ids(&self, v: &ViewQuery, keep: &HashSet<String>) -> Result<Vec<String>> {
+        let account = v.account_id.as_str();
+        let label = v.label.clone().unwrap_or_default();
+        let kind = self.kind(account)?;
+        let mut ids: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut threads: HashSet<String> = HashSet::new();
+        let local_only = matches!(label.as_str(), "SNOOZED" | "SCHEDULED" | "OUTBOX");
+        let has_query = v.query.as_deref().map(|q| !q.trim().is_empty()).unwrap_or(false) || v.category.as_deref().map(|c| !c.is_empty()).unwrap_or(false);
+        if kind == "gmail" && !local_only {
+            let g = self.gmail(account)?;
+            let (label_ids, q) = Self::gmail_view_query(v);
+            let mut page: Option<String> = None;
+            loop {
+                let r = g.messages_list(Some(&q), &label_ids, page.as_deref(), 500).await?;
+                for m in r["messages"].as_array().cloned().unwrap_or_default() {
+                    let (Some(id), Some(t)) = (m["id"].as_str(), m["threadId"].as_str()) else { continue };
+                    if keep.contains(t) {
+                        continue;
+                    }
+                    threads.insert(t.to_string());
+                    if seen.insert(id.to_string()) {
+                        ids.push(id.to_string());
+                    }
+                }
+                self.emit("bulk-progress", json!({"accountId": account, "phase": "finding", "found": ids.len()}));
+                page = r["nextPageToken"].as_str().map(str::to_string);
+                if page.is_none() {
+                    break;
+                }
+            }
+        } else if kind == "imap" && !local_only && !has_query && !label.is_empty() && label != "ALL" {
+            // A folder: every message in it on the server, not only the cached window.
+            if let Some(l) = self.db.label(account, &label)? {
+                if let (Some(path), Some(uv)) = (l.imap_path.clone(), l.imap_uidvalidity) {
+                    let acc = self.imap_account(account)?;
+                    let mut g = acc.session().await?;
+                    let s = g.as_mut().unwrap();
+                    let found: Result<Vec<u32>> = async {
+                        s.select(&path).await?;
+                        Ok(s.uid_search("ALL").await?.into_iter().collect())
+                    }
+                    .await;
+                    let uids = match found {
+                        Ok(u) => u,
+                        Err(e) => {
+                            *g = None;
+                            return Err(e);
+                        }
+                    };
+                    let kept: HashSet<String> = keep.iter().flat_map(|t| self.db.thread_messages(account, t).unwrap_or_default()).map(|m| m.id).collect();
+                    let mut uids = uids;
+                    uids.sort_unstable();
+                    for uid in uids.into_iter().rev() {
+                        let id = imap::message_id_for(&path, uv as u32, uid);
+                        if !kept.contains(&id) && seen.insert(id.clone()) {
+                            ids.push(id);
+                        }
+                    }
+                }
+            }
+        }
+        if ids.is_empty() {
+            // The cache: every page of the local listing.
+            let mut q = v.clone();
+            q.conversations = true;
+            let mut offset = 0;
+            loop {
+                let (page, total) = self.local_list(account, &q, offset, 500)?;
+                for t in &page {
+                    if !keep.contains(&t.thread_id) {
+                        threads.insert(t.thread_id.clone());
+                    }
+                }
+                offset += 500;
+                if page.is_empty() || offset >= total {
+                    break;
+                }
+            }
+        }
+        for t in &threads {
+            for m in self.db.thread_messages(account, t)? {
+                if seen.insert(m.id.clone()) {
+                    ids.push(m.id);
+                }
+            }
+        }
+        Ok(ids)
+    }
+
+    /// Apply a label change to everything in a view except `keep`; returns the message ids changed (for Undo).
+    pub async fn bulk_modify(&self, v: &ViewQuery, add: &[String], remove: &[String], keep: &[String]) -> Result<Vec<String>> {
+        let account = v.account_id.clone();
+        let keep: HashSet<String> = keep.iter().cloned().collect();
+        let ids = self.view_message_ids(v, &keep).await?;
+        let total = ids.len();
+        self.emit("bulk-progress", json!({"accountId": account, "phase": "working", "done": 0, "total": total}));
+        if self.kind(&account)? == "gmail" {
+            let mut done = 0;
+            for chunk in ids.chunks(1000) {
+                self.modify_messages(&account, chunk, add, remove).await?;
+                done += chunk.len();
+                self.emit("bulk-progress", json!({"accountId": account, "phase": "working", "done": done, "total": total}));
+            }
+            if let Ok(g) = self.gmail(&account) {
+                let _ = gmail::refresh_labels(&g, &self.db, &account).await;
+            }
+        } else {
+            self.modify_messages(&account, &ids, add, remove).await?;
+        }
+        self.emit("bulk-progress", json!({"accountId": account, "phase": "done", "done": total, "total": total}));
+        self.changed(&account, "bulk");
+        Ok(ids)
+    }
+
+    /// Delete forever everything in Trash or Spam (or a search inside them) except `keep`.
+    pub async fn bulk_delete_forever(&self, v: &ViewQuery, keep: &[String]) -> Result<usize> {
+        let account = v.account_id.clone();
+        let label = v.label.clone().unwrap_or_default();
+        if label != "TRASH" && label != "SPAM" {
+            return Err(Error::msg("Only conversations in Trash or Spam can be deleted forever."));
+        }
+        let keep: HashSet<String> = keep.iter().cloned().collect();
+        let ids = self.view_message_ids(v, &keep).await?;
+        let total = ids.len();
+        self.emit("bulk-progress", json!({"accountId": account, "phase": "working", "done": 0, "total": total}));
+        if self.kind(&account)? == "gmail" {
+            let g = self.gmail(&account)?;
+            let mut done = 0;
+            for chunk in ids.chunks(1000) {
+                g.batch_delete(chunk).await?;
+                for id in chunk {
+                    self.db.delete_message(&account, id)?;
+                }
+                done += chunk.len();
+                self.emit("bulk-progress", json!({"accountId": account, "phase": "working", "done": done, "total": total}));
+            }
+            let _ = gmail::refresh_labels(&g, &self.db, &account).await;
+        } else {
+            let acc = self.imap_account(&account)?;
+            let mut g = acc.session().await?;
+            let mut by_folder: HashMap<String, Vec<u32>> = HashMap::new();
+            for id in &ids {
+                if let Some((path, _, uid)) = imap::parse_message_id(id) {
+                    by_folder.entry(path).or_default().push(uid);
+                }
+            }
+            for (folder, uids) in by_folder {
+                if let Err(e) = imap::expunge_uids(g.as_mut().unwrap(), &folder, &uids).await {
+                    *g = None;
+                    return Err(e);
+                }
+            }
+            for id in &ids {
+                self.db.delete_message(&account, id)?;
+            }
+            self.db.recount_labels(&account).ok();
+        }
+        self.emit("bulk-progress", json!({"accountId": account, "phase": "done", "done": total, "total": total}));
+        self.changed(&account, "delete");
+        Ok(total)
     }
 
     fn thread_ids_of(&self, account: &str, ids: &[String]) -> Vec<String> {
@@ -967,7 +1189,10 @@ impl Engine {
         if ids.is_empty() {
             return Ok(());
         }
-        if self.kind(account)? == "gmail" {
+        let gmail = self.kind(account)? == "gmail";
+        let threads = self.thread_ids_of(account, &ids);
+        let before = self.db.label_thread_stats(account, &threads)?;
+        if gmail {
             self.gmail(account)?.batch_delete(&ids).await?;
         } else {
             let acc = self.imap_account(account)?;
@@ -988,7 +1213,14 @@ impl Engine {
         for id in &ids {
             self.db.delete_message(account, id)?;
         }
-        self.db.recount_labels(account).ok();
+        if gmail {
+            let after = self.db.label_thread_stats(account, &threads)?;
+            self.db.apply_label_deltas(account, &before, &after)?;
+            let touched: Vec<String> = before.keys().cloned().collect();
+            let _ = gmail::refresh_label_counts(&*self.gmail(account)?, &self.db, account, &touched).await;
+        } else {
+            self.db.recount_labels(account).ok();
+        }
         self.changed(account, "delete");
         Ok(())
     }

@@ -61,6 +61,21 @@ export interface Participant {
   draft: boolean;
 }
 
+/** A sender on the Manage subscriptions page. */
+export interface Subscription {
+  accountId: string;
+  email: string;
+  name: string;
+  lastDate: number;
+  listUnsubscribe: string;
+  listUnsubscribePost: string;
+  listId: string;
+  total: number;
+  /** Messages in the last 30 days. */
+  recent: number;
+  unsubscribed: number | null;
+}
+
 export interface ThreadSummary {
   accountId: string;
   threadId: string;

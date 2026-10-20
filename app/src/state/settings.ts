@@ -22,14 +22,28 @@ export interface FontStyle {
   color: string;
 }
 
+export type SwipeAction = "archive" | "trash" | "read" | "snooze" | "none";
+export const SWIPE_ACTIONS: { id: SwipeAction; label: string; icon: string; color: string }[] = [
+  { id: "archive", label: "Archive", icon: "archive", color: "#188038" },
+  { id: "trash", label: "Delete", icon: "delete", color: "#d93025" },
+  { id: "read", label: "Mark as read/unread", icon: "mark_email_read", color: "#0b57d0" },
+  { id: "snooze", label: "Snooze", icon: "schedule", color: "#e37400" },
+  { id: "none", label: "None", icon: "block", color: "#5f6368" },
+];
+
 export interface Settings {
   language: string;
   pageSize: number;
   undoSendSeconds: number;
   defaultReply: "reply" | "reply-all";
   hoverActions: boolean;
+  /** Two-finger swipe on a list row, as in the phone app. */
+  swipeLeft: SwipeAction;
+  swipeRight: SwipeAction;
   /** Toolbar with every action (Snooze and Label as next to Move to); off = the simplified toolbar. */
   advancedToolbar: boolean;
+  /** The one-time offer to become the default mail app was answered. */
+  defaultMailAsked: boolean;
   sendAndArchive: boolean;
   defaultFont: FontStyle;
   images: "always" | "ask";
@@ -70,10 +84,14 @@ export const DEFAULTS: Settings = {
   undoSendSeconds: 5,
   defaultReply: "reply",
   hoverActions: true,
+  // Right is the system's "back" swipe (as in a browser), so it's left to the web view by default.
+  swipeLeft: "archive",
+  swipeRight: "none",
   advancedToolbar: false,
+  defaultMailAsked: false,
   sendAndArchive: false,
   defaultFont: { family: "sans", size: "normal", color: "#222222" },
-  images: "ask",
+  images: "always",
   conversationView: true,
   stars: ["yellow-star"],
   keyboardShortcuts: true,

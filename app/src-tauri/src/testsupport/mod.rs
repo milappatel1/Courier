@@ -11,7 +11,9 @@ pub use fake_imap::{FakeImap, FakeSmtp};
 pub fn sample_mail(from: &str, to: &str, subject: &str, body: &str, extra_headers: &str) -> Vec<u8> {
     let id = crate::error::random_token(6);
     format!(
-        "From: {from}\r\nTo: {to}\r\nSubject: {subject}\r\nDate: Sun, 18 Oct 2026 12:00:00 -0400\r\nMessage-ID: <{id}@test.example>\r\n{extra_headers}MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{body}\r\n"
+        // Dated now, so it's always inside the offline window (a fixed date would age out of it).
+        "From: {from}\r\nTo: {to}\r\nSubject: {subject}\r\nDate: {date}\r\nMessage-ID: <{id}@test.example>\r\n{extra_headers}MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{body}\r\n",
+        date = chrono::Utc::now().to_rfc2822()
     )
     .into_bytes()
 }

@@ -5,7 +5,7 @@ import { describeActions, describeCriteria, type FilterCriteria } from "../core/
 import { leafName } from "../core/labels";
 import { api, errorText } from "../ipc/api";
 import type { Account, ImapAccountConfig, Label, Signature } from "../ipc/types";
-import { DEFAULTS, FONTS, SIZES, STAR_TYPES, type Settings as S } from "../state/settings";
+import { DEFAULTS, FONTS, SIZES, STAR_TYPES, SWIPE_ACTIONS, type Settings as S, type SwipeAction } from "../state/settings";
 import {
   closeSettings,
   labelsFor,
@@ -209,6 +209,28 @@ function General({ accountId }: { accountId: string }) {
         />
         <Radio name="hover" value={false} cur={d.hoverActions} onPick={(v) => set("hoverActions", v)} label="Disable hover actions" />
       </Row>
+      <Row k="Swipe actions:" small="(two fingers across a conversation in the list; None leaves that direction for going back and forward)">
+        <label className="opt">
+          Swipe right:{" "}
+          <select value={d.swipeRight} onChange={(e) => set("swipeRight", e.target.value as SwipeAction)} aria-label="Swipe right" data-testid="swipe-right">
+            {SWIPE_ACTIONS.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+        </label>{" "}
+        <label className="opt">
+          Swipe left:{" "}
+          <select value={d.swipeLeft} onChange={(e) => set("swipeLeft", e.target.value as SwipeAction)} aria-label="Swipe left" data-testid="swipe-left">
+            {SWIPE_ACTIONS.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </Row>
       <Row k="Send and Archive:">
         <Radio name="sa" value={true} cur={d.sendAndArchive} onPick={(v) => set("sendAndArchive", v)} label='Show "Send & Archive" button in reply' />
         <Radio name="sa" value={false} cur={d.sendAndArchive} onPick={(v) => set("sendAndArchive", v)} label='Hide "Send & Archive" button in reply' />
@@ -243,25 +265,25 @@ function General({ accountId }: { accountId: string }) {
         </div>
       </Row>
       <Row k="Images:">
-        <Radio name="img" value="always" cur={d.images} onPick={(v) => set("images", v)} label="Always display external images" />
+        <Radio name="img" value="always" cur={d.images} onPick={(v) => set("images", v)} label="Show images in messages" />
         <Radio
           name="img"
           value="ask"
           cur={d.images}
           onPick={(v) => set("images", v)}
-          label="Ask before displaying external images"
+          label="Ask before showing images from the web"
           desc="Remote images can tell senders when you read their mail."
           test="images-ask"
         />
       </Row>
       <Row k="Conversation View:" small="(group emails on the same topic together)">
-        <Radio name="cv" value={true} cur={d.conversationView} onPick={(v) => set("conversationView", v)} label="Conversation view on" />
+        <Radio name="cv" value={true} cur={d.conversationView} onPick={(v) => set("conversationView", v)} label="Group replies into conversations" />
         <Radio
           name="cv"
           value={false}
           cur={d.conversationView}
           onPick={(v) => set("conversationView", v)}
-          label="Conversation view off"
+          label="Show every message on its own"
           test="conversation-off"
         />
       </Row>
@@ -324,24 +346,18 @@ function General({ accountId }: { accountId: string }) {
           value="all"
           cur={d.notifications.mode}
           onPick={(v) => set("notifications", { ...d.notifications, mode: v })}
-          label="New mail notifications on"
-          desc="Notify me when any new message arrives in my inbox or primary tab"
+          label="Every new message"
+          desc="An alert for each new message in the Inbox (in Primary when tabs are on)."
         />
         <Radio
           name="nt"
           value="important"
           cur={d.notifications.mode}
           onPick={(v) => set("notifications", { ...d.notifications, mode: v })}
-          label="Important mail notifications on"
-          desc="Notify me only when an important message arrives"
+          label="Important messages only"
+          desc="An alert only for mail marked important."
         />
-        <Radio
-          name="nt"
-          value="off"
-          cur={d.notifications.mode}
-          onPick={(v) => set("notifications", { ...d.notifications, mode: v })}
-          label="Mail notifications off"
-        />
+        <Radio name="nt" value="off" cur={d.notifications.mode} onPick={(v) => set("notifications", { ...d.notifications, mode: v })} label="No alerts" />
         {acct && (
           <div style={{ marginTop: 8 }}>
             <label className="opt">
@@ -391,25 +407,32 @@ function General({ accountId }: { accountId: string }) {
           value={true}
           cur={d.autoContacts}
           onPick={(v) => set("autoContacts", v)}
-          label="When I send a message to a new person, remember them so I can auto-complete to them next time"
+          label="Remember new people I write to, so their addresses complete as I type"
         />
-        <Radio name="ac" value={false} cur={d.autoContacts} onPick={(v) => set("autoContacts", v)} label="I'll add contacts myself" />
+        <Radio name="ac" value={false} cur={d.autoContacts} onPick={(v) => set("autoContacts", v)} label="Only suggest people I've added" />
       </Row>
       {acct && <SignaturesRow account={acct} />}
       <Row k="Personal level indicators:">
-        <Radio name="pi" value={false} cur={d.personalIndicators} onPick={(v) => set("personalIndicators", v)} label="No indicators" />
+        <Radio name="pi" value={false} cur={d.personalIndicators} onPick={(v) => set("personalIndicators", v)} label="No markers" />
         <Radio
           name="pi"
           value={true}
           cur={d.personalIndicators}
           onPick={(v) => set("personalIndicators", v)}
-          label="Show indicators"
-          desc="An arrow (›) by messages sent to my address, a double arrow (») by messages sent only to me."
+          label="Show who it was sent to"
+          desc="› marks mail addressed to me (not a list); » marks mail sent to me alone."
         />
       </Row>
       <Row k="Snippets:">
-        <Radio name="sn" value={true} cur={d.snippets} onPick={(v) => set("snippets", v)} label="Show snippets" desc="Show a preview of the message text." />
-        <Radio name="sn" value={false} cur={d.snippets} onPick={(v) => set("snippets", v)} label="No snippets" desc="Show subject only." />
+        <Radio
+          name="sn"
+          value={true}
+          cur={d.snippets}
+          onPick={(v) => set("snippets", v)}
+          label="Show snippets"
+          desc="A line of each message after its subject."
+        />
+        <Radio name="sn" value={false} cur={d.snippets} onPick={(v) => set("snippets", v)} label="No snippets" desc="Subjects alone." />
       </Row>
       {acct && <VacationRow account={acct} ctl={vacation} />}
       <SaveBar dirty={dirty} save={save} reset={reset} extra={() => vacation.current?.save() ?? Promise.resolve()} />
@@ -892,7 +915,7 @@ function InboxTab() {
           cur={d.importanceMarkers}
           onPick={(v) => set("importanceMarkers", v)}
           label="Show markers"
-          desc="Show a marker by messages marked as important."
+          desc="A tag beside conversations marked important."
           test="importance-on"
         />
         <Radio name="im" value={false} cur={d.importanceMarkers} onPick={(v) => set("importanceMarkers", v)} label="No markers" />
@@ -1367,13 +1390,13 @@ function ForwardingTab({ accountId }: { accountId: string }) {
       {pop && (
         <Row k="POP download:">
           <div>Status: {pop.accessWindow === "disabled" ? "POP is disabled" : "POP is enabled"}</div>
-          <Radio name="pop" value="allMail" cur={pop.accessWindow} onPick={(v) => setPop({ ...pop, accessWindow: v })} label="Enable POP for all mail" />
+          <Radio name="pop" value="allMail" cur={pop.accessWindow} onPick={(v) => setPop({ ...pop, accessWindow: v })} label="Turn on POP for all mail" />
           <Radio
             name="pop"
             value="fromNowOn"
             cur={pop.accessWindow}
             onPick={(v) => setPop({ ...pop, accessWindow: v })}
-            label="Enable POP for mail that arrives from now on"
+            label="Turn on POP for new mail only"
           />
           <Radio name="pop" value="disabled" cur={pop.accessWindow} onPick={(v) => setPop({ ...pop, accessWindow: v })} label="Disable POP" />
           <div style={{ marginTop: 6 }}>
@@ -1398,7 +1421,7 @@ function ForwardingTab({ accountId }: { accountId: string }) {
             cur={imap.autoExpunge}
             onPick={(v) => setImap({ ...imap, autoExpunge: v })}
             label="Auto-Expunge on"
-            desc="Immediately update the server."
+            desc="Changes reach the server at once."
           />
           <Radio
             name="ae"
@@ -1406,23 +1429,17 @@ function ForwardingTab({ accountId }: { accountId: string }) {
             cur={imap.autoExpunge}
             onPick={(v) => setImap({ ...imap, autoExpunge: v })}
             label="Auto-Expunge off"
-            desc="Wait for the client to update the server."
+            desc="Leave it to the mail app to tell the server."
           />
           <div style={{ marginTop: 6 }}>When a message is marked as deleted and expunged from the last visible IMAP folder:</div>
-          <Radio name="eb" value="archive" cur={imap.expungeBehavior} onPick={(v) => setImap({ ...imap, expungeBehavior: v })} label="Archive the message" />
-          <Radio
-            name="eb"
-            value="trash"
-            cur={imap.expungeBehavior}
-            onPick={(v) => setImap({ ...imap, expungeBehavior: v })}
-            label="Move the message to the Trash"
-          />
+          <Radio name="eb" value="archive" cur={imap.expungeBehavior} onPick={(v) => setImap({ ...imap, expungeBehavior: v })} label="Archive it" />
+          <Radio name="eb" value="trash" cur={imap.expungeBehavior} onPick={(v) => setImap({ ...imap, expungeBehavior: v })} label="Move it to Trash" />
           <Radio
             name="eb"
             value="deleteForever"
             cur={imap.expungeBehavior}
             onPick={(v) => setImap({ ...imap, expungeBehavior: v })}
-            label="Immediately delete the message forever"
+            label="Delete it forever right away"
           />
           <div style={{ marginTop: 6 }}>
             Folder size limits:{" "}
@@ -1455,7 +1472,7 @@ function AdvancedTab() {
   const { d, set, dirty, save, reset } = useDraft();
   return (
     <>
-      <Row k="Auto-advance:" small="After archiving, deleting or muting a conversation, show:">
+      <Row k="Auto-advance:" small="Where to go after archiving, deleting or muting a conversation:">
         <Radio name="aa" value="newer" cur={d.autoAdvance} onPick={(v) => set("autoAdvance", v)} label="the next (newer) conversation" />
         <Radio name="aa" value="older" cur={d.autoAdvance} onPick={(v) => set("autoAdvance", v)} label="the previous (older) conversation" />
         <Radio name="aa" value="list" cur={d.autoAdvance} onPick={(v) => set("autoAdvance", v)} label="the conversation list" />

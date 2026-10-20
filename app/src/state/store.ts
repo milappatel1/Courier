@@ -1,5 +1,6 @@
 // App state (zustand): accounts, routing, the thread list, the open conversation, compose windows, toasts
 // with Undo, settings, and live updates from the Rust side.
+import { sizeFor, type ViewSize } from "../core/layout";
 import { create } from "zustand";
 import type { Address } from "../core/addresses";
 import { api, errorText, on } from "../ipc/api";
@@ -108,6 +109,16 @@ export interface MailState {
   list: { key: string; result: ViewResult | null; loading: boolean; error: string | null; tokens: (string | null)[] };
   selected: string[];
   selectAllMatching: boolean;
+  /** With every conversation in the view selected: the ones unticked, which actions leave alone. */
+  keepThreads: string[];
+  /** Window width class: desktop layout, the nav as a rail, or the phone app's layout. */
+  size: ViewSize;
+  /** The nav drawn over the content (rail and phone sizes). */
+  drawer: boolean;
+  /** The collapsed rail opened over the content while the pointer rests on it. */
+  peek: boolean;
+  /** The window's width (px), for layout choices made in code. */
+  width: number;
   cursor: number;
   thread: { detail: ThreadDetail | null; loading: boolean; error: string | null };
   composes: ComposeData[];
@@ -133,6 +144,7 @@ export const SYSTEM_ROUTE_NAMES: Record<string, string> = {
   ALL: "all",
   SPAM: "spam",
   TRASH: "trash",
+  SUBSCRIPTIONS: "subscriptions",
 };
 const ROUTE_TO_LABEL = Object.fromEntries(Object.entries(SYSTEM_ROUTE_NAMES).map(([k, v]) => [v, k]));
 
@@ -140,6 +152,25 @@ const INBOX_ROUTE: ListRoute = { label: "INBOX", category: "primary", query: nul
 
 let toastSeq = 1;
 let composeSeq = 1;
+
+/** Follow the window's width: data-size on <html> for the CSS, size and width in the store. */
+export function applyViewportSize() {
+  const width = window.innerWidth;
+  const size = sizeFor(width);
+  document.documentElement.dataset.size = size;
+  const s = get();
+  if (s.size !== size) set({ size, width, drawer: false, peek: false });
+  else if (s.width !== width) set({ width });
+}
+
+/** The main menu button: open/close the nav on a wide window, the drawer otherwise. */
+export { sizeFor, type ViewSize };
+
+export function toggleNav() {
+  const s = get();
+  if (s.size === "wide") void setSetting("navOpen", !s.settings.navOpen);
+  else set({ drawer: !s.drawer });
+}
 
 /** Stable empty list for selectors (a fresh [] on every read would re-render forever). */
 export const NO_LABELS: Label[] = [];
@@ -155,6 +186,11 @@ export const useMail = create<MailState>(() => ({
   list: { key: "", result: null, loading: false, error: null, tokens: [null] },
   selected: [],
   selectAllMatching: false,
+  keepThreads: [],
+  size: sizeFor(typeof window === "undefined" ? 1280 : window.innerWidth),
+  drawer: false,
+  peek: false,
+  width: typeof window === "undefined" ? 1280 : window.innerWidth,
   cursor: 0,
   thread: { detail: null, loading: false, error: null },
   composes: [],
@@ -200,7 +236,7 @@ export function labelsFor(accountId: string): Label[] {
 
 export function labelName(accountId: string, id: string): string {
   const l = labelsFor(accountId).find((x) => x.id === id);
-  if (!l) return id;
+  if (!l) return SYSTEM_DISPLAY[id] ?? id;
   return l.type === "system" ? (SYSTEM_DISPLAY[l.id] ?? l.name) : l.name;
 }
 
@@ -216,6 +252,7 @@ export const SYSTEM_DISPLAY: Record<string, string> = {
   ALL: "All Mail",
   SPAM: "Spam",
   TRASH: "Trash",
+  SUBSCRIPTIONS: "Manage subscriptions",
   CATEGORY_PERSONAL: "Primary",
   CATEGORY_SOCIAL: "Social",
   CATEGORY_PROMOTIONS: "Promotions",
@@ -304,7 +341,7 @@ window.addEventListener("popstate", () => {
       if (id && id !== s.accountId) set({ accountId: id });
     }
     if (route.thread) route.thread.accountId = get().accountId;
-    set({ route, selected: [], selectAllMatching: false });
+    set({ route, selected: [], selectAllMatching: false, keepThreads: [] });
     void loadList();
     if (route.thread) void loadThread(route.thread);
   } finally {
@@ -319,8 +356,10 @@ export function go(list: Partial<ListRoute>, opts: { keepThread?: boolean } = {}
   if (list.label !== undefined && list.category === undefined) next.category = list.label === "INBOX" ? (hasTabs() ? "primary" : null) : null;
   set({
     route: { list: next, thread: opts.keepThread ? prev.thread : null, settings: null },
+    drawer: false,
     selected: [],
     selectAllMatching: false,
+    keepThreads: [],
     cursor: 0,
     hiddenThreads: [],
   });
@@ -381,7 +420,7 @@ const viewKey = (v: ViewQuery) => JSON.stringify([v.accountId, v.label, v.catego
 let listSeq = 0;
 export async function loadList(opts: { quiet?: boolean } = {}) {
   const s = get();
-  if (!s.accountId || s.route.settings) return;
+  if (!s.accountId || s.route.settings || s.route.list.label === "SUBSCRIPTIONS") return;
   const view = currentView();
   const key = viewKey(view);
   const seq = ++listSeq;
@@ -541,6 +580,29 @@ function withUndo(text: string, undo: () => Promise<void>) {
 
 // ---- settings ----
 
+/** Once: offer to open mail links (and other apps' "Email this file") in Courier. macOS confirms the change. */
+async function offerDefaultMailApp() {
+  if (await api.isDefaultMailApp().catch(() => true)) return;
+  const id = toast("Open mail links and other apps' Email commands in Courier?", {
+    sticky: true,
+    action: {
+      label: "Use Courier",
+      run: () => {
+        dismissToast(id);
+        void setSetting("defaultMailAsked", true);
+        void api.setDefaultMailApp().catch((e) => toast(errorText(e)));
+      },
+    },
+    secondary: {
+      label: "Not now",
+      run: () => {
+        dismissToast(id);
+        void setSetting("defaultMailAsked", true);
+      },
+    },
+  });
+}
+
 export async function setSetting<K extends keyof Settings>(key: K, value: Settings[K]) {
   set((s) => ({ settings: { ...s.settings, [key]: value } }));
   if (key === "theme" || key === "customImage") applyTheme(get().settings.theme, get().settings.customImage);
@@ -563,6 +625,7 @@ export async function init() {
     .secretsNotice()
     .then((n) => n && toast(n, { sticky: true }))
     .catch(() => {});
+  if (!info.e2e && accounts.length && !settings.defaultMailAsked) void offerDefaultMailApp();
   const { account, route } = hashToRoute(location.hash || "#inbox");
   if (account != null) {
     const id = account === "all" ? "all" : accounts[Number(account)]?.id;
@@ -606,6 +669,12 @@ export async function init() {
   void on("accounts-changed", () => void loadAccounts().then(() => loadLabels()));
   void on<{ accountId: string; outboxId: number; scheduled: boolean }>("message-sent", (p) => onMessageSent(p));
   void on("outbox-changed", () => refreshSoon());
+  // WebKit's own downloads (Download Image / Download Linked File in a message's context menu).
+  void on<{ path: string | null; success: boolean }>("download-finished", (p) => {
+    if (!p.success) return void toast("Couldn't download that file.");
+    const name = p.path?.split("/").pop() ?? "The file";
+    toast(`${name} saved to Downloads.`, p.path ? { action: { label: "Show in Finder", run: () => void api.revealFile(p.path!) } } : {});
+  });
 }
 
 const sentHandlers = new Map<number, () => void>();

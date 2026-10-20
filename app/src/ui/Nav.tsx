@@ -6,7 +6,7 @@ import { api, errorText, on } from "../ipc/api";
 import type { Label, OutboxRow } from "../ipc/types";
 import { applyLabels } from "../state/actions";
 import { openCompose } from "../state/compose";
-import { go, labelsFor, loadLabels, toast, ui, useMail, SYSTEM_DISPLAY, getState, NO_LABELS } from "../state/store";
+import { go, hasTabs, labelsFor, loadLabels, toast, ui, useMail, SYSTEM_DISPLAY, getState, NO_LABELS } from "../state/store";
 import { Icon, IconButton, Menu, anchorOf, type MenuEntry } from "./common";
 
 const PRIMARY = [
@@ -15,6 +15,7 @@ const PRIMARY = [
   { id: "SNOOZED", icon: "schedule" },
   { id: "SENT", icon: "send" },
   { id: "DRAFT", icon: "draft" },
+  { id: "SUBSCRIPTIONS", icon: "unsubscribe" },
 ];
 const MORE = [
   { id: "IMPORTANT", icon: "label_important" },
@@ -22,6 +23,13 @@ const MORE = [
   { id: "ALL", icon: "stacked_email" },
   { id: "SPAM", icon: "report" },
   { id: "TRASH", icon: "delete" },
+];
+const PHONE_TABS = [
+  { key: "primary", label: "INBOX", icon: "inbox", name: "Primary" },
+  { key: "promotions", label: "CATEGORY_PROMOTIONS", icon: "sell", name: "Promotions" },
+  { key: "social", label: "CATEGORY_SOCIAL", icon: "group", name: "Social" },
+  { key: "updates", label: "CATEGORY_UPDATES", icon: "info", name: "Updates" },
+  { key: "forums", label: "CATEGORY_FORUMS", icon: "forum", name: "Forums" },
 ];
 const CATS = [
   { id: "social", label: "CATEGORY_SOCIAL", icon: "group" },
@@ -51,6 +59,8 @@ export function useOutbox(): OutboxRow[] {
   return rows;
 }
 
+let peekTimer = 0;
+
 export function Nav() {
   const accountId = useMail((s) => s.accountId);
   const labels = useMail((s) => s.labels[s.accountId] ?? NO_LABELS);
@@ -61,6 +71,10 @@ export function Nav() {
   const outbox = useOutbox();
   const [more, setMore] = useState(false);
   const [cats, setCats] = useState(false);
+  const catSettings = useMail((s) => s.settings.categories);
+  const phoneSize = useMail((s) => s.size === "phone");
+  const tabsOn = useMail(() => hasTabs());
+  const phoneTabs = phoneSize && tabsOn;
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const acct = accounts.find((a) => a.id === accountId);
   const unified = accountId === "all";
@@ -77,11 +91,14 @@ export function Nav() {
     if (!l) return 0;
     if (id === "DRAFT") return l.threadsTotal || l.messagesTotal;
     if (["INBOX", "SPAM", "IMPORTANT"].includes(id)) return l.threadsUnread;
-    if (l.type === "user") return l.threadsUnread;
+    if (l.type === "user" || id.startsWith("CATEGORY_")) return l.threadsUnread;
     return 0;
   };
   const exists = (id: string) =>
-    unified || ["SNOOZED", "SCHEDULED", "OUTBOX", "STARRED", "ALL"].includes(id) || byId.has(id) || (acct?.kind === "gmail" && ["IMPORTANT"].includes(id));
+    unified ||
+    ["SNOOZED", "SCHEDULED", "OUTBOX", "STARRED", "ALL", "SUBSCRIPTIONS"].includes(id) ||
+    byId.has(id) ||
+    (acct?.kind === "gmail" && ["IMPORTANT"].includes(id));
   const item = (
     id: string,
     icon: string,
@@ -151,7 +168,18 @@ export function Nav() {
       return [row, ...(hasKids && !isCollapsed ? renderTree(node.children, depth + 1) : [])];
     });
   return (
-    <nav className="nav" aria-label="Mailboxes">
+    <nav
+      className="nav"
+      aria-label="Mailboxes"
+      onMouseEnter={() => {
+        window.clearTimeout(peekTimer);
+        peekTimer = window.setTimeout(() => useMail.setState({ peek: true }), 300);
+      }}
+      onMouseLeave={() => {
+        window.clearTimeout(peekTimer);
+        if (useMail.getState().peek) useMail.setState({ peek: false });
+      }}
+    >
       <div className="compose-wrap">
         <button type="button" className="compose-btn" onClick={() => void openCompose()} data-testid="compose" aria-label="Compose">
           <span className="ic s24">edit</span>
@@ -159,7 +187,27 @@ export function Nav() {
         </button>
       </div>
       <div className="nav-scroll">
-        {PRIMARY.filter((x) => exists(x.id)).map((x) => item(x.id, x.icon, { test: `nav-${x.id}` }))}
+        {phoneTabs
+          ? // The phone app lists the inbox tabs in its menu instead of across the top of the list.
+            [
+              ...PHONE_TABS.filter((c) => c.key === "primary" || catSettings[c.key as keyof typeof catSettings]).map((c) => (
+                <NavItem
+                  key={c.key}
+                  id={`__tab-${c.key}`}
+                  icon={c.icon}
+                  name={c.name}
+                  count={c.key === "primary" ? count("INBOX") : (byId.get(c.label)?.threadsUnread ?? 0)}
+                  active={current === "INBOX" && (route.list.category ?? "primary") === c.key}
+                  bold={(c.key === "primary" ? count("INBOX") : (byId.get(c.label)?.threadsUnread ?? 0)) > 0}
+                  depth={0}
+                  accountId={accountId}
+                  test={`nav-tab-${c.key}`}
+                  onClick={() => go({ label: "INBOX", category: c.key })}
+                />
+              )),
+              ...PRIMARY.filter((x) => x.id !== "INBOX" && exists(x.id)).map((x) => item(x.id, x.icon, { test: `nav-${x.id}` })),
+            ]
+          : PRIMARY.filter((x) => exists(x.id)).map((x) => item(x.id, x.icon, { test: `nav-${x.id}` }))}
         {pending > 0 && item("OUTBOX", "outbox", { countValue: pending, test: "nav-OUTBOX" })}
         {scheduled > 0 && item("SCHEDULED", "schedule_send", { countValue: scheduled, test: "nav-SCHEDULED" })}
         <NavItem

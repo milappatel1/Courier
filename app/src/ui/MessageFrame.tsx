@@ -55,12 +55,38 @@ export function MessageFrame({
       const d = f.contentDocument;
       if (!d?.body) return;
       d.body.classList.toggle("courier-show-quoted", showQuoted);
-      const measure = () => setHeight(Math.max(20, Math.ceil(Math.max(d.body.scrollHeight, d.body.getBoundingClientRect().height)) + 2));
+      // Exact content height (plus a horizontal scrollbar when the email is wider than the pane). If it keeps
+      // growing on its own, something in the email is sizing itself to the frame: stop following it.
+      let grows = 0;
+      let last = 0;
+      let since = Date.now();
+      const measure = () => {
+        const b = d.body;
+        const bar = Math.max(0, b.offsetHeight - b.clientHeight);
+        const h = Math.max(20, Math.ceil(Math.max(b.scrollHeight, b.getBoundingClientRect().bottom)) + bar);
+        if (h > last) {
+          if (Date.now() - since > 3000) {
+            since = Date.now();
+            grows = 0;
+          }
+          if (++grows > 60) {
+            ro?.disconnect();
+            return;
+          }
+        }
+        last = h;
+        setHeight(h);
+      };
       measure();
       ro?.disconnect();
       ro = new ResizeObserver(measure);
       ro.observe(d.body);
       for (const img of Array.from(d.images)) img.addEventListener("load", measure);
+      // One listener per document (setup can run twice for the same one). WebKit doesn't call it in a
+      // script-free frame; the app's new-window and navigation handlers take those clicks instead.
+      const marked = d as Document & { __courierLinks?: boolean };
+      if (marked.__courierLinks) return;
+      marked.__courierLinks = true;
       d.addEventListener("click", (e) => {
         const a = (e.target as Element).closest?.("a[href]") as HTMLAnchorElement | null;
         if (!a) return;
@@ -86,7 +112,9 @@ export function MessageFrame({
       ref={ref}
       className="msg-frame"
       title="Message"
-      sandbox="allow-same-origin"
+      // No scripts, ever. Popups are allowed so a link click reaches the app, which sends it to the default browser
+      // (WebKit doesn't run the app's click listener inside a script-free frame).
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
       srcDoc={doc}
       style={{ height }}
       data-testid={testId ?? "message-frame"}

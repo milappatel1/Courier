@@ -47,6 +47,18 @@ every action, search with all the usual operators, search chips and advanced sea
 windows with rich text, attachments and inline images, signatures, templates, undo send, schedule send, the
 offline outbox, keyboard shortcuts, notifications, the Dock badge, `mailto:` links and opening `.eml` files.
 
+Also: **Manage subscriptions** (every sender with an unsubscribe option, how much they send, one-click
+unsubscribe, and clearing out their old mail); **select all conversations in a view** — every page, on the
+server, not just what's on screen — then untick the ones to keep, or tick a few and choose **Delete all except
+selected**; a right-click menu on every conversation; two-finger swipes (right goes back and left goes forward, as in a
+browser; left across a conversation in the list archives it — configurable in Settings ▸ General); and a layout that follows the
+window down to phone width, where it turns into the phone app's (menu drawer, rows with pictures, a floating
+Compose button).
+
+Mac behaviour: links open in your default browser, attachments open in the app your Mac uses for them (a PDF in
+Preview), downloads go straight to your Downloads folder, and Courier can be your default mail app (it offers once;
+also Settings ▸ Accounts), so mail links and other apps' "Email this file" commands open a new message here.
+
 Left out on purpose, because they're Google-only services: Gemini / "Help me write", Chat, Spaces, Meet, the
 Calendar/Keep/Tasks side panel, Drive and Photos attachments, confidential mode, Workspace add-ons and smart
 compose.
@@ -56,9 +68,9 @@ scheduled mail need Courier running (it can be in the background) at the chosen 
 
 ## Privacy
 
-- Message HTML is shown in a sandboxed frame with no scripts and a strict content policy. Remote images are held
-  back until you click **Display images** (or allow a sender), tracking pixels are removed, and links open in your
-  default browser.
+- Message HTML is shown in a sandboxed frame with no scripts and a strict content policy. Tracking pixels are
+  removed and links open in your default browser. Images show by default; Settings ▸ General ▸ Images can hold
+  remote images back until you click **Display images**.
 - Courier has no servers of its own and sends nothing anywhere except to your mail providers.
 - Your Google client ID and secret are stored in the Keychain from Settings ▸ Accounts; they're never part of the
   app or this repository.
@@ -71,9 +83,13 @@ You need Xcode's command line tools, Rust (stable) and Node 22 or later.
 cd app
 npm install
 npm run tauri dev        # run with hot reload
-npm run tauri build      # release build → app/src-tauri/target/release/bundle/macos/Courier.app
+npm run tauri build      # release build → <cargo target dir>/release/bundle/macos/Courier.app
 npm run package          # what the releases are: arm64 build, ad-hoc signature, .dmg + .zip in release/
 ```
+
+The cargo target directory is `app/src-tauri/target` unless you move it (`CARGO_TARGET_DIR` or a
+`.cargo/config.toml`); the scripts ask `cargo metadata` where it is. Keep it out of folders that a cloud drive
+backs up: every build rewrites thousands of files.
 
 `npm run dev` and `/browser-preview.html` show the whole interface in a browser with a stand-in for the native
 side (`app/dev/tauri-mock.ts`), which is handy for working on the UI.

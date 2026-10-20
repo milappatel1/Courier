@@ -10,6 +10,7 @@ import { formatAddress } from "../core/addresses";
 import { api, errorText } from "../ipc/api";
 import type { Discovered, ImapAccountConfig } from "../ipc/types";
 import { applyLabels, snooze } from "../state/actions";
+import { download } from "../state/files";
 import { dismissToast, labelsFor, loadAccounts, loadLabels, setAccount, toast, ui, useMail } from "../state/store";
 import { Dialog, Icon, IconButton } from "./common";
 
@@ -653,14 +654,7 @@ function ShowOriginal({ accountId, messageId, onClose }: { accountId: string; me
           <button className="btn text" onClick={() => void navigator.clipboard.writeText(text).then(() => toast("Copied to clipboard."))}>
             Copy to clipboard
           </button>
-          <button
-            className="btn text"
-            onClick={async () => {
-              const { save } = await import("@tauri-apps/plugin-dialog");
-              const path = await save({ defaultPath: "original_msg.eml" }).catch(() => null);
-              if (path && raw) await api.writeFile(path, raw);
-            }}
-          >
+          <button className="btn text" onClick={() => raw && void download("original_msg.eml", raw)}>
             Download original
           </button>
           <button className="btn text" onClick={onClose}>

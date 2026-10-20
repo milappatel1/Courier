@@ -8,6 +8,7 @@ use crate::oauth::TokenManager;
 use base64::Engine as _;
 use reqwest::Method;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -369,21 +370,68 @@ pub struct SyncReport {
     pub history_id: Option<String>,
 }
 
+/// Re-read the counts of the labels an action or a sync touched (one small request each).
+pub async fn refresh_label_counts(g: &Gmail, db: &Db, account: &str, ids: &[String]) -> Result<()> {
+    use futures::stream::{self, StreamExt};
+    let known: HashSet<String> = db.labels(account)?.into_iter().map(|l| l.id).collect();
+    let mut want: Vec<String> = ids.iter().filter(|i| known.contains(*i)).cloned().collect();
+    want.sort();
+    want.dedup();
+    let got: Vec<Result<Value>> = stream::iter(want.into_iter().map(|id| async move { g.label(&id).await })).buffer_unordered(4).collect().await;
+    for v in got {
+        match v {
+            Ok(v) => {
+                let n = |k: &str| v[k].as_i64().unwrap_or(0);
+                if let Some(id) = v["id"].as_str() {
+                    db.set_label_counts(account, id, (n("threadsTotal"), n("threadsUnread"), n("messagesTotal"), n("messagesUnread")))?;
+                }
+            }
+            Err(e) if e.is_offline() || e.is_auth() || e.is_rate_limited() => return Err(e),
+            Err(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// How often the whole label list is re-read even without changes (labels made elsewhere, counts of mail
+/// that isn't cached).
+pub const LABELS_REFRESH_MS: i64 = 10 * 60 * 1000;
+
 pub async fn refresh_labels(g: &Gmail, db: &Db, account: &str) -> Result<()> {
+    use futures::stream::{self, StreamExt};
     let labels = g.labels().await?;
-    // labels.list omits counts; fetch each label's counts (small number of labels).
+    // labels.list omits counts; each label's own request has them.
+    let got: Vec<(Value, Result<Value>)> = stream::iter(labels.iter().cloned().map(|l| async move {
+        let id = l["id"].as_str().unwrap_or("").to_string();
+        let full = if l.get("threadsTotal").is_some() { Ok(l.clone()) } else { g.label(&id).await };
+        (l, full)
+    }))
+    .buffered(4)
+    .collect()
+    .await;
     let mut keep = Vec::new();
-    for l in &labels {
-        let id = l["id"].as_str().unwrap_or("");
-        let full = if l.get("threadsTotal").is_some() { l.clone() } else { g.label(id).await.unwrap_or_else(|_| l.clone()) };
-        db.upsert_label(&label_row(account, &full))?;
-        keep.push(id.to_string());
+    for (l, full) in got {
+        let id = l["id"].as_str().unwrap_or("").to_string();
+        match full {
+            Ok(full) => db.upsert_label(&label_row(account, &full))?,
+            Err(e) if e.is_offline() || e.is_auth() => return Err(e),
+            // Couldn't read the counts this time (rate limit, a hiccup): keep the ones we have, not zeros.
+            Err(_) => {
+                let mut row = label_row(account, &l);
+                if let Some(old) = db.label(account, &id)? {
+                    (row.threads_total, row.threads_unread, row.messages_total, row.messages_unread) = (old.threads_total, old.threads_unread, old.messages_total, old.messages_unread);
+                }
+                db.upsert_label(&row)?;
+            }
+        }
+        keep.push(id);
     }
     for old in db.labels(account)? {
         if old.kind == "user" && !keep.contains(&old.id) {
             db.delete_label(account, &old.id)?;
         }
     }
+    db.set_account_state(account, "labelsRefreshedAt", json!(crate::error::now_ms())).ok();
     Ok(())
 }
 
@@ -503,6 +551,8 @@ pub async fn incremental_sync(g: &Gmail, db: &Db, account: &str) -> Result<SyncR
     let mut added: Vec<String> = Vec::new();
     let mut deleted: Vec<String> = Vec::new();
     let mut relabel: Vec<(String, String, Vec<String>)> = Vec::new();
+    // Labels whose counts may have moved, cached mail or not.
+    let mut touched: Vec<String> = Vec::new();
     let mut latest = start.clone();
     loop {
         let r = g.history(&start, page.as_deref()).await?;
@@ -515,12 +565,14 @@ pub async fn incremental_sync(g: &Gmail, db: &Db, account: &str) -> Result<SyncR
                     let labels = str_labels(&a["message"]);
                     if !labels.iter().any(|l| l == "CHAT") {
                         added.push(id.to_string());
+                        touched.extend(labels);
                     }
                 }
             }
             for d in h["messagesDeleted"].as_array().cloned().unwrap_or_default() {
                 if let Some(id) = d["message"]["id"].as_str() {
                     deleted.push(id.to_string());
+                    touched.extend(str_labels(&d["message"]));
                 }
             }
             for key in ["labelsAdded", "labelsRemoved"] {
@@ -528,6 +580,9 @@ pub async fn incremental_sync(g: &Gmail, db: &Db, account: &str) -> Result<SyncR
                     let m = &x["message"];
                     if let (Some(id), Some(t)) = (m["id"].as_str(), m["threadId"].as_str()) {
                         relabel.push((id.to_string(), t.to_string(), str_labels(m)));
+                        // The changed labels, and the message's others (its unread state may count there).
+                        touched.extend(str_labels(&x));
+                        touched.extend(str_labels(m));
                     }
                 }
             }
@@ -539,6 +594,9 @@ pub async fn incremental_sync(g: &Gmail, db: &Db, account: &str) -> Result<SyncR
     }
     let mut report = SyncReport { history_id: Some(latest.clone()), ..Default::default() };
     for id in &deleted {
+        if let Some(m) = db.message(account, id)? {
+            touched.extend(m.labels);
+        }
         db.delete_message(account, id)?;
         report.changed = true;
     }
@@ -565,8 +623,15 @@ pub async fn incremental_sync(g: &Gmail, db: &Db, account: &str) -> Result<SyncR
             report.changed = true;
         }
     }
-    if report.changed {
+    let stale = state["labelsRefreshedAt"].as_i64().map(|t| crate::error::now_ms() - t > LABELS_REFRESH_MS).unwrap_or(true);
+    if stale {
         refresh_labels(g, db, account).await?;
+        report.changed = true;
+    } else if !touched.is_empty() {
+        refresh_label_counts(g, db, account, &touched).await?;
+        report.changed = true;
+    }
+    if report.changed {
         sync_drafts(g, db, account).await.ok();
     }
     db.set_account_state(account, "historyId", json!(latest))?;

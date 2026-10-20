@@ -119,6 +119,31 @@ impl E2e {
             format!("From: Recruiter <jobs@example.net>\r\nTo: {me}\r\nSubject: Your application\r\nDate: {}\r\nMessage-ID: <cv1@seed.example>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"b2\"\r\n\r\n--b2\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nThanks, we received it.\r\n--b2\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename*=UTF-8''R%C3%A9sum%C3%A9%202026.pdf\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQKJSByZXN1bWUK\r\n--b2--\r\n", d(1, 16)).as_bytes(),
             &["INBOX", "CATEGORY_PERSONAL"],
         );
+        // Shapes that used to break the message frame: a page-height layout (grew forever), a fixed-width one
+        // (cut off on the right) and a very long one (cut off at the bottom).
+        gmail.deliver(
+            &html_mail("Full Height News <hello@tall.example>", me, "Full-height newsletter", &d(1, 6), "<style>html,body{height:100%;margin:0}.wrap{min-height:100vh}</style><div class=\"wrap\"><table height=\"100%\" width=\"100%\"><tr><td><h2>Autumn issue</h2><p>A short body inside a page-height layout.</p><p>TALL-END</p></td></tr></table></div>", ""),
+            &["INBOX", "CATEGORY_PERSONAL"],
+        );
+        gmail.deliver(
+            &html_mail("Wide Layout Co <hello@wide.example>", me, "Fixed-width newsletter", &d(1, 5), "<table width=\"1400\" style=\"width:1400px\"><tr><td width=\"700\">Left column of a fixed-width layout.</td><td width=\"700\" align=\"right\">WIDE-RIGHT-END</td></tr></table>", ""),
+            &["INBOX", "CATEGORY_PERSONAL"],
+        );
+        let long: String = (1..=150).map(|i| format!("<p>Paragraph {i} of a long letter, long enough to need scrolling.</p>")).collect::<String>() + "<p id=\"last\">LONG-LAST-LINE</p>";
+        gmail.deliver(&html_mail("Long Letter <hello@long.example>", me, "A very long message", &d(1, 4), &long, ""), &["INBOX", "CATEGORY_PERSONAL"]);
+        gmail.deliver(
+            &html_mail("Link Sender <links@example.org>", me, "Links to open", &d(1, 3), "<p><a href=\"https://example.org/e2e-target\">Open the page</a></p><p><a href=\"mailto:links@example.org?subject=Hello\">Write to us</a></p>", ""),
+            &["INBOX", "CATEGORY_PERSONAL"],
+        );
+        // A label with more than a page of mail, a third of it older than the offline window (never cached),
+        // for "select all conversations in this view"; and a small one for "delete all except selected".
+        for i in 0..60 {
+            let date = if i < 20 { d(60 + i, 9) } else { d(i % 5, 9) };
+            gmail.deliver(&mail("Bulk Sender <bulk@lists.example>", me, &format!("Bulk note {i}"), &date, "One of many.", ""), &["Label_3", "UNREAD"]);
+        }
+        for i in 0..8 {
+            gmail.deliver(&mail("Keeper <keep@lists.example>", me, &format!("Keep or not {i}"), &d(1, 9 + i as u32), "Pick the ones to keep.", ""), &["Label_4", "UNREAD"]);
+        }
         // Fix the unsubscribe URL to point at the fake.
         {
             let mut s = gmail.state.lock();
@@ -129,6 +154,8 @@ impl E2e {
             }
             s.user_labels.push(json!({"id": "Label_1", "name": "Projects", "type": "user", "color": {"backgroundColor": "#16a766", "textColor": "#ffffff"}}));
             s.user_labels.push(json!({"id": "Label_2", "name": "Projects/Alpha", "type": "user"}));
+            s.user_labels.push(json!({"id": "Label_3", "name": "Bulk", "type": "user"}));
+            s.user_labels.push(json!({"id": "Label_4", "name": "Keep", "type": "user"}));
         }
         imap.deliver("INBOX", &mail("Eli Park <eli@club.example>", "pat@example.org", "Club meeting Thursday", &d(0, 8), "Meeting moved to Thursday at 7.", ""), &[]);
         imap.deliver("INBOX", &mail("Fay Wong <fay@club.example>", "pat@example.org", "Train tickets", &d(2, 14), "Tickets for the trip are booked.", ""), &["\\Seen"]);
@@ -142,6 +169,7 @@ impl E2e {
             json!({
                 "gmailEmail": GMAIL_ADDR, "imapEmail": IMAP_ADDR, "imapPassword": IMAP_PASSWORD, "clientId": CLIENT_ID, "clientSecret": "e2e-secret",
                 "imapHost": "127.0.0.1", "imapPort": self.imap.addr.port(), "smtpPort": self.smtp.addr.port(), "fakeBase": self.gmail.base(),
+                "only": std::env::var("COURIER_E2E_ONLY").unwrap_or_default(),
             })
         }
         #[cfg(not(debug_assertions))]

@@ -88,7 +88,10 @@ function cssSanitize(css: string, opts: SanitizeOptions, counters: { blocked: nu
     .replace(/behaviou?r\s*:/gi, "x:")
     .replace(/-moz-binding\s*:/gi, "x:")
     .replace(/javascript\s*:/gi, "x:")
-    .replace(/position\s*:\s*fixed/gi, "position:static");
+    .replace(/position\s*:\s*fixed/gi, "position:static")
+    // Inside the message frame, vh means the frame's own height, which grows to fit the content: a page that asks
+    // for 100vh would chase its own tail. Give vh units the height of an ordinary window instead.
+    .replace(/(-?\d*\.?\d+)(vh|vmax|dvh|svh|lvh)\b/gi, (_m, n: string) => `${Math.round(parseFloat(n) * 8 * 100) / 100}px`);
   out = out.replace(/url\(\s*(['"]?)([^)'"]*)\1\s*\)/gi, (m, _q, u: string) => {
     const url = u.trim();
     if (/^data:image\//i.test(url)) return m;
@@ -325,7 +328,11 @@ export function frameDocument(body: string, opts: { allowRemote: boolean; dark?:
   const csp = `default-src 'none'; img-src ${img}; style-src 'unsafe-inline' ${opts.allowRemote ? "https:" : ""}; font-src data: ${opts.allowRemote ? "https:" : ""}; media-src 'none'; frame-src 'none'; script-src 'none'; form-action 'none'; base-uri 'none'`;
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>
 html,body{margin:0;padding:0;background:transparent}
-body{font:13px/1.5 Arial,Helvetica,sans-serif;color:#222;word-wrap:break-word;overflow-wrap:anywhere;overflow:hidden}
+/* The frame is sized to its content, so the page must not size itself to the frame (100% heights would loop). */
+:root,:root body{height:auto!important;min-height:0!important;max-height:none!important}
+/* Wide layouts scroll sideways inside the message instead of being clipped. */
+:root body{overflow-x:auto!important;overflow-y:hidden!important}
+body{font:13px/1.5 Arial,Helvetica,sans-serif;color:#222;word-wrap:break-word;overflow-wrap:anywhere}
 ${opts.plain ? "body{white-space:normal}" : ""}
 img{max-width:100%;height:auto}
 img[data-courier-blocked]{display:inline-block;min-width:16px;min-height:16px;background:#f1f3f4}
@@ -334,6 +341,5 @@ body.courier-show-quoted .courier-quoted{display:block}
 a{color:#1a0dab}
 blockquote.courier_quote{margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex}
 pre{white-space:pre-wrap}
-table{max-width:100%}
 </style></head><body>${body}</body></html>`;
 }

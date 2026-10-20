@@ -7,7 +7,8 @@ import { emit } from "@tauri-apps/api/event";
 import { parseMessage } from "../core/mime/parse";
 import { htmlToText } from "../core/text";
 import { api } from "../ipc/api";
-import { getState } from "../state/store";
+import { applyViewportSize, getState, setSetting } from "../state/store";
+import { layoutIssues } from "./layout";
 
 interface StepResult {
   name: string;
@@ -155,7 +156,8 @@ const parsedSent = (raw: string) => {
 const msgsWith = async (subject: string) => (await server()).gmailMessages.filter((m) => m.subject === subject || m.subject === `Re: ${subject}`);
 
 async function openList(label: string) {
-  click(await el(`nav-${label}`));
+  // At phone width the menu lists the inbox tabs in place of Inbox.
+  click(await until(`nav ${label}`, () => q(`nav-${label}`) ?? (label === "INBOX" ? q("nav-tab-primary") : null)));
   await until(`${label} list`, () => getState().route.list.label === label && !getState().route.thread && !getState().list.loading);
 }
 
@@ -603,14 +605,14 @@ step("real-world mail: encoded names, no subject, long threads, newsletters, acc
   click(fold);
   await until("all 12 messages after opening the fold", () => shown() === 12);
   await backToInbox();
-  // Styled newsletter: scripts, handlers and the tracking pixel never reach the frame; remote images wait.
+  // Styled newsletter: scripts, handlers and the tracking pixel never reach the frame; images show (the default).
   click(await until("newsletter", () => row("This week in gardening")));
   await until("newsletter body", () => frameText().includes("Spring planting"));
   const doc = frameText();
   check(!/<script/i.test(doc) && !/onclick/i.test(doc), "script or handler kept");
   check(!doc.includes("px.news.example/open.gif"), "tracking pixel kept");
-  check(!/\ssrc="https:\/\/img\.news\.example/.test(doc), "remote image loaded without asking");
-  await el("images-banner");
+  check(/\ssrc="https:\/\/img\.news\.example\/herbs\.jpg"/.test(doc), "images aren't shown by default");
+  check(!q("images-banner"), "asks to display images although they're on by default");
   await backToInbox();
   // RFC 2231 file name.
   click(await until("attachment mail", () => row("Your application")));
@@ -634,7 +636,8 @@ step("notifications: new Primary mail notifies, Promotions doesn't", async () =>
   check(!notes.some((x) => `${x.title} ${x.body}`.includes("Flash sale")), "notified about Promotions mail");
 });
 
-step("Promotions tab: remote images held back, tracker stripped, unsubscribe", async () => {
+step("Promotions tab: with images set to ask, remote images held back; tracker stripped; unsubscribe", async () => {
+  await setSetting("images", "ask");
   click(await until("Promotions tab", () => [...document.querySelectorAll<HTMLElement>(".tab")].find((t) => t.textContent?.includes("Promotions"))));
   click(await until("promo row", () => row("48 hours only: 30% off")));
   await el("images-banner");
@@ -656,8 +659,383 @@ step("Promotions tab: remote images held back, tracker stripped, unsubscribe", a
   );
   check(req.subject === "stop", "unsubscribe mail without the subject from the header");
   check(!(await server()).unsubscribed.length, "one-click used over plain HTTP");
+  await setSetting("images", "always");
   await backToInbox();
   click(await until("Primary tab", () => [...document.querySelectorAll<HTMLElement>(".tab")].find((t) => t.textContent?.includes("Primary"))));
+});
+
+// ---- the complaints from the real-account round ----
+
+const frameEl = () => q<HTMLIFrameElement>("message-frame");
+const frameDoc = () => frameEl()?.contentDocument ?? null;
+const navCount = (path: string) => q(`nav-label-${path}`)?.querySelector(".nav-count")?.textContent?.trim() ?? "0";
+const downloads = async () => (await api.e2eControl<{ names: string[] }>("downloads")).names;
+
+/** A link in a message, clicked: first as is (target=_blank), then as a plain link if WebKit kept that to itself. */
+async function clickLink(a: HTMLAnchorElement, done: () => Promise<unknown>) {
+  click(a);
+  const end = Date.now() + 2500;
+  while (Date.now() < end) {
+    if (await done()) return "new window";
+    await sleep(150);
+  }
+  a.removeAttribute("target");
+  click(a);
+  await until("the link handled", done);
+  return "navigation";
+}
+
+step("message frames: never cut off, never growing, wide mail scrolls sideways", async () => {
+  await backToInbox();
+  // A page-height layout settles at its content's height instead of growing forever.
+  click(await until("full-height row", () => row("Full-height newsletter")));
+  await until("full-height body", () => frameDoc()?.body?.textContent?.includes("TALL-END"));
+  await sleep(1200);
+  const h1 = frameEl()!.getBoundingClientRect().height;
+  await sleep(1500);
+  const h2 = frameEl()!.getBoundingClientRect().height;
+  check(Math.abs(h2 - h1) < 2, `the frame keeps growing (${h1} → ${h2})`);
+  check(h2 < 1500, `a short page-height newsletter is ${Math.round(h2)}px tall`);
+  await backToInbox();
+  // A very long message: every line fits inside the frame.
+  click(await until("long row", () => row("A very long message")));
+  const last = await until("its last line", () => frameDoc()?.getElementById("last"));
+  await sleep(800);
+  check(last.getBoundingClientRect().bottom <= frameEl()!.getBoundingClientRect().height + 1, "the end of a long message is cut off");
+  await backToInbox();
+  // Wider than the window: it scrolls sideways inside its frame, and the window doesn't.
+  click(await until("wide row", () => row("Fixed-width newsletter")));
+  const body = await until("wide body", () => (frameDoc()?.body?.textContent?.includes("WIDE-RIGHT-END") ? frameDoc()!.body : null));
+  await sleep(400);
+  check(body.scrollWidth > body.clientWidth + 100, "wide mail doesn't scroll sideways");
+  check(getComputedStyle(body).overflowX === "auto", "wide mail can't be scrolled sideways");
+  check(frameEl()!.getBoundingClientRect().right <= window.innerWidth + 1, "the message frame sticks out of the window");
+  check(document.documentElement.scrollWidth <= window.innerWidth, "the window scrolls sideways");
+  await backToInbox();
+});
+
+step("links open in the default browser; mail links start a message in Courier", async () => {
+  await backToInbox();
+  click(await until("links row", () => row("Links to open")));
+  const doc = await until("the links", () => (frameDoc()?.querySelector("a[href='https://example.org/e2e-target']") ? frameDoc() : null));
+  const before = (await server()).opened.filter((u) => u.includes("e2e-target")).length;
+  const how = await clickLink(doc!.querySelector<HTMLAnchorElement>("a[href='https://example.org/e2e-target']")!, async () =>
+    (await server()).opened.filter((u) => u.includes("e2e-target")).length > before ? true : null,
+  );
+  log(`  link opened by ${how}`);
+  await sleep(500);
+  check((await server()).opened.filter((u) => u.includes("e2e-target")).length === before + 1, "the link opened more than once");
+  check(frameDoc()?.body?.textContent?.includes("Open the page"), "the link replaced the message inside Courier");
+  check(!getState().route.settings && getState().route.thread, "the link navigated Courier away");
+  // mailto: opens Courier's own compose, addressed.
+  const composes = qa("compose-window").length;
+  await clickLink(frameDoc()!.querySelector<HTMLAnchorElement>("a[href^='mailto:']")!, async () => (qa("compose-window").length > composes ? true : null));
+  const w = qa("compose-window")[0];
+  await until("addressed to the link", () => w.textContent?.includes("links@example.org"));
+  check((q<HTMLInputElement>("compose-subject", w)?.value ?? "") === "Hello", "the subject from the link is missing");
+  click(await el("compose-discard", w));
+  await backToInbox();
+});
+
+step("attachments open in their own app; downloads go straight to Downloads", async () => {
+  await backToInbox();
+  click(await until("planning row", () => row("Quarterly planning notes")));
+  const card = await until("the attachment", () => qa("attachment-card").find((c) => c.textContent?.includes("quarterly-plan.pdf")));
+  const n0 = (await server()).opened.length;
+  click(card);
+  await until("opened in its own app", async () => (await server()).opened.slice(n0).some((u) => u.startsWith("file:") && u.endsWith("/quarterly-plan.pdf")));
+  check(!(await server()).opened.some((u) => u.includes("qlmanage")), "Quick Look's qlmanage used");
+  click(await el("att-download", card));
+  await until("saved to Downloads", async () => (await downloads()).includes("quarterly-plan.pdf"));
+  click(await el("att-download", card));
+  await until("a second copy named like a browser does", async () => (await downloads()).includes("quarterly-plan (1).pdf"));
+  const t = await until("the saved toast", () => toastWith(/saved to Downloads/));
+  click(await el("toast-action", t));
+  await until("shown in Finder (recorded)", async () => (await server()).opened.some((u) => u.startsWith("reveal:") && u.includes("quarterly-plan")));
+  // WebKit's own downloads (a message's Download Image / Download Linked File) land in Downloads too.
+  const link = document.createElement("a");
+  link.href = "data:text/plain;charset=utf-8,saved%20by%20WebKit";
+  link.download = "webkit-download.txt";
+  document.body.appendChild(link);
+  click(link);
+  link.remove();
+  await until("WebKit's download saved", async () => (await downloads()).includes("webkit-download.txt"), 20_000);
+  await until("its toast", () => toastWith(/webkit-download\.txt saved to Downloads/));
+  await backToInbox();
+});
+
+step("files handed to Courier (another app's Email this file) start a message with them attached", async () => {
+  await backToInbox();
+  const before = qa("compose-window").length;
+  await api.e2eControl("open-files", { files: [{ name: "Trip notes.docx", text: "notes for the trip" }] });
+  const w = await until("a new message", () => (qa("compose-window").length > before ? qa("compose-window")[0] : null));
+  await until("the file attached", () => w.textContent?.includes("Trip notes.docx"));
+  check((q<HTMLInputElement>("compose-subject", w)?.value ?? "") === "Trip notes", "the subject isn't the file's name");
+  click(await el("compose-discard", w));
+});
+
+step(
+  "select all in a label: every page on the server, the unticked kept, counts updated at once",
+  async () => {
+    await backToInbox();
+    click(await el("nav-label-Bulk"));
+    await until("the Bulk label", () => getState().route.list.label === "Label_3" && rows().length >= 50 && !getState().list.loading, 30_000);
+    await until("60 unread in the nav", () => navCount("Bulk") === "60");
+    click(await el("select-all"));
+    click(await el("select-all-matching"));
+    await until("the whole view selected", () => getState().selectAllMatching);
+    for (const subject of ["Bulk note 59", "Bulk note 58"]) click(await el("row-checkbox", await until(subject, () => row(subject))));
+    await until("two kept", () => getState().keepThreads.length === 2);
+    check(q("select-all-banner")?.textContent?.includes("except"), "the banner doesn't mention the kept ones");
+    click(await el("tb-delete"));
+    click(await el("confirm-ok"));
+    const inTrash = async () => (await server()).gmailMessages.filter((m) => m.subject.startsWith("Bulk note") && m.labels.includes("TRASH"));
+    await until("58 in Trash on the server", async () => ((await inTrash()).length === 58 ? true : null), 40_000);
+    const s = await server();
+    check(
+      s.gmailMessages.filter((m) => m.subject === "Bulk note 59" || m.subject === "Bulk note 58").every((m) => !m.labels.includes("TRASH")),
+      "a kept conversation was deleted",
+    );
+    check(
+      s.gmailMessages.some((m) => m.subject === "Bulk note 0" && m.labels.includes("TRASH")),
+      "mail older than the offline window was left behind",
+    );
+    await until("the nav count follows without a restart", () => navCount("Bulk") === "2", 20_000);
+    await until("the list shows the two kept", () => rows().length === 2);
+    check(toastWith(/moved to Trash/), "no result toast");
+  },
+  90_000,
+);
+
+step("delete all except selected: tick the keepers, the rest of the label goes", async () => {
+  click(await el("nav-label-Keep"));
+  await until("the Keep label", () => getState().route.list.label === "Label_4" && rows().length === 8 && !getState().list.loading, 30_000);
+  for (const subject of ["Keep or not 1", "Keep or not 4", "Keep or not 6"]) click(await el("row-checkbox", await until(subject, () => row(subject))));
+  click(await el("tb-more"));
+  click(await el("except-delete"));
+  const dialog = await el("confirm-dialog");
+  check(
+    /\b3\b/.test(dialog.textContent ?? "") && /\b5\b/.test(dialog.textContent ?? ""),
+    `the confirmation doesn't say how many go and stay: ${dialog.textContent}`,
+  );
+  click(await el("confirm-ok"));
+  const msgs = async () => (await server()).gmailMessages.filter((m) => m.subject.startsWith("Keep or not"));
+  await until("five in Trash", async () => ((await msgs()).filter((m) => m.labels.includes("TRASH")).length === 5 ? true : null), 30_000);
+  const kept = (await msgs())
+    .filter((m) => !m.labels.includes("TRASH"))
+    .map((m) => m.subject)
+    .sort();
+  check(kept.join() === "Keep or not 1,Keep or not 4,Keep or not 6", `kept: ${kept.join()}`);
+  await until("the nav count is 3", () => navCount("Keep") === "3", 20_000);
+});
+
+step(
+  "manage subscriptions: senders listed, unsubscribe, clear their mail",
+  async () => {
+    await backToInbox();
+    click(await el("nav-SUBSCRIPTIONS"));
+    await el("subscriptions");
+    const deals = () => qa("sub-row").find((x) => x.textContent?.includes("news@deals.example"));
+    await until("Daily Deals listed", deals);
+    const asked = async () => (await server()).gmailSent.filter((m) => m.to.some((a) => a.email === "unsub@deals.example")).length;
+    const before = await asked();
+    click(await el("sub-unsubscribe", deals()!));
+    click(await el("confirm-ok"));
+    await until("the unsubscribe request sent", async () => ((await asked()) > before ? true : null), 30_000);
+    await until("shown as unsubscribed", () => deals()?.querySelector('[data-testid="sub-done"]'));
+    click(await el("sub-clear", deals()!));
+    click(await el("confirm-ok"));
+    await until(
+      "their mail in Trash",
+      async () => (await server()).gmailMessages.filter((m) => m.subject === "48 hours only: 30% off").every((m) => m.labels.includes("TRASH")),
+      30_000,
+    );
+    // Remembered.
+    await openList("INBOX");
+    click(await el("nav-SUBSCRIPTIONS"));
+    await until("still unsubscribed", () => deals()?.querySelector('[data-testid="sub-done"]'));
+    await backToInbox();
+  },
+  60_000,
+);
+
+step("two-finger swipes: across a row archives it; between screens goes back and forward", async () => {
+  await backToInbox();
+  check((await api.e2eControl<{ enabled: boolean }>("swipe-nav")).enabled, "back/forward swipes are off in the web view");
+  const r = await until("a row", () => row("Links to open"));
+  // Fingers moving right is "back": the row leaves it to the web view (not consumed).
+  check(r.dispatchEvent(new WheelEvent("wheel", { deltaX: -30, deltaY: 0, bubbles: true, cancelable: true })), "a back swipe over a row was swallowed");
+  await sleep(400);
+  // Fingers moving left across a row archives it (the default).
+  for (let i = 0; i < 14; i++) {
+    r.dispatchEvent(new WheelEvent("wheel", { deltaX: 30, deltaY: 0, bubbles: true, cancelable: true }));
+    await sleep(16);
+  }
+  const inInbox = async () => (await server()).gmailMessages.find((m) => m.subject === "Links to open")?.labels.includes("INBOX");
+  await until("archived on the server", async () => ((await inInbox()) === false ? true : null), 20_000);
+  click(await el("toast-action", await until("Undo", () => toastWith(/archived/))));
+  await until("back in the inbox", async () => ((await inInbox()) === true ? true : null), 20_000);
+  // The swipe itself is the web view's back/forward through Courier's screens.
+  click(await until("a conversation", () => row("Your application")));
+  await until("open", () => getState().route.thread);
+  history.back();
+  await until("back to the list", () => !getState().route.thread);
+  history.forward();
+  await until("forward to the conversation", () => getState().route.thread);
+  await backToInbox();
+});
+
+step("right-click a row: the menu acts on that conversation", async () => {
+  await backToInbox();
+  const r = await until("a read row", () => row("Your application"));
+  const box = r.getBoundingClientRect();
+  r.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: box.left + 400, clientY: box.top + 10 }));
+  click(await el("ctx-unread"));
+  await until("marked unread on the server", async () =>
+    (await server()).gmailMessages.find((m) => m.subject === "Your application")?.labels.includes("UNREAD") ? true : null,
+  );
+  const r2 = await until("the row again", () => row("Your application"));
+  r2.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: box.left + 400, clientY: box.top + 10 }));
+  click(await el("ctx-find-from"));
+  await until("mail from the sender", () => getState().route.list.query === "from:jobs@example.net" && row("Your application"));
+  await backToInbox();
+});
+
+step("people: the To label picks recipients from a list; a sender's name shows their card", async () => {
+  await backToInbox();
+  const w = await newCompose();
+  click(await el("pick-to", w));
+  const picker = await el("contact-picker");
+  // Dana comes from the account's contacts (the People API on the fake server).
+  type(await el("contact-picker-filter", picker), "dana");
+  const dana = await until("Dana in the list", () => qa("contact-picker-row", picker).find((r) => r.textContent?.includes("dana@contacts.example")));
+  click(dana.querySelector("input")!);
+  click(await el("contact-picker-add", picker));
+  await until("Dana added", () => qa("rcpt-to", w).some((r) => r.getAttribute("title") === "dana@contacts.example"));
+  click(await el("compose-discard", w));
+  // The card.
+  click(await until("a conversation", () => row("Your application")));
+  const who = await el("sender-name");
+  who.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  who.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+  const card = await el("sender-card");
+  check(card.textContent?.includes("jobs@example.net"), "the card doesn't show the address");
+  click(await el("sender-find", card));
+  await until("their mail", () => getState().route.list.query === "from:jobs@example.net");
+  await backToInbox();
+});
+
+async function setWindowSize(w: number, h: number) {
+  const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
+  await getCurrentWindow().setSize(new LogicalSize(w, h));
+  await until(`the window at ${w}px`, () => Math.abs(window.innerWidth - w) <= 2);
+  // WebKit holds resize events back while the (background) window is covered; do what the event would.
+  applyViewportSize();
+  await sleep(400);
+}
+
+step(
+  "fits every window size: nothing overlaps or sticks out, from 1440 px down to phone width",
+  async () => {
+    const problems: string[] = [];
+    try {
+      for (const [w, h] of [
+        [1440, 900],
+        [1280, 800],
+        [1024, 768],
+        [900, 700],
+        [760, 640],
+        [600, 760],
+        [420, 820],
+      ]) {
+        await setWindowSize(w, h);
+        const look = (where: string) => problems.push(...layoutIssues().map((p) => `${w}px ${where}: ${p}`));
+        await backToInbox();
+        look("inbox");
+        click(await until("a conversation", () => row("Planning the offsite")));
+        await el("conversation");
+        await sleep(300);
+        look("conversation");
+        await backToInbox();
+        if (getState().size === "phone") click(await el("main-menu-phone"));
+        click(await el("nav-SUBSCRIPTIONS"));
+        await el("subscriptions");
+        look("subscriptions");
+        getState().drawer && click(await el("drawer-scrim"));
+        click(await el("settings-gear"));
+        click(await el("see-all-settings"));
+        await el("settings");
+        look("settings");
+        click(await el("settings-close"));
+      }
+    } finally {
+      await setWindowSize(1280, 800);
+    }
+    check(!problems.length, problems.slice(0, 12).join("\n"));
+  },
+  120_000,
+);
+
+step("two compose windows in a narrow window: the older folds to its title bar, both stay on screen", async () => {
+  try {
+    await setWindowSize(900, 700);
+    await backToInbox();
+    const a = await newCompose();
+    type(await el("compose-subject", a), "First draft here");
+    const b = await newCompose();
+    type(await el("compose-subject", b), "Second draft here");
+    await sleep(300);
+    const wins = () => qa("compose-window");
+    const byTitle = (t: string) => wins().find((w) => q<HTMLInputElement>("compose-subject", w)?.value === t)!;
+    check(byTitle("First draft here").classList.contains("min") && !byTitle("Second draft here").classList.contains("min"), "the newest isn't the open one");
+    for (const w of wins()) {
+      const r = w.getBoundingClientRect();
+      check(r.left >= 0 && r.right <= window.innerWidth + 1, "a compose window is off screen");
+    }
+    click(await el("compose-head", byTitle("First draft here")));
+    await until(
+      "the older one open, the newer folded",
+      () => !byTitle("First draft here").classList.contains("min") && byTitle("Second draft here").classList.contains("min"),
+    );
+    for (const w of wins()) click(await el("compose-discard", w));
+    await until("closed", () => !wins().length);
+  } finally {
+    await setWindowSize(1280, 800);
+  }
+});
+
+step("phone width: menu drawer with the inbox tabs, rows with pictures, floating Compose", async () => {
+  try {
+    await setWindowSize(420, 820);
+    await backToInbox();
+    check(getState().size === "phone", "not in the phone layout at 420 px");
+    const fab = await el("compose-fab");
+    check(getComputedStyle(fab).position === "fixed", "Compose isn't floating");
+    check(getComputedStyle(q("row-avatar")!).display !== "none", "rows have no pictures");
+    check(!document.querySelector<HTMLElement>(".tabs") || getComputedStyle(document.querySelector(".tabs")!).display === "none", "tabs still across the top");
+    click(await el("main-menu-phone"));
+    await until("the drawer", () => getState().drawer);
+    click(await el("nav-tab-promotions"));
+    await until("Promotions open, drawer closed", () => getState().route.list.category === "promotions" && !getState().drawer);
+    click(await el("main-menu-phone"));
+    click(await el("nav-tab-primary"));
+    await until("Primary", () => (getState().route.list.category ?? "primary") === "primary" && !getState().drawer);
+    // Ticking a row with its picture, as in the phone app.
+    click(await el("row-avatar", await until("a row", () => row("Planning the offsite"))));
+    await until("selected", () => getState().selected.length === 1);
+    click(await el("select-all"));
+    await until("cleared", () => getState().selected.length === 0);
+    // Compose fills the window (the button was redrawn when the drawer closed, so find it again).
+    click(await el("compose-fab"));
+    const w = await until("compose", () => qa("compose-window")[0]);
+    await sleep(200);
+    const r = w.getBoundingClientRect();
+    check(r.width >= window.innerWidth - 2 && r.height >= window.innerHeight - 2, "compose doesn't fill the window at phone width");
+    click(await el("compose-discard", w));
+  } finally {
+    await setWindowSize(1280, 800);
+  }
+  await backToInbox();
 });
 
 step(
@@ -726,6 +1104,9 @@ export async function runE2E() {
   });
   const t0 = Date.now();
   const results: StepResult[] = [];
+  // COURIER_E2E_ONLY=word,word runs the account setup (the first five steps) and the steps whose names match.
+  const only = ((await api.e2eInfo()) as Record<string, string>).only?.split(",").filter(Boolean) ?? [];
+  if (only.length) steps.splice(0, steps.length, ...steps.filter((s, i) => i < 5 || only.some((w) => s.name.includes(w))));
   log(`starting ${steps.length} steps`);
   for (const [n, s] of steps.entries()) {
     const t = Date.now();

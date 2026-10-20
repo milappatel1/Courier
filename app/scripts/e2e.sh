@@ -7,6 +7,7 @@
 #
 #   COURIER_E2E_SKIP_BUILD=1   reuse the last debug build
 #   COURIER_E2E_DIR=<dir>      where the report, logs and the throwaway data go (default: a new temp dir)
+#   COURIER_E2E_ONLY=a,b       only the steps whose names contain a or b (after the account setup)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -23,7 +24,9 @@ if [ -z "${COURIER_E2E_SKIP_BUILD:-}" ]; then
     exit 1
   fi
 fi
-BUNDLE="$PWD/src-tauri/target/debug/bundle/macos/Courier.app"
+# Cargo's build directory (it can be moved with CARGO_TARGET_DIR or a .cargo/config.toml).
+TARGET=$(cd src-tauri && cargo metadata --format-version 1 --no-deps | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).target_directory))')
+BUNDLE="$TARGET/debug/bundle/macos/Courier.app"
 BIN="$BUNDLE/Contents/MacOS/Courier"
 [ -x "$BIN" ] || { echo "no debug build at $BUNDLE"; exit 1; }
 
@@ -33,7 +36,7 @@ front_pid() { lsappinfo info "$(lsappinfo front)" 2>/dev/null | sed -nE 's/.*pid
 echo "running in the background (report: $REPORT)"
 : >"$OUT/app.log"
 # -g: LaunchServices must not bring it forward; -n: a fresh instance next to any Courier you have open.
-open -g -n --env COURIER_E2E="$REPORT" --env COURIER_NO_PRINT=1 --stdout "$OUT/app.log" --stderr "$OUT/app.log" "$BUNDLE"
+open -g -n --env COURIER_E2E="$REPORT" --env COURIER_E2E_ONLY="${COURIER_E2E_ONLY:-}" --env COURIER_NO_PRINT=1 --stdout "$OUT/app.log" --stderr "$OUT/app.log" "$BUNDLE"
 PID=""
 for _ in $(seq 1 50); do
   PID=$(pgrep -n -f "^$BIN" || true)

@@ -58,7 +58,7 @@ export function FilterDialog({ criteria, onClose, accountId }: { criteria: Filte
   );
   return (
     <Dialog
-      title={step === 1 ? "Create filter" : "When a message is an exact match for your search criteria:"}
+      title={step === 1 ? "Create filter" : "For messages that match this search:"}
       onClose={onClose}
       testId="filter-dialog"
       actions={
@@ -142,7 +142,7 @@ export function FilterDialog({ criteria, onClose, accountId }: { criteria: Filte
               </select>
             </label>
           )}
-          {check("applyExisting", "Also apply filter to matching conversations.")}
+          {check("applyExisting", "Also apply to the conversations that already match.")}
           {err && <div className="error-box">{err}</div>}
         </div>
       )}

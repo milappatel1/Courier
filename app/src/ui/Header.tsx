@@ -4,22 +4,20 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { DATE_WITHIN, EMPTY_ADVANCED, criteriaFromAdvanced, fromAdvanced, toAdvanced, type AdvancedFields } from "../core/search/advanced";
 import { api } from "../ipc/api";
 import type { Contact } from "../ipc/types";
-import { getState, setSetting, search, ui, useMail, activeAccount, go, NO_LABELS } from "../state/store";
+import { getState, search, ui, useMail, activeAccount, go, NO_LABELS, toggleNav } from "../state/store";
 import { AccountMenu } from "./AccountMenu";
 import { Avatar, Icon, IconButton, Logo, MenuButton } from "./common";
 import { FilterDialog } from "./FilterDialog";
 
 export function Header() {
-  const navOpen = useMail((s) => s.settings.navOpen);
+  const phone = useMail((s) => s.size === "phone");
   const online = useMail((s) => s.online);
   const accounts = useMail((s) => s.accounts);
-  const accountId = useMail((s) => s.accountId);
-  const acct = activeAccount();
   const menuOpen = useMail((s) => s.ui.accountMenu);
   return (
     <header className="header drag" data-tauri-drag-region>
       <div className="header-left" data-tauri-drag-region>
-        <IconButton icon="menu" label="Main menu" className="menu-btn" iconSize={24} onClick={() => void setSetting("navOpen", !navOpen)} testId="main-menu" />
+        <IconButton icon="menu" label="Main menu" className="menu-btn" iconSize={24} onClick={toggleNav} testId="main-menu" />
         <Logo onClick={() => go({ label: "INBOX" })} />
       </div>
       {accounts.length > 0 && <SearchBar />}
@@ -69,30 +67,39 @@ export function Header() {
           on={useMail.getState().ui.quickSettings}
           testId="settings-gear"
         />
-        {accounts.length > 0 && (
-          <button
-            type="button"
-            className="avatar-btn"
-            aria-label={acct ? `Account: ${acct.name} (${acct.email})` : "All inboxes"}
-            data-testid="account-button"
-            onClick={() => ui({ accountMenu: !menuOpen })}
-          >
-            {accountId === "all" ? (
-              <span className="avatar" style={{ width: 32, height: 32, background: "#5f6368" }}>
-                <Icon name="stacks" />
-              </span>
-            ) : (
-              acct && <Avatar name={acct.name} email={acct.email} photo={acct.photo} color={acct.color} size={32} />
-            )}
-          </button>
-        )}
+        {accounts.length > 0 && !phone && <AccountButton />}
       </div>
       {menuOpen && <AccountMenu onClose={() => ui({ accountMenu: false })} />}
     </header>
   );
 }
 
+/** The account picture button (header right; inside the search bar at phone width). */
+function AccountButton({ className = "avatar-btn" }: { className?: string }) {
+  const accountId = useMail((s) => s.accountId);
+  const menuOpen = useMail((s) => s.ui.accountMenu);
+  const acct = activeAccount();
+  return (
+    <button
+      type="button"
+      className={className}
+      aria-label={acct ? `Account: ${acct.name} (${acct.email})` : "All inboxes"}
+      data-testid="account-button"
+      onClick={() => ui({ accountMenu: !menuOpen })}
+    >
+      {accountId === "all" ? (
+        <span className="avatar" style={{ width: 32, height: 32, background: "#5f6368" }}>
+          <Icon name="stacks" />
+        </span>
+      ) : (
+        acct && <Avatar name={acct.name} email={acct.email} photo={acct.photo} color={acct.color} size={32} />
+      )}
+    </button>
+  );
+}
+
 function SearchBar() {
+  const phone = useMail((s) => s.size === "phone");
   const route = useMail((s) => s.route);
   const focusTick = useMail((s) => s.ui.searchFocus);
   const advancedOpen = useMail((s) => s.ui.advancedSearch);
@@ -137,7 +144,12 @@ function SearchBar() {
         submit(on >= 0 && sugg[on] ? `from:${sugg[on].email}` : text);
       }}
     >
-      <IconButton icon="search" label="Search mail" iconSize={24} onClick={() => submit()} />
+      {phone ? (
+        // The phone app's search bar: the menu button inside it on the left, the account on the right.
+        <IconButton icon="menu" label="Main menu" iconSize={24} onClick={toggleNav} testId="main-menu-phone" />
+      ) : (
+        <IconButton icon="search" label="Search mail" iconSize={24} onClick={() => submit()} />
+      )}
       <input
         ref={input}
         value={text}
@@ -165,7 +177,10 @@ function SearchBar() {
         }}
       />
       {text && <IconButton icon="close" label="Clear search" iconSize={24} onClick={() => submit("")} />}
-      <IconButton icon="tune" label="Show search options" iconSize={24} onClick={() => ui({ advancedSearch: !advancedOpen })} testId="search-options" />
+      {!phone && (
+        <IconButton icon="tune" label="Show search options" iconSize={24} onClick={() => ui({ advancedSearch: !advancedOpen })} testId="search-options" />
+      )}
+      {phone && !text && <AccountButton className="avatar-btn in-search" />}
       {focused && sugg.length > 0 && (
         <div className="search-suggest" role="listbox">
           {sugg.map((c, i) => (

@@ -1,7 +1,8 @@
 // An open conversation: toolbar, subject with label chips, messages (collapsed / expanded), attachments,
 // per-message actions, details, reply/forward buttons and the inline reply composer.
-import { useEffect, useMemo, useState } from "react";
-import { headerDate, fullDate } from "../core/dates";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { headerDate, fullDate, listDate } from "../core/dates";
 import { conversationLayout } from "../core/threading";
 import { authResults, parseMessage, type ParsedAttachment, type ParsedMessage } from "../core/mime/parse";
 import { humanSize } from "../core/bytes";
@@ -10,13 +11,15 @@ import { isSystemLabel, chipStyle } from "../core/labels";
 import { api, errorText } from "../ipc/api";
 import type { MessageRow } from "../ipc/types";
 import { act, applyLabels, blockSender, markUnreadFromHere, starMessage, unsubscribe } from "../state/actions";
-import { forwardAsAttachment, openReply, sendSimple } from "../state/compose";
+import { forwardAsAttachment, openCompose, openReply, sendSimple } from "../state/compose";
+import { download, downloadAll, downloadName, openInApp } from "../state/files";
 import { STAR_TYPES } from "../state/settings";
 import {
   closeThread,
   getState,
   labelName,
   loadThread,
+  search,
   setSetting,
   stepThread,
   toast,
@@ -355,7 +358,8 @@ function Message({
             <div className="msg-from">{isDraft ? <b style={{ color: "#d93025" }}>Draft</b> : <b>{fromSelf ? acct?.name || "me" : name}</b>}</div>
             <span className="msg-time" title={fullDate(m.internalDate)}>
               {m.attachments.length > 0 && <Icon name="attach_file" size={18} />}
-              {headerDate(m.internalDate)}
+              <span className="when-long">{headerDate(m.internalDate)}</span>
+              <span className="when-short">{listDate(m.internalDate)}</span>
             </span>
             <span className="msg-actions" onClick={(e) => e.stopPropagation()}>
               <button
@@ -385,7 +389,13 @@ function Message({
         <div className="msg-head">
           <div style={{ flex: 1, minWidth: 0 }} onClick={onToggle}>
             <div className="msg-from">
-              {isDraft ? <b style={{ color: "#d93025" }}>Draft</b> : <b>{name}</b>}
+              {isDraft ? (
+                <b style={{ color: "#d93025" }}>Draft</b>
+              ) : (
+                <SenderCard accountId={accountId} name={m.fromName} email={m.fromEmail}>
+                  <b>{name}</b>
+                </SenderCard>
+              )}
               {!isDraft && m.fromName && <span className="addr">&lt;{m.fromEmail}&gt;</span>}
               {m.listUnsubscribe && !fromSelf && (
                 <button
@@ -405,7 +415,8 @@ function Message({
           </div>
           <span className="msg-time" title={fullDate(m.internalDate)}>
             {m.attachments.length > 0 && <Icon name="attach_file" size={18} />}
-            {headerDate(m.internalDate)}
+            <span className="when-long">{headerDate(m.internalDate)}</span>
+            <span className="when-short">{listDate(m.internalDate)}</span>
           </span>
           <span className="msg-actions">
             <button
@@ -468,7 +479,7 @@ function Message({
               <Icon name="more_horiz" />
             </button>
           )}
-          {parsed && <Attachments accountId={accountId} items={parsed.attachments.filter((a) => !a.inline || !parsed.html?.includes(`cid:${a.contentId}`))} />}
+          {parsed && <Attachments items={parsed.attachments.filter((a) => !a.inline || !parsed.html?.includes(`cid:${a.contentId}`))} />}
         </div>
       </div>
     </div>
@@ -512,6 +523,67 @@ function Details({ m, p, anchor, onClose }: { m: MessageRow; p: ParsedMessage; a
   );
 }
 
+/** Pointing at a sender's name shows who it is, with quick actions (write, copy the address, find their mail). */
+function SenderCard({ accountId, name, email, children }: { accountId: string; name: string; email: string; children: React.ReactNode }) {
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+  const ref = useRef<HTMLSpanElement>(null);
+  const timer = useRef(0);
+  const later = (f: () => void, ms: number) => {
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(f, ms);
+  };
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const show = () =>
+    later(() => {
+      const r = ref.current?.getBoundingClientRect();
+      if (r) setAt({ x: Math.min(r.left, window.innerWidth - 336), y: r.bottom + 6 });
+    }, 450);
+  const hide = () => later(() => setAt(null), 250);
+  return (
+    <span ref={ref} className="sender-hover" onMouseEnter={show} onMouseLeave={hide} data-testid="sender-name">
+      {children}
+      {at &&
+        createPortal(
+          <div
+            className="sender-card"
+            style={{ left: Math.max(8, at.x), top: at.y }}
+            onMouseEnter={() => window.clearTimeout(timer.current)}
+            onMouseLeave={hide}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label={name || email}
+            data-testid="sender-card"
+          >
+            <div className="sc-top">
+              <Avatar name={name} email={email} size={56} />
+              <div className="sc-who">
+                <div className="sc-name">{name || email}</div>
+                {name && <div className="sc-mail">{email}</div>}
+              </div>
+            </div>
+            <div className="sc-actions">
+              <button type="button" className="btn text sm" onClick={() => (setAt(null), void openCompose({ accountId, to: [{ name, email }] }))}>
+                <Icon name="mail" size={18} /> Email
+              </button>
+              <button
+                type="button"
+                className="btn text sm"
+                onClick={() => void navigator.clipboard.writeText(email).then(() => (setAt(null), toast("Address copied.")))}
+                data-testid="sender-copy"
+              >
+                <Icon name="content_copy" size={18} /> Copy address
+              </button>
+              <button type="button" className="btn text sm" onClick={() => (setAt(null), search(`from:${email}`))} data-testid="sender-find">
+                <Icon name="search" size={18} /> Their mail
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )}
+    </span>
+  );
+}
+
 function doUnsubscribe(accountId: string, m: MessageRow) {
   void unsubscribe(accountId, m.listUnsubscribe, m.listUnsubscribePost, m.fromName || m.fromEmail, (to, subject, body) =>
     sendSimple(accountId, to, subject, body),
@@ -519,15 +591,7 @@ function doUnsubscribe(accountId: string, m: MessageRow) {
 }
 
 async function downloadEml(accountId: string, m: MessageRow) {
-  const raw = await api.raw(accountId, m.id);
-  const { save } = await import("@tauri-apps/plugin-dialog");
-  const path = await save({
-    defaultPath: `${(m.subject || "message").replace(/[\\/:*?"<>|]+/g, " ").slice(0, 80)}.eml`,
-    filters: [{ name: "Email message", extensions: ["eml"] }],
-  }).catch(() => null);
-  if (!path) return;
-  await api.writeFile(path, raw);
-  toast("Message downloaded.");
+  await download(downloadName(m.subject, "eml"), await api.raw(accountId, m.id));
 }
 
 async function shareMessage(accountId: string, m: MessageRow) {
@@ -536,7 +600,7 @@ async function shareMessage(accountId: string, m: MessageRow) {
   await api.share([path], null, window.innerWidth / 2, 120);
 }
 
-function Attachments({ accountId, items }: { accountId: string; items: ParsedAttachment[] }) {
+function Attachments({ items }: { items: ParsedAttachment[] }) {
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   useEffect(() => {
     const t: Record<string, string> = {};
@@ -545,18 +609,8 @@ function Attachments({ accountId, items }: { accountId: string; items: ParsedAtt
     return () => Object.values(t).forEach((u) => URL.revokeObjectURL(u));
   }, [items]);
   if (!items.length) return null;
-  const save = async (a: ParsedAttachment) => {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const path = await save({ defaultPath: a.filename }).catch(() => null);
-    if (path) {
-      await api.writeFile(path, a.data);
-      toast(`Saved ${a.filename}.`);
-    }
-  };
-  const look = async (a: ParsedAttachment) => {
-    const p = await api.tempFile(a.filename, a.data);
-    await api.quickLook(p);
-  };
+  const save = (a: ParsedAttachment) => void download(a.filename, a.data);
+  const look = (a: ParsedAttachment) => void openInApp(a.filename, a.data);
   const share = async (a: ParsedAttachment, e: React.MouseEvent) => {
     const p = await api.tempFile(a.filename, a.data);
     await api.share([p], null, e.clientX, e.clientY);
@@ -566,6 +620,15 @@ function Attachments({ accountId, items }: { accountId: string; items: ParsedAtt
       <div className="att-head">
         {items.length === 1 ? "One attachment" : `${items.length} attachments`}
         <span className="light">· {humanSize(items.reduce((n, a) => n + a.size, 0))}</span>
+        {items.length > 1 && (
+          <IconButton
+            icon="download"
+            label="Download all attachments"
+            className="att-all"
+            onClick={() => void downloadAll(items.map((a) => ({ name: a.filename, data: a.data })))}
+            testId="att-download-all"
+          />
+        )}
       </div>
       <div className="att-cards">
         {items.map((a) => (
@@ -584,7 +647,13 @@ function Attachments({ accountId, items }: { accountId: string; items: ParsedAtt
                 await startDrag({ item: [path], icon: path }).catch(() => {});
               });
             }}
-            onClick={() => void look(a)}
+            onClick={() => look(a)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                look(a);
+              }
+            }}
           >
             <div className="thumb" style={thumbs[a.partId] ? { backgroundImage: `url(${thumbs[a.partId]})` } : undefined}>
               {!thumbs[a.partId] && <FileIcon mime={a.mimeType} name={a.filename} />}
@@ -597,14 +666,36 @@ function Attachments({ accountId, items }: { accountId: string; items: ParsedAtt
               <span className="name">
                 {a.filename} · {humanSize(a.size)}
               </span>
-              <IconButton icon="download" label={`Download ${a.filename}`} onClick={() => void save(a)} testId="att-download" />
-              <IconButton icon="visibility" label="Quick Look" onClick={() => void look(a)} />
-              <IconButton icon="ios_share" label="Share" onClick={(e) => void share(a, e)} />
+              <IconButton
+                icon="download"
+                label={`Download ${a.filename}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  save(a);
+                }}
+                testId="att-download"
+              />
+              <IconButton
+                icon="open_in_new"
+                label={`Open ${a.filename}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  look(a);
+                }}
+                testId="att-open"
+              />
+              <IconButton
+                icon="ios_share"
+                label="Share"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void share(a, e);
+                }}
+              />
             </div>
           </div>
         ))}
       </div>
-      <span className="sr-only">{accountId}</span>
     </div>
   );
 }

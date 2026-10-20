@@ -338,6 +338,27 @@ pub async fn modify_messages(st: S<'_>, account_id: String, message_ids: Vec<Str
 }
 
 #[tauri::command]
+pub fn subscriptions(st: S, account_id: String) -> Result<Vec<crate::db::Subscription>> {
+    st.engine.subscriptions(&account_id)
+}
+
+#[tauri::command]
+pub fn mark_unsubscribed(st: S, account_id: String, email: String) -> Result<()> {
+    st.engine.mark_unsubscribed(&account_id, &email)
+}
+
+/// "Select all conversations in this view" actions: every page, on the server, minus the ones to keep.
+#[tauri::command]
+pub async fn bulk_modify(st: S<'_>, view: ViewQuery, add: Vec<String>, remove: Vec<String>, keep: Vec<String>) -> Result<Vec<String>> {
+    st.engine.bulk_modify(&view, &add, &remove, &keep).await
+}
+
+#[tauri::command]
+pub async fn bulk_delete_forever(st: S<'_>, view: ViewQuery, keep: Vec<String>) -> Result<usize> {
+    st.engine.bulk_delete_forever(&view, &keep).await
+}
+
+#[tauri::command]
 pub async fn delete_forever(st: S<'_>, account_id: String, thread_ids: Vec<String>) -> Result<()> {
     st.engine.delete_forever(&account_id, &thread_ids).await
 }
@@ -653,16 +674,72 @@ pub fn sync_now(st: S, account_id: Option<String>) {
 
 // ---- files & Mac integration ----
 
-/// Write bytes (an attachment) to a private temp folder; returns the path (Quick Look, drag-out, Share).
+/// A file name that's safe on disk ("attachment" when there's nothing left).
+pub fn safe_file_name(name: &str) -> String {
+    let safe: String = name.chars().map(|c| if c == '/' || c == '\\' || c == ':' || c.is_control() { '_' } else { c }).collect();
+    let safe = safe.trim().trim_start_matches('.').to_string();
+    if safe.is_empty() { "attachment".to_string() } else { safe }
+}
+
+/// `dir/name`, or `dir/name (1).ext`, `(2)`… when that's taken, as browsers name downloads.
+pub fn unique_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 => (&name[..i], &name[i..]),
+        _ => (name, ""),
+    };
+    (1..).map(|n| dir.join(format!("{stem} ({n}){ext}"))).find(|p| !p.exists()).unwrap()
+}
+
+fn write_temp(data_dir: &std::path::Path, name: &str, bytes: &[u8]) -> Result<std::path::PathBuf> {
+    let dir = data_dir.join("tmp").join(random_token(6));
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(safe_file_name(name));
+    std::fs::write(&path, bytes)?;
+    Ok(path)
+}
+
+/// Write bytes (an attachment) to a private temp folder; returns the path (drag-out, Share).
 #[tauri::command]
 pub fn temp_file(st: S, name: String, data: String) -> Result<String> {
-    let dir = st.data_dir.join("tmp").join(random_token(6));
+    Ok(write_temp(&st.data_dir, &name, &b64(&data)?)?.display().to_string())
+}
+
+/// Download: straight into the Downloads folder, as a browser does. End-to-end runs use their own folder.
+#[tauri::command]
+pub fn save_download(app: AppHandle, st: S, name: String, data: String) -> Result<String> {
+    use tauri::Manager;
+    let dir = if st.e2e.is_some() { st.data_dir.join("Downloads") } else { app.path().download_dir().map_err(|e| Error::msg(e.to_string()))? };
     std::fs::create_dir_all(&dir)?;
-    let safe: String = name.chars().map(|c| if c == '/' || c == '\\' || c == ':' || c.is_control() { '_' } else { c }).collect();
-    let safe = if safe.trim().is_empty() { "attachment".to_string() } else { safe };
-    let path = dir.join(safe);
+    let path = unique_path(&dir, &safe_file_name(&name));
     std::fs::write(&path, b64(&data)?)?;
     Ok(path.display().to_string())
+}
+
+/// Open an attachment in the app the Mac uses for it (a PDF in Preview…), from a private copy.
+#[tauri::command]
+pub fn open_file(st: S, name: String, data: String) -> Result<String> {
+    let path = write_temp(&st.data_dir, &name, &b64(&data)?)?;
+    let shown = path.display().to_string();
+    if let Some(e2e) = &st.e2e {
+        e2e.opened.lock().push(format!("file:{shown}"));
+        return Ok(shown);
+    }
+    tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|e| Error::msg(e.to_string()))?;
+    Ok(shown)
+}
+
+/// Show a downloaded file in Finder (only when asked: it brings Finder forward).
+#[tauri::command]
+pub fn reveal_file(st: S, path: String) -> Result<()> {
+    if let Some(e2e) = &st.e2e {
+        e2e.opened.lock().push(format!("reveal:{path}"));
+        return Ok(());
+    }
+    tauri_plugin_opener::reveal_item_in_dir(&path).map_err(|e| Error::msg(e.to_string()))
 }
 
 #[tauri::command]
@@ -675,11 +752,6 @@ pub fn write_file(path: String, data: String) -> Result<()> {
 pub fn read_file(path: String) -> Result<tauri::ipc::Response> {
     let p = path.strip_prefix("file://").map(|p| percent_encoding::percent_decode_str(p).decode_utf8_lossy().into_owned()).unwrap_or(path);
     Ok(tauri::ipc::Response::new(std::fs::read(p)?))
-}
-
-#[tauri::command]
-pub fn quick_look(path: String) -> Result<()> {
-    crate::macos::quick_look(&path).map_err(Error::msg)
 }
 
 #[tauri::command]
@@ -783,9 +855,42 @@ pub fn e2e_info(st: S) -> Result<Value> {
 }
 
 #[tauri::command]
-pub fn e2e_control(st: S, action: String, args: Value) -> Result<Value> {
+pub async fn e2e_control(app: AppHandle, st: S<'_>, action: String, args: Value) -> Result<Value> {
     let e = st.e2e.as_ref().ok_or_else(|| Error::msg("not running end-to-end tests"))?;
-    e.control(&st.engine, &action, &args)
+    match action.as_str() {
+        // Files saved by Download (end-to-end runs use their own Downloads folder).
+        "downloads" => {
+            let dir = st.data_dir.join("Downloads");
+            let mut names: Vec<String> = std::fs::read_dir(&dir).map(|it| it.filter_map(|x| x.ok()).map(|x| x.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+            names.sort();
+            Ok(json!({"names": names}))
+        }
+        // As if the Mac handed Courier files (Open With, another app's "Email this file").
+        "open-files" => {
+            let dir = st.data_dir.join("handed");
+            std::fs::create_dir_all(&dir)?;
+            let mut urls = Vec::new();
+            for f in args["files"].as_array().cloned().unwrap_or_default() {
+                let path = dir.join(safe_file_name(f["name"].as_str().unwrap_or("file")));
+                std::fs::write(&path, f["text"].as_str().unwrap_or("").as_bytes())?;
+                urls.push(url::Url::from_file_path(&path).map_err(|_| Error::msg("bad path"))?.to_string());
+            }
+            crate::handle_opened(&app, &urls);
+            Ok(json!({"urls": urls}))
+        }
+        // Whether two-finger swipes go back and forward in the main window's web view.
+        "swipe-nav" => {
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::Manager;
+                let w = app.get_webview_window("main").ok_or_else(|| Error::msg("no main window"))?;
+                return Ok(json!({"enabled": crate::macos::swipe_navigation_enabled(&w).await}));
+            }
+            #[cfg(not(target_os = "macos"))]
+            Ok(json!({"enabled": false}))
+        }
+        _ => e.control(&st.engine, &action, &args),
+    }
 }
 
 #[tauri::command]

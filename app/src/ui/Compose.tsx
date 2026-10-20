@@ -29,22 +29,34 @@ import { Avatar, Dialog, FileIcon, Icon, IconButton, Menu, anchorOf, type MenuEn
 
 type Anchor = ReturnType<typeof anchorOf>;
 
+/** Compose windows side by side from the right; the ones that don't fit the window's width fold to their title bar. */
 export function ComposeDock() {
   const composes = useMail(useShallow((s) => s.composes.filter((c) => c.placement === "dock")));
   const full = composes.find((c) => c.fullscreen && !c.minimized);
+  const width = useMail((s) => s.width);
+  const [raised, setRaised] = useState<Record<string, number>>({});
+  // The newest (or last opened) first; each open window needs 575 px, a folded one 276.
+  const order = [...composes].reverse().sort((a, b) => (raised[b.id] ?? 0) - (raised[a.id] ?? 0));
+  const folded = new Set<string>();
+  let room = width - 61 - 16;
+  order.forEach((c, i) => {
+    // The first one always stays open (at phone width it fills the window).
+    if (i > 0 && !c.minimized && !c.fullscreen && room < 575) folded.add(c.id);
+    room -= c.minimized || folded.has(c.id) ? 276 : 575;
+  });
   return (
     <>
       {full && <div className="compose-full-scrim" onClick={() => updateCompose(full.id, { fullscreen: false })} />}
       <div className="compose-dock" aria-label="Compose windows">
         {[...composes].reverse().map((c) => (
-          <ComposeWindow key={c.id} c={c} />
+          <ComposeWindow key={c.id} c={c} folded={folded.has(c.id)} onRaise={() => setRaised((r) => ({ ...r, [c.id]: Date.now() }))} />
         ))}
       </div>
     </>
   );
 }
 
-export function ComposeWindow({ c, popout }: { c: ComposeData; popout?: boolean }) {
+export function ComposeWindow({ c, popout, folded, onRaise }: { c: ComposeData; popout?: boolean; folded?: boolean; onRaise?: () => void }) {
   const title = c.subject.trim() || (c.reply ? (c.reply.kind === "forward" ? "Forward" : "Reply") : "New Message");
   const popOut = async () => {
     await saveDraft(c.id);
@@ -54,14 +66,18 @@ export function ComposeWindow({ c, popout }: { c: ComposeData; popout?: boolean 
   };
   return (
     <section
-      className={["compose", c.minimized ? "min" : "", c.fullscreen && !c.minimized && !popout ? "full" : ""].join(" ")}
+      className={["compose", c.minimized || folded ? "min" : "", c.fullscreen && !c.minimized && !popout ? "full" : ""].join(" ")}
       role="dialog"
       aria-label={title}
       data-testid="compose-window"
       style={popout ? { width: "100%", height: "100vh", maxHeight: "none", margin: 0, borderRadius: 0, boxShadow: "none" } : undefined}
     >
       {!popout && (
-        <div className="compose-head" onClick={() => updateCompose(c.id, { minimized: !c.minimized })} data-testid="compose-head">
+        <div
+          className="compose-head"
+          onClick={() => (folded ? (onRaise?.(), updateCompose(c.id, { minimized: false })) : updateCompose(c.id, { minimized: !c.minimized }))}
+          data-testid="compose-head"
+        >
           <span className="title">{title}</span>
           <IconButton
             icon="minimize"
@@ -703,6 +719,68 @@ function focusEditorStart(el: HTMLElement | null) {
 
 // ---- recipients ----
 
+/** The people Courier knows (mail you've exchanged), to tick and add in one go. */
+function ContactPicker({ title, have, onPick, onClose }: { title: string; have: Address[]; onPick: (people: Address[]) => void; onClose: () => void }) {
+  const [all, setAll] = useState<Contact[]>([]);
+  const [filter, setFilter] = useState("");
+  const [picked, setPicked] = useState<string[]>([]);
+  useEffect(() => {
+    void api
+      .contacts("", null, 1000)
+      .then((r) => setAll(r))
+      .catch(() => {});
+  }, []);
+  const already = new Set(have.map((a) => a.email.toLowerCase()));
+  const f = filter.trim().toLowerCase();
+  const shown = all.filter((x) => !already.has(x.email.toLowerCase()) && (!f || x.email.toLowerCase().includes(f) || x.name.toLowerCase().includes(f)));
+  const toggle = (email: string) => setPicked((p) => (p.includes(email) ? p.filter((x) => x !== email) : [...p, email]));
+  return (
+    <Dialog
+      title={title}
+      onClose={onClose}
+      testId="contact-picker"
+      actions={
+        <>
+          <button className="btn text" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="btn text"
+            disabled={!picked.length}
+            onClick={() => onPick(all.filter((x) => picked.includes(x.email)).map((x) => ({ name: x.name, email: x.email })))}
+            data-testid="contact-picker-add"
+          >
+            Add{picked.length ? ` (${picked.length})` : ""}
+          </button>
+        </>
+      }
+    >
+      <input
+        className="picker-filter"
+        placeholder="Filter by name or address"
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+        autoFocus
+        aria-label="Filter people"
+        data-testid="contact-picker-filter"
+      />
+      <div className="picker-list" role="listbox" aria-multiselectable="true">
+        {shown.map((x) => (
+          <label key={x.email} className="picker-row" data-testid="contact-picker-row">
+            <input type="checkbox" checked={picked.includes(x.email)} onChange={() => toggle(x.email)} />
+            <Avatar name={x.name} email={x.email} size={32} />
+            <span className="picker-text">
+              <span className="picker-name">{x.name || x.email}</span>
+              {x.name && <span className="picker-mail">{x.email}</span>}
+            </span>
+          </label>
+        ))}
+        {!shown.length && <div className="empty">{all.length ? "No one matches." : "People you exchange mail with show up here."}</div>}
+      </div>
+    </Dialog>
+  );
+}
+
 function RecipientRow({
   c,
   field,
@@ -719,6 +797,7 @@ function RecipientRow({
   const [text, setText] = useState("");
   const [sugg, setSugg] = useState<Contact[]>([]);
   const [on, setOn] = useState(0);
+  const [choosing, setChoosing] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const list = c[field];
   useEffect(() => {
@@ -755,7 +834,21 @@ function RecipientRow({
   const remove = (i: number) => changeCompose(c.id, { [field]: list.filter((_, j) => j !== i) } as Partial<ComposeData>);
   return (
     <div className="cf-row">
-      <span className="lab">{label}</span>
+      <button type="button" className="lab lab-btn" onClick={() => setChoosing(true)} title={`Choose people for ${label}`} data-testid={`pick-${field}`}>
+        {label}
+      </button>
+      {choosing && (
+        <ContactPicker
+          title={label === "To" ? "Choose recipients" : `Choose ${label} recipients`}
+          have={list}
+          onClose={() => setChoosing(false)}
+          onPick={(people) => {
+            changeCompose(c.id, { [field]: [...list, ...people] } as Partial<ComposeData>);
+            setChoosing(false);
+            input.current?.focus();
+          }}
+        />
+      )}
       <span className="rcpts" onClick={() => input.current?.focus()}>
         {list.map((a: Address, i: number) => (
           <span

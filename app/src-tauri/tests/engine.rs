@@ -380,3 +380,84 @@ async fn a_lasting_rate_limit_is_reported_as_such_not_offline() {
     assert!(courier_lib::gmail::is_rate_limit(&serde_json::json!({"error": {"errors": [{"reason": "userRateLimitExceeded"}]}})));
     assert!(!courier_lib::gmail::is_rate_limit(&serde_json::json!({"error": {"errors": [{"reason": "forbidden"}], "message": "Forbidden"}})));
 }
+
+#[tokio::test]
+async fn select_all_in_a_view_reaches_uncached_mail_and_keeps_the_unticked() {
+    let w = world().await;
+    let mut ids = Vec::new();
+    for i in 0..5 {
+        ids.push(w.gmail.deliver(&sample_mail("Shop <news@shop.example>", "pat@example.com", &format!("Deal {i}"), "offer", ""), &["INBOX"]));
+    }
+    // Three are older than the offline window, so they're never cached.
+    for id in &ids[..3] {
+        w.gmail.state.lock().messages.get_mut(id).unwrap().internal_date = courier_lib::error::now_ms() - 90 * 86_400_000;
+    }
+    w.engine.sync_account("g1").await.unwrap();
+    assert!(w.engine.db.message("g1", &ids[0]).unwrap().is_none(), "old mail isn't cached");
+    let kept = w.engine.db.message("g1", &ids[4]).unwrap().unwrap().thread_id;
+
+    let changed = w.engine.bulk_modify(&view("g1", "INBOX"), &["TRASH".into()], &[], std::slice::from_ref(&kept)).await.unwrap();
+    assert_eq!(changed.len(), 4);
+    for id in &ids[..4] {
+        assert!(w.gmail.message(id).unwrap().labels.contains(&"TRASH".into()), "{id} trashed on the server");
+    }
+    assert!(w.gmail.message(&ids[4]).unwrap().labels.contains(&"INBOX".into()), "the kept one stays");
+    // The sidebar's numbers are the server's right away.
+    assert_eq!(w.engine.db.label("g1", "INBOX").unwrap().unwrap().threads_total, 1);
+    assert_eq!(w.engine.db.label("g1", "TRASH").unwrap().unwrap().threads_total, 4);
+    assert!(w.rec.events.lock().iter().any(|(e, p)| e == "bulk-progress" && p["phase"] == "done" && p["total"] == 4));
+
+    // Undo puts them back, uncached ones included.
+    w.engine.modify_messages("g1", &changed, &[], &["TRASH".into()]).await.unwrap();
+    assert!(w.gmail.message(&ids[0]).unwrap().labels.contains(&"INBOX".into()));
+
+    // Delete forever only inside Trash/Spam.
+    w.engine.bulk_modify(&view("g1", "INBOX"), &["TRASH".into()], &[], std::slice::from_ref(&kept)).await.unwrap();
+    assert!(w.engine.bulk_delete_forever(&view("g1", "INBOX"), &[]).await.is_err());
+    assert_eq!(w.engine.bulk_delete_forever(&view("g1", "TRASH"), &[]).await.unwrap(), 4);
+    assert!(ids[..4].iter().all(|id| w.gmail.message(id).is_none()));
+    assert!(w.gmail.message(&ids[4]).is_some());
+    assert_eq!(w.engine.db.label("g1", "TRASH").unwrap().unwrap().threads_total, 0);
+}
+
+#[tokio::test]
+async fn label_counts_follow_actions_and_changes_made_elsewhere() {
+    let w = world().await;
+    let a = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "One", "x", ""), &["INBOX", "UNREAD", "Label_1"]);
+    let _b = w.gmail.deliver(&sample_mail("Bo <bo@x.io>", "pat@example.com", "Two", "y", ""), &["INBOX", "UNREAD", "Label_1"]);
+    w.gmail.state.lock().user_labels.push(json!({"id": "Label_1", "name": "Receipts", "type": "user"}));
+    w.engine.sync_account("g1").await.unwrap();
+    let unread = |l: &str| w.engine.db.label("g1", l).unwrap().map(|x| x.threads_unread).unwrap_or(-1);
+    assert_eq!(unread("Label_1"), 2);
+    // Reading one here: the count drops at once and matches the server.
+    w.engine.modify_messages("g1", std::slice::from_ref(&a), &[], &["UNREAD".into()]).await.unwrap();
+    assert_eq!(unread("Label_1"), 1);
+    // Changes made on another device to mail Courier never cached still move the count.
+    let old = w.gmail.deliver(&sample_mail("Cy <cy@x.io>", "pat@example.com", "Three", "z", ""), &["Label_1", "UNREAD"]);
+    w.gmail.state.lock().messages.get_mut(&old).unwrap().internal_date = courier_lib::error::now_ms() - 90 * 86_400_000;
+    w.engine.sync_account("g1").await.unwrap();
+    assert_eq!(unread("Label_1"), 2);
+    w.gmail.modify_elsewhere(&old, &["TRASH"], &[]);
+    w.engine.sync_account("g1").await.unwrap();
+    assert_eq!(unread("Label_1"), 1);
+}
+
+#[tokio::test]
+async fn manage_subscriptions_lists_senders_with_an_unsubscribe_option() {
+    let w = world().await;
+    let unsub = "List-Unsubscribe: <https://news.example/u?id=1>, <mailto:leave@news.example>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n";
+    for i in 0..3 {
+        w.gmail.deliver(&sample_mail("Weekly News <hello@News.example>", "pat@example.com", &format!("Issue {i}"), "x", unsub), &["INBOX", "CATEGORY_PROMOTIONS"]);
+    }
+    w.gmail.deliver(&sample_mail("Shop <deals@shop.example>", "pat@example.com", "Sale", "y", "List-Unsubscribe: <https://shop.example/u>\r\n"), &["INBOX"]);
+    w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Lunch", "no list", ""), &["INBOX"]);
+    w.engine.sync_account("g1").await.unwrap();
+    let subs = w.engine.subscriptions("g1").unwrap();
+    assert_eq!(subs.iter().map(|s| (s.email.as_str(), s.recent)).collect::<Vec<_>>(), vec![("hello@news.example", 3), ("deals@shop.example", 1)]);
+    assert_eq!(subs[0].name, "Weekly News");
+    assert!(subs[0].list_unsubscribe_post.contains("One-Click"));
+    assert!(subs[0].unsubscribed.is_none());
+    w.engine.mark_unsubscribed("g1", "Hello@News.example").unwrap();
+    assert!(w.engine.subscriptions("g1").unwrap()[0].unsubscribed.is_some());
+    assert_eq!(w.engine.subscriptions("all").unwrap().len(), 2);
+}
