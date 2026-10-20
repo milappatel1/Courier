@@ -6,22 +6,34 @@ import { CATEGORIES } from "../core/labels";
 import { activeAccount, labelsFor, toast, useMail, SYSTEM_DISPLAY } from "../state/store";
 import { Dialog } from "./common";
 
-export function FilterDialog({ criteria, onClose, accountId }: { criteria: FilterCriteria; onClose: () => void; accountId?: string }) {
+export function FilterDialog({
+  criteria,
+  onClose,
+  accountId,
+  existing,
+}: {
+  criteria: FilterCriteria;
+  onClose: () => void;
+  accountId?: string;
+  /** Editing a filter: its id and actions (the API can't change a filter, so the old one is replaced). */
+  existing?: { id: string; action: FilterAction };
+}) {
   const acctId = accountId ?? useMail.getState().accountId;
   const acct = activeAccount();
   const labels = labelsFor(acctId).filter((l) => l.type === "user");
   const [c, setC] = useState<FilterCriteria>(criteria);
   const [step, setStep] = useState<1 | 2>(1);
+  const was = { add: existing?.action.addLabelIds ?? [], remove: existing?.action.removeLabelIds ?? [] };
   const [a, setA] = useState({
-    skipInbox: false,
-    markRead: false,
-    star: false,
-    label: "",
-    forward: "",
-    trash: false,
-    neverSpam: false,
-    important: "" as "" | "always" | "never",
-    category: "",
+    skipInbox: was.remove.includes("INBOX"),
+    markRead: was.remove.includes("UNREAD"),
+    star: was.add.includes("STARRED"),
+    label: was.add.find((l) => labels.some((x) => x.id === l)) ?? "",
+    forward: existing?.action.forward ?? "",
+    trash: was.add.includes("TRASH"),
+    neverSpam: was.remove.includes("SPAM"),
+    important: (was.add.includes("IMPORTANT") ? "always" : was.remove.includes("IMPORTANT") ? "never" : "") as "" | "always" | "never",
+    category: was.add.find((l) => l.startsWith("CATEGORY_")) ?? "",
     applyExisting: false,
   });
   const [err, setErr] = useState<string | null>(null);
@@ -45,7 +57,8 @@ export function FilterDialog({ criteria, onClose, accountId }: { criteria: Filte
     if (a.forward.trim()) action.forward = a.forward.trim();
     try {
       await api.filterCreate(acctId, c as Record<string, unknown>, action as Record<string, unknown>, a.applyExisting);
-      toast("Your filter was created.");
+      if (existing) await api.filterDelete(acctId, existing.id);
+      toast(existing ? "Filter updated." : "Filter created.");
       onClose();
     } catch (e) {
       setErr(errorText(e));

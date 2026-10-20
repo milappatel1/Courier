@@ -1,7 +1,9 @@
 // Settings ("See all settings"): General, Labels, Inbox, Accounts, Filters and blocked addresses,
 // Forwarding and POP/IMAP, Advanced, Offline, Themes.
 import { useEffect, useRef, useState } from "react";
-import { describeActions, describeCriteria, type FilterCriteria } from "../core/search/advanced";
+import { describeActions, describeCriteria, type FilterAction, type FilterCriteria } from "../core/search/advanced";
+import { exportFiltersXml, importedAction, importFiltersXml, type FilterActionLike, type FilterCriteriaLike, type ImportedFilter } from "../core/filtersxml";
+import { download } from "../state/files";
 import { leafName } from "../core/labels";
 import { api, errorText } from "../ipc/api";
 import type { Account, ImapAccountConfig, Label, Signature } from "../ipc/types";
@@ -1223,7 +1225,47 @@ function FiltersTab({ accountId }: { accountId: string }) {
   const [filters, setFilters] = useState<{ id: string; criteria: Record<string, unknown>; action: Record<string, unknown> }[]>([]);
   const [blocked, setBlocked] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<{ id: string; criteria: Record<string, unknown>; action: Record<string, unknown> } | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [importing, setImporting] = useState<{ list: ImportedFilter[]; on: boolean[] } | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const [err, setErr] = useState<string | null>(null);
+  const acct = useMail((s) => s.accounts.find((a) => a.id === accountId));
+  const exportPicked = () => {
+    const chosen = filters.filter((f) => picked.includes(f.id));
+    const xml = exportFiltersXml(chosen as { criteria: FilterCriteriaLike; action: FilterActionLike }[], (id) => labelName(accountId, id), {
+      name: acct?.name ?? "",
+      email: acct?.email ?? "",
+    });
+    void download("mailFilters.xml", new TextEncoder().encode(xml));
+  };
+  const deletePicked = async () => {
+    for (const id of picked) await api.filterDelete(accountId, id).catch(() => {});
+    setPicked([]);
+    load();
+  };
+  const runImport = async () => {
+    if (!importing) return;
+    let made = 0;
+    for (const [i, f] of importing.list.entries()) {
+      if (!importing.on[i]) continue;
+      let labelId: string | null = null;
+      if (f.labelName) {
+        labelId = labelsFor(accountId).find((l) => l.name.toLowerCase() === f.labelName!.toLowerCase())?.id ?? null;
+        if (!labelId) labelId = await api.labelCreate(accountId, f.labelName).catch(() => null);
+      }
+      try {
+        await api.filterCreate(accountId, f.criteria as Record<string, unknown>, importedAction(f, labelId) as Record<string, unknown>);
+        made++;
+      } catch (e) {
+        setErr(errorText(e));
+      }
+    }
+    setImporting(null);
+    void loadLabels(accountId);
+    load();
+    toast(`${made} filter${made === 1 ? "" : "s"} imported.`);
+  };
   const load = () => {
     void api
       .filters(accountId)
@@ -1234,12 +1276,21 @@ function FiltersTab({ accountId }: { accountId: string }) {
   useEffect(load, [accountId]);
   return (
     <>
-      <h4 style={{ margin: "16px 0 8px" }}>The following filters are applied to all incoming mail:</h4>
+      <h4 style={{ margin: "16px 0 8px" }}>Filters run on every message that arrives:</h4>
       {err && <div className="error-box">{err}</div>}
       <table className="stable">
         <tbody>
           {filters.map((f) => (
             <tr key={f.id} data-testid="filter-row">
+              <td style={{ width: 28 }}>
+                <input
+                  type="checkbox"
+                  aria-label="Select filter"
+                  checked={picked.includes(f.id)}
+                  onChange={() => setPicked((p) => (p.includes(f.id) ? p.filter((x) => x !== f.id) : [...p, f.id]))}
+                  data-testid="filter-pick"
+                />
+              </td>
               <td>
                 <b>Matches:</b> {describeCriteria(f.criteria as FilterCriteria)}
                 <div>
@@ -1247,6 +1298,9 @@ function FiltersTab({ accountId }: { accountId: string }) {
                 </div>
               </td>
               <td style={{ width: 120 }}>
+                <button className="linkbtn" onClick={() => setEditing(f)} data-testid="filter-edit">
+                  edit
+                </button>{" "}
                 <button className="linkbtn" onClick={() => void api.filterDelete(accountId, f.id).then(load)} data-testid="filter-delete">
                   delete
                 </button>
@@ -1260,10 +1314,73 @@ function FiltersTab({ accountId }: { accountId: string }) {
           )}
         </tbody>
       </table>
-      <button className="btn outline sm" onClick={() => setCreating(true)} data-testid="filters-create">
-        Create a new filter
-      </button>
-      <h4 style={{ margin: "24px 0 8px" }}>The following email addresses are blocked. Messages from them go to Spam or Trash:</h4>
+      <div className="filter-tools">
+        <label className="checkline">
+          <input
+            type="checkbox"
+            checked={filters.length > 0 && picked.length === filters.length}
+            onChange={(e) => setPicked(e.target.checked ? filters.map((f) => f.id) : [])}
+            aria-label="Select all filters"
+            data-testid="filter-pick-all"
+          />{" "}
+          All
+        </label>
+        <button className="btn outline sm" disabled={!picked.length} onClick={exportPicked} data-testid="filters-export">
+          Export
+        </button>
+        <button className="btn outline sm" disabled={!picked.length} onClick={() => void deletePicked()} data-testid="filters-delete">
+          Delete
+        </button>
+        <span className="grow" />
+        <button className="btn outline sm" onClick={() => setCreating(true)} data-testid="filters-create">
+          New filter
+        </button>
+        <button className="btn outline sm" onClick={() => fileInput.current?.click()} data-testid="filters-import">
+          Import filters…
+        </button>
+        <input
+          ref={fileInput}
+          type="file"
+          accept=".xml,text/xml,application/xml"
+          hidden
+          data-testid="filters-import-file"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (!f) return;
+            void f.text().then((t) => {
+              const list = importFiltersXml(t);
+              if (!list.length) setErr("No filters found in that file.");
+              else setImporting({ list, on: list.map(() => true) });
+            });
+          }}
+        />
+      </div>
+      {importing && (
+        <div className="import-box" data-testid="filters-import-box">
+          <b>Filters in the file:</b>
+          {importing.list.map((f, i) => (
+            <label key={i} className="checkline">
+              <input
+                type="checkbox"
+                checked={importing.on[i]}
+                onChange={(e) => setImporting({ ...importing, on: importing.on.map((v, j) => (j === i ? e.target.checked : v)) })}
+              />{" "}
+              {describeCriteria(f.criteria as FilterCriteria)}
+              {f.labelName ? ` → ${f.labelName}` : ""}
+            </label>
+          ))}
+          <div className="import-actions">
+            <button className="btn text sm" onClick={() => setImporting(null)}>
+              Cancel
+            </button>
+            <button className="btn outline sm" onClick={() => void runImport()} data-testid="filters-import-create">
+              Create filters
+            </button>
+          </div>
+        </div>
+      )}
+      <h4 style={{ margin: "24px 0 8px" }}>Blocked senders (their mail goes to Spam or Trash):</h4>
       <table className="stable">
         <tbody>
           {blocked.map((b) => (
@@ -1278,12 +1395,20 @@ function FiltersTab({ accountId }: { accountId: string }) {
           ))}
           {!blocked.length && (
             <tr>
-              <td className="muted">You haven't blocked anyone.</td>
+              <td className="muted">No one is blocked.</td>
             </tr>
           )}
         </tbody>
       </table>
       {creating && <FilterDialog criteria={{}} onClose={() => (setCreating(false), load())} accountId={accountId} />}
+      {editing && (
+        <FilterDialog
+          criteria={editing.criteria as FilterCriteria}
+          existing={{ id: editing.id, action: editing.action as FilterAction }}
+          onClose={() => (setEditing(null), load())}
+          accountId={accountId}
+        />
+      )}
     </>
   );
 }

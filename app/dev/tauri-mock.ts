@@ -115,6 +115,7 @@ function add(
     star?: string;
     headers?: Record<string, string>;
     inReplyTo?: string;
+    calendar?: { method: string; text: string };
   },
 ) {
   const built = buildMime({
@@ -124,6 +125,7 @@ function add(
     html: o.html ?? null,
     text: o.text ?? null,
     attachments: o.attachments,
+    calendar: o.calendar,
     date: new Date(o.date),
     headers: o.headers,
     inReplyTo: o.inReplyTo ?? null,
@@ -300,6 +302,23 @@ add("g1", {
   date: at(0, 7, 10),
   labels: ["INBOX", "CATEGORY_PERSONAL"],
 });
+// A calendar invitation.
+{
+  const day = new Date(Date.now() + 2 * 86400000);
+  const ymd = `${day.getUTCFullYear()}${String(day.getUTCMonth() + 1).padStart(2, "0")}${String(day.getUTCDate()).padStart(2, "0")}`;
+  add("g1", {
+    from: { name: "Ana Lima", email: "ana@cal.example" },
+    to: [ME],
+    subject: "Invitation: Design review",
+    text: "You're invited to the design review.",
+    date: at(0, 7, 0),
+    labels: ["INBOX", "UNREAD", "CATEGORY_PERSONAL"],
+    calendar: {
+      method: "REQUEST",
+      text: `BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nDTSTART:${ymd}T150000Z\r\nDTEND:${ymd}T160000Z\r\nUID:design-review-1@cal.example\r\nORGANIZER;CN=Ana Lima:mailto:ana@cal.example\r\nATTENDEE;CN=Pat;PARTSTAT=NEEDS-ACTION:mailto:pat@example.com\r\nSUMMARY:Design review\r\nLOCATION:Room 4\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n`,
+    },
+  });
+}
 // The offsite photo goes in as an inline image.
 {
   const m = msgs.find((x) => parseMessage(x.raw).subject === "Photos from the offsite")!;

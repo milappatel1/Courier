@@ -107,6 +107,11 @@ function SearchBar() {
   const [focused, setFocused] = useState(false);
   const [sugg, setSugg] = useState<Contact[]>([]);
   const [on, setOn] = useState(-1);
+  const recentAll = useMail((s) => s.settings.recentSearches);
+  const typed = text.trim().toLowerCase();
+  // Recent searches first (all of them on an empty box, the matching ones while typing), then people.
+  const recent = focused ? recentAll.filter((r) => !typed || (r.toLowerCase().includes(typed) && r.toLowerCase() !== typed)).slice(0, typed ? 3 : 6) : [];
+  const items: { q: string; contact?: Contact }[] = [...recent.map((q) => ({ q })), ...sugg.map((c) => ({ q: `from:${c.email}`, contact: c }))];
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => setText(route.list.query ?? ""), [route.list.query]);
   useEffect(() => {
@@ -136,12 +141,12 @@ function SearchBar() {
   };
   return (
     <form
-      className={["search", focused ? "focused" : "", focused && sugg.length ? "dropdown" : ""].join(" ")}
+      className={["search", focused ? "focused" : "", focused && items.length ? "dropdown" : ""].join(" ")}
       role="search"
       aria-label="Search mail"
       onSubmit={(e) => {
         e.preventDefault();
-        submit(on >= 0 && sugg[on] ? `from:${sugg[on].email}` : text);
+        submit(on >= 0 && items[on] ? items[on].q : text);
       }}
     >
       {phone ? (
@@ -162,14 +167,15 @@ function SearchBar() {
           setOn(-1);
         }}
         onFocus={() => setFocused(true)}
-        onBlur={() => setTimeout(() => setFocused(false), 150)}
+        // Late, so a click on a suggestion lands first; and only if focus didn't come straight back.
+        onBlur={() => setTimeout(() => document.activeElement !== input.current && setFocused(false), 150)}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             setText(route.list.query ?? "");
             input.current?.blur();
           } else if (e.key === "ArrowDown") {
             e.preventDefault();
-            setOn((o) => Math.min(sugg.length - 1, o + 1));
+            setOn((o) => Math.min(items.length - 1, o + 1));
           } else if (e.key === "ArrowUp") {
             e.preventDefault();
             setOn((o) => Math.max(-1, o - 1));
@@ -181,22 +187,32 @@ function SearchBar() {
         <IconButton icon="tune" label="Show search options" iconSize={24} onClick={() => ui({ advancedSearch: !advancedOpen })} testId="search-options" />
       )}
       {phone && !text && <AccountButton className="avatar-btn in-search" />}
-      {focused && sugg.length > 0 && (
-        <div className="search-suggest" role="listbox">
-          {sugg.map((c, i) => (
+      {focused && items.length > 0 && (
+        <div className="search-suggest" role="listbox" data-testid="search-suggest">
+          {items.map((it, i) => (
             <div
-              key={c.email}
+              key={`${it.contact ? "c" : "r"}:${it.q}`}
               role="option"
               aria-selected={on === i}
               className={["sugg", on === i ? "on" : ""].join(" ")}
+              data-testid={it.contact ? "sugg-contact" : "sugg-recent"}
               onMouseDown={(e) => {
                 e.preventDefault();
-                submit(`from:${c.email}`);
+                submit(it.q);
               }}
             >
-              <Avatar name={c.name} email={c.email} size={24} />
-              <span>{c.name || c.email}</span>
-              {c.name && <span className="who">{c.email}</span>}
+              {it.contact ? (
+                <>
+                  <Avatar name={it.contact.name} email={it.contact.email} size={24} />
+                  <span>{it.contact.name || it.contact.email}</span>
+                  {it.contact.name && <span className="who">{it.contact.email}</span>}
+                </>
+              ) : (
+                <>
+                  <Icon name="history" size={20} />
+                  <span>{it.q}</span>
+                </>
+              )}
             </div>
           ))}
         </div>

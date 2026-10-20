@@ -24,6 +24,8 @@ export interface ComposeInput {
   /** Plain-text body (plain-text mode, or an explicit alternative). */
   text?: string | null;
   attachments?: ComposeAttachment[];
+  /** An iCalendar part (an invitation or a reply to one), sent as an alternative to the text. */
+  calendar?: { method: string; text: string };
   /** A whole message forwarded as an attachment (message/rfc822). */
   forwarded?: { filename: string; raw: Uint8Array }[];
   inReplyTo?: string | null;
@@ -114,6 +116,15 @@ export function buildMime(input: ComposeInput, opts: BuildOptions = {}): Built {
     body = multipart("alternative", [textPart("plain", text), htmlWithImages], boundary());
   } else {
     body = textPart("plain", input.text ?? "");
+  }
+  if (input.calendar) {
+    // Plain ASCII goes as is; anything else (a name with accents) in base64, which every calendar reads.
+    const ascii = /^[\x00-\x7f]*$/.test(input.calendar.text);
+    const cal: Part = {
+      headers: [`Content-Type: text/calendar; method=${input.calendar.method}; charset=UTF-8`, `Content-Transfer-Encoding: ${ascii ? "7bit" : "base64"}`],
+      body: ascii ? utf8(input.calendar.text) : utf8(base64Encode(utf8(input.calendar.text), 76)),
+    };
+    body = multipart("alternative", [body, cal], boundary());
   }
   const forwarded = (input.forwarded ?? []).map((f): Part => ({
     headers: [`Content-Type: message/rfc822; ${formatParam("name", f.filename)}`, `Content-Disposition: attachment; ${formatParam("filename", f.filename)}`],

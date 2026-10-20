@@ -373,6 +373,29 @@ step("searches with operators, filter chips and advanced search", async () => {
   await backToInbox();
 });
 
+step("the search box offers recent searches", async () => {
+  await backToInbox();
+  const box = (await el("search-input")) as HTMLInputElement;
+  box.focus();
+  type(box, "subject:invoice");
+  box.form!.requestSubmit();
+  await until("searched", () => getState().route.list.query === "subject:invoice");
+  await backToInbox();
+  box.focus();
+  type(box, "");
+  // A covered background window may not deliver focus events; React listens for focusin.
+  box.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+  const recent = await until("recent searches shown", () => qa("sugg-recent").find((x) => x.textContent?.includes("subject:invoice")), 5_000).catch((e) => {
+    throw new Error(
+      `${e} [form ${box.form?.className}; focused element ${document.activeElement === box ? "the box" : document.activeElement?.tagName}; value "${box.value}"; saved ${JSON.stringify(getState().settings.recentSearches)}]`,
+    );
+  });
+  recent.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  await until("ran it again", () => getState().route.list.query === "subject:invoice");
+  box.blur();
+  await backToInbox();
+});
+
 step("creates a filter from the search options (on the server)", async () => {
   click(await el("search-options"));
   type(await el("adv-from"), "news@deals.example");
@@ -634,6 +657,96 @@ step("notifications: new Primary mail notifies, Promotions doesn't", async () =>
     return n.some((x) => `${x.title} ${x.body}`.includes("Dinner tonight?")) ? n : null;
   });
   check(!notes.some((x) => `${x.title} ${x.body}`.includes("Flash sale")), "notified about Promotions mail");
+});
+
+step("a conversation dragged from the list onto a new message is attached to it", async () => {
+  await backToInbox();
+  const t = getState().list.result?.threads.find((x) => x.subject === "Quarterly planning notes");
+  check(t, "no conversation to drag");
+  const w = await newCompose();
+  await fill(w, "bo@work.example", "Have a look", "<div>See the attached.</div>");
+  const dt = new DataTransfer();
+  dt.setData("application/x-courier-threads", JSON.stringify({ accountId: t!.accountId, threadIds: [t!.threadId] }));
+  w.dispatchEvent(new DragEvent("dragover", { dataTransfer: dt, bubbles: true, cancelable: true }));
+  q("compose-body", w)!.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+  await until("attached as a message", () => w.textContent?.includes("Quarterly planning notes.eml"));
+  click(await el("compose-send", w));
+  const sent = await until("sent", () => sentWith("Have a look"), 30_000);
+  check(/message\/rfc822/i.test(sent.raw) && sent.raw.includes("Quarterly planning notes.eml"), "the conversation wasn't attached as a message");
+});
+
+step("filters: import a filter file, edit one, export and delete them", async () => {
+  await backToInbox();
+  click(await el("settings-gear"));
+  click(await el("see-all-settings"));
+  click(await el("settings-tab-filters"));
+  const filtersOnServer = async () => (await server()).filters;
+  const before = (await filtersOnServer()).length;
+  const xml = `<?xml version='1.0' encoding='UTF-8'?><feed xmlns='http://www.w3.org/2005/Atom' xmlns:apps='http://schemas.google.com/apps/2006'><entry><apps:property name='from' value='news@imported.example'/><apps:property name='label' value='Imported/News'/><apps:property name='shouldArchive' value='true'/></entry><entry><apps:property name='subject' value='weekly report'/><apps:property name='shouldStar' value='true'/></entry></feed>`;
+  setFiles(await el("filters-import-file"), [new File([xml], "mailFilters.xml", { type: "text/xml" })]);
+  await el("filters-import-box");
+  click(await el("filters-import-create"));
+  await until("both filters on the server", async () => ((await filtersOnServer()).length === before + 2 ? true : null), 20_000);
+  const imported = (await filtersOnServer()).find((f) => f.criteria?.from === "news@imported.example")!;
+  check(imported.action?.removeLabelIds?.includes("INBOX"), "the archive action didn't come across");
+  await until("the label made for it", () => getState().labels[getState().accountId]?.some((l) => l.name === "Imported/News"));
+  // Edit: star it too (replaces the filter).
+  const row = await until("its row", () => qa("filter-row").find((r) => r.textContent?.includes("news@imported.example")));
+  click(await el("filter-edit", row));
+  click(await el("filter-next"));
+  click(await el("filter-action-star"));
+  click(await el("filter-create"));
+  await until("edited on the server", async () =>
+    (await filtersOnServer()).some((f) => f.criteria?.from === "news@imported.example" && f.action?.addLabelIds?.includes("STARRED")) ? true : null,
+  );
+  check((await filtersOnServer()).filter((f) => f.criteria?.from === "news@imported.example").length === 1, "the old filter wasn't replaced");
+  // Export all, then delete the two imported ones.
+  click(await el("filter-pick-all"));
+  click(await el("filters-export"));
+  await until("exported to Downloads", async () => (await downloads()).includes("mailFilters.xml"));
+  click(await el("filter-pick-all"));
+  for (const r of qa("filter-row").filter((x) => /imported\.example|weekly report/.test(x.textContent ?? ""))) click(await el("filter-pick", r));
+  click(await el("filters-delete"));
+  await until("deleted", async () => ((await filtersOnServer()).length === before ? true : null), 20_000);
+  click(await el("settings-close"));
+});
+
+step("calendar invitations: the event card answers the organizer and adds to Calendar", async () => {
+  await backToInbox();
+  click(await until("the invitation", () => row("Invitation: Design review")));
+  const card = await el("event-card");
+  check(q("event-title", card)?.textContent === "Design review", "the event's title is missing");
+  check(/\d/.test(q("event-when", card)?.textContent ?? ""), "the event's time is missing");
+  check(card.textContent?.includes("Room 4") && card.textContent.includes("Invited by Ana Lima"), "where / who is missing");
+  click(await el("rsvp-accepted", card));
+  const reply = await until("the reply to the organizer", () => sentWith("Accepted: Design review"), 30_000);
+  check(
+    reply.to.some((a) => a.email === "ana@cal.example"),
+    "the reply didn't go to the organizer",
+  );
+  check(
+    /text\/calendar; method=REPLY/i.test(reply.raw) && reply.raw.includes("PARTSTAT=ACCEPTED") && reply.raw.includes("UID:design-review-1@cal.example"),
+    "not an iCalendar REPLY",
+  );
+  await until("Yes shown as chosen", () => q("rsvp-accepted", card)?.getAttribute("aria-pressed") === "true");
+  const n0 = (await server()).opened.length;
+  click(await el("event-add", card));
+  await until("opened in the calendar app (recorded)", async () => (await server()).opened.slice(n0).some((u) => u.startsWith("file:") && u.endsWith(".ics")));
+  await backToInbox();
+});
+
+step("a clicked notification opens its conversation (in its account)", async () => {
+  await backToInbox();
+  const note = await until("a recorded notification with a conversation", async () =>
+    (await server()).notifications.find((n) => n.threadId && n.title.includes("Gil")),
+  );
+  // What a click on the notification delivers.
+  await emit("open-item", { kind: "thread", accountId: note.accountId, threadId: note.threadId });
+  await until(
+    "that conversation open",
+    () => getState().route.thread?.threadId === note.threadId && q("conv-subject")?.textContent?.includes("Dinner tonight?"),
+  );
+  await backToInbox();
 });
 
 step("Promotions tab: with images set to ask, remote images held back; tracker stripped; unsubscribe", async () => {
@@ -1046,6 +1159,45 @@ step("two compose windows in a narrow window: the older folds to its title bar, 
   }
 });
 
+step("awkward mail still fits: very long subjects and names, right-to-left text, 60 recipients", async () => {
+  const problems: string[] = [];
+  try {
+    for (const [w, h] of [
+      [1280, 800],
+      [420, 820],
+    ]) {
+      await setWindowSize(w, h);
+      await backToInbox();
+      await until("the awkward rows", () => row("Awkward subject") && row("Party for everyone"));
+      problems.push(...layoutIssues().map((p) => `${w}px inbox: ${p}`));
+      for (const subject of ["Awkward subject", "سلام", "Party for everyone"]) {
+        click(await until(subject, () => row(subject)));
+        await el("conversation");
+        await sleep(300);
+        problems.push(...layoutIssues().map((p) => `${w}px "${subject.slice(0, 16)}": ${p}`));
+        if (subject === "Party for everyone") {
+          click(qa("msg-details").pop()!);
+          await el("details-popup");
+          problems.push(...layoutIssues().map((p) => `${w}px details of 60 recipients: ${p}`));
+          const pop = q("details-popup")!.getBoundingClientRect();
+          if (pop.right > window.innerWidth + 1) {
+            const main = q("details-popup")!.closest(".msg-main")?.getBoundingClientRect();
+            const conv = document.querySelector(".conv")!.getBoundingClientRect();
+            problems.push(
+              `${w}px: the details box runs off the window (box ${Math.round(pop.left)}–${Math.round(pop.right)}, column ${Math.round(main?.left ?? -1)}–${Math.round(main?.right ?? -1)}, conversation ${Math.round(conv.left)}–${Math.round(conv.right)}, maxWidth ${getComputedStyle(q("details-popup")!).maxWidth})`,
+            );
+          }
+          document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+        }
+        await backToInbox();
+      }
+    }
+  } finally {
+    await setWindowSize(1280, 800);
+  }
+  check(!problems.length, problems.slice(0, 10).join("\n"));
+});
+
 step("every settings page opens cleanly at desktop, rail and phone widths", async () => {
   const problems: string[] = [];
   try {
@@ -1104,6 +1256,24 @@ step("phone width: menu drawer with the inbox tabs, rows with pictures, floating
   } finally {
     await setWindowSize(1280, 800);
   }
+  await backToInbox();
+});
+
+step("a link to a spot in the same message scrolls the conversation there", async () => {
+  await backToInbox();
+  click(await until("the long message", () => row("A very long message")));
+  const conv = await until("the conversation", () => document.querySelector<HTMLElement>(".conv"));
+  const jump = await until("the jump link", () => frameDoc()?.getElementById("jump") as HTMLAnchorElement | null);
+  conv.scrollTop = 0;
+  click(jump);
+  await until("scrolled to the end of the message", () => {
+    const last = frameDoc()?.getElementById("last");
+    if (!last) return false;
+    const y = frameEl()!.getBoundingClientRect().top + last.getBoundingClientRect().top;
+    const box = conv.getBoundingClientRect();
+    return conv.scrollTop > 500 && y >= box.top && y <= box.bottom;
+  });
+  check(getState().route.thread, "the link left the conversation");
   await backToInbox();
 });
 

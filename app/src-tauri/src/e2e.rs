@@ -129,12 +129,36 @@ impl E2e {
             &html_mail("Wide Layout Co <hello@wide.example>", me, "Fixed-width newsletter", &d(1, 5), "<table width=\"1400\" style=\"width:1400px\"><tr><td width=\"700\">Left column of a fixed-width layout.</td><td width=\"700\" align=\"right\">WIDE-RIGHT-END</td></tr></table>", ""),
             &["INBOX", "CATEGORY_PERSONAL"],
         );
-        let long: String = (1..=150).map(|i| format!("<p>Paragraph {i} of a long letter, long enough to need scrolling.</p>")).collect::<String>() + "<p id=\"last\">LONG-LAST-LINE</p>";
+        let long: String = "<p><a href=\"#last\" id=\"jump\">Jump to the end</a></p>".to_string() + &(1..=150).map(|i| format!("<p>Paragraph {i} of a long letter, long enough to need scrolling.</p>")).collect::<String>() + "<p id=\"last\">LONG-LAST-LINE</p>";
         gmail.deliver(&html_mail("Long Letter <hello@long.example>", me, "A very long message", &d(1, 4), &long, ""), &["INBOX", "CATEGORY_PERSONAL"]);
+        // Awkward shapes for the layout checks: a 300-character subject, a long sender name, an unbroken word,
+        // right-to-left text, and a message to 60 people.
+        let long_subject = format!("Awkward subject {}", "that keeps going and going ".repeat(10)).trim().to_string();
+        let long_name = format!("{} <very.long.sender.name@awkward.example>", "Bartholomew Maximilian Featherstonehaugh-Worthington III");
+        gmail.deliver(
+            &mail(&long_name, me, &long_subject, &d(1, 2), &format!("Supercalifragilistic{}expialidocious", "x".repeat(200)), ""),
+            &["INBOX", "CATEGORY_PERSONAL", "Label_1"],
+        );
+        gmail.deliver(&mail("سارا <sara@rtl.example>", me, "سلام، جلسه فردا ساعت ده است", &d(1, 2), "لطفاً یادداشت‌ها را بیاورید.", ""), &["INBOX", "CATEGORY_PERSONAL"]);
+        let crowd: Vec<String> = (1..=60).map(|i| format!("Person {i} <p{i}@crowd.example>")).collect();
+        gmail.deliver(&mail("Big List <host@crowd.example>", &format!("{me}, {}", crowd.join(", ")), "Party for everyone", &d(1, 2), "You're all invited.", ""), &["INBOX", "CATEGORY_PERSONAL"]);
         gmail.deliver(
             &html_mail("Link Sender <links@example.org>", me, "Links to open", &d(1, 3), "<p><a href=\"https://example.org/e2e-target\">Open the page</a></p><p><a href=\"mailto:links@example.org?subject=Hello\">Write to us</a></p>", ""),
             &["INBOX", "CATEGORY_PERSONAL"],
         );
+        // A calendar invitation (iCalendar REQUEST) to answer.
+        {
+            let start = (now + chrono::Duration::days(2)).with_timezone(&chrono::Utc).format("%Y%m%dT150000Z").to_string();
+            let end = (now + chrono::Duration::days(2)).with_timezone(&chrono::Utc).format("%Y%m%dT160000Z").to_string();
+            let ics = format!(
+                "BEGIN:VCALENDAR\r\nPRODID:-//Example//Cal//EN\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nDTSTART:{start}\r\nDTEND:{end}\r\nUID:design-review-1@cal.example\r\nSEQUENCE:0\r\nORGANIZER;CN=Ana Lima:mailto:ana@cal.example\r\nATTENDEE;CN=Pat Example;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:pat@example.com\r\nSUMMARY:Design review\r\nLOCATION:Room 4\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+            );
+            let raw = format!(
+                "From: Ana Lima <ana@cal.example>\r\nTo: {me}\r\nSubject: Invitation: Design review\r\nDate: {}\r\nMessage-ID: <invite1@seed.example>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"m1\"\r\n\r\n--m1\r\nContent-Type: multipart/alternative; boundary=\"a1\"\r\n\r\n--a1\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nYou're invited to the design review.\r\n--a1\r\nContent-Type: text/calendar; method=REQUEST; charset=utf-8\r\n\r\n{ics}--a1--\r\n--m1\r\nContent-Type: application/ics; name=\"invite.ics\"\r\nContent-Disposition: attachment; filename=\"invite.ics\"\r\n\r\n{ics}--m1--\r\n",
+                d(0, 7)
+            );
+            gmail.deliver(raw.as_bytes(), &["INBOX", "UNREAD", "CATEGORY_PERSONAL"]);
+        }
         // A label with more than a page of mail, a third of it older than the offline window (never cached),
         // for "select all conversations in this view"; and a small one for "delete all except selected".
         for i in 0..60 {

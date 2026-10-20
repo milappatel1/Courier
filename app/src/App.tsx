@@ -17,6 +17,7 @@ import {
   setSetting,
   setState,
   applyViewportSize,
+  openThreadById,
   stepThread,
   toast,
   toggleNav,
@@ -28,6 +29,7 @@ import {
 import { Dialogs, Toasts } from "./ui/Dialogs";
 import { ComposeDock } from "./ui/Compose";
 import { Conversation, shareOpenConversation } from "./ui/Conversation";
+import { scrollToAnchor } from "./ui/MessageFrame";
 import { Header } from "./ui/Header";
 import { ListView } from "./ui/ListView";
 import { Nav } from "./ui/Nav";
@@ -54,6 +56,7 @@ export function App() {
   useShortcuts();
   useMenuCommands();
   useOpenItems();
+  useFrameAnchors();
   if (!ready) return <div className="app" />;
   if (!accounts.length) {
     return (
@@ -551,12 +554,22 @@ async function openEmlDialog() {
   if (typeof path === "string") await api.windowOpen("eml", { path }, path.split("/").pop());
 }
 
+/** In-message links to a spot in the same message, reported by the native navigation handler (WebKit). */
+function useFrameAnchors() {
+  useEffect(() => {
+    const p = on<{ id: string }>("frame-anchor", (e) => scrollToAnchor(e.id));
+    return () => void p.then((f) => f());
+  }, []);
+}
+
 function useOpenItems() {
   useEffect(() => {
     const handle = (item: OpenItem) => {
       if (item.kind === "mailto" && item.url) void openMailto(item.url);
       if (item.kind === "eml" && item.path) void api.windowOpen("eml", { path: item.path }, item.path.split("/").pop());
       if (item.kind === "attach" && item.paths?.length) void composeWithFiles(item.paths);
+      // A clicked notification: that conversation (or the account's inbox for a summary of several).
+      if (item.kind === "thread" && item.accountId) void openThreadById(item.accountId, item.threadId ?? "");
     };
     void api
       .pendingOpens()

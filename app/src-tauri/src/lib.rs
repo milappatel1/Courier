@@ -41,9 +41,44 @@ impl Notifier for TauriNotifier {
             e.notes.lock().push(json!({"title": title, "body": body, "accountId": account_id, "threadId": thread_id}));
             return;
         }
+        #[cfg(target_os = "macos")]
+        if notify_and_open_on_click(&self.app, title, body, account_id, thread_id) {
+            return;
+        }
         use tauri_plugin_notification::NotificationExt;
         let _ = self.app.notification().builder().title(title).body(body).show();
     }
+}
+
+/// Notifications waiting for a click (each holds a thread until it's clicked or dismissed); kept small.
+#[cfg(target_os = "macos")]
+static WAITING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Shows the notification and, when it's clicked, opens that conversation (or the account's inbox for a
+/// summary). Returns false if the system notifications aren't available, so the plugin's can be used.
+#[cfg(target_os = "macos")]
+fn notify_and_open_on_click(app: &AppHandle, title: &str, body: &str, account_id: &str, thread_id: &str) -> bool {
+    use std::sync::atomic::Ordering;
+    static READY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let id = app.config().identifier.clone();
+    if !*READY.get_or_init(|| mac_notification_sys::set_application(&id).is_ok()) {
+        return false;
+    }
+    let wait = WAITING.load(Ordering::SeqCst) < 16;
+    let (app, title, body, account, thread) = (app.clone(), title.to_string(), body.to_string(), account_id.to_string(), thread_id.to_string());
+    std::thread::spawn(move || {
+        if wait {
+            WAITING.fetch_add(1, Ordering::SeqCst);
+        }
+        let r = mac_notification_sys::Notification::new().title(&title).message(&body).default_sound().wait_for_click(wait).send();
+        if wait {
+            WAITING.fetch_sub(1, Ordering::SeqCst);
+        }
+        if matches!(r, Ok(mac_notification_sys::NotificationResponse::Click)) {
+            deliver_open(&app, json!({"kind": "thread", "accountId": account, "threadId": thread}));
+        }
+    });
+    true
 }
 
 struct BrowserOpener {
@@ -64,6 +99,17 @@ impl Opener for BrowserOpener {
         }
         tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| error::Error::msg(e.to_string()))
     }
+}
+
+/// An in-message jump link (rewritten to ANCHOR_LINK by the sanitiser): scroll the conversation to its spot.
+fn anchor_jump(app: &AppHandle, url: &tauri::Url) -> bool {
+    if url.host_str() != Some("anchor.courier.invalid") {
+        return false;
+    }
+    if let Some(f) = url.fragment().filter(|f| !f.is_empty()) {
+        let _ = app.emit("frame-anchor", json!({"id": percent_encoding::percent_decode_str(f).decode_utf8_lossy()}));
+    }
+    true
 }
 
 /// A link from a message (or anywhere in the app) goes to the default browser or mail handler, never into
@@ -134,7 +180,9 @@ pub fn window_builder<'a>(app: &'a AppHandle, label: &str, url: &str, title: &st
         .on_new_window({
             let app = app.clone();
             move |url, _| {
-                open_link(&app, url.as_str());
+                if !anchor_jump(&app, &url) {
+                    open_link(&app, url.as_str());
+                }
                 tauri::webview::NewWindowResponse::Deny
             }
         })
@@ -145,6 +193,9 @@ pub fn window_builder<'a>(app: &'a AppHandle, label: &str, url: &str, title: &st
         .on_navigation({
             let app = app.clone();
             move |url| {
+                if anchor_jump(&app, url) {
+                    return false;
+                }
                 if keeps_inside(url) {
                     return true;
                 }

@@ -2,6 +2,9 @@
 // defence in depth: no scripts or active content, no remote loads until "Display images", tracking pixels
 // removed, links forced to open outside, and trailing quoted history wrapped so the UI can fold it ("•••").
 
+/** In-message jump links are rewritten to this reserved address (.invalid never resolves; RFC 2606). */
+export const ANCHOR_LINK = "https://anchor.courier.invalid/";
+
 export interface SanitizeOptions {
   allowRemote: boolean;
   /** cid → URL (blob:/data:) for inline images that came with the message. */
@@ -189,7 +192,13 @@ export function sanitizeHtml(html: string, opts: SanitizeOptions, parser: DomPar
     if (tag === "a") {
       const href = el.getAttribute("href");
       if (href != null && !SAFE_LINK.test(href.trim())) el.removeAttribute("href");
-      if (el.getAttribute("href") && !el.getAttribute("href")!.startsWith("#")) {
+      const h = el.getAttribute("href");
+      if (h && h.startsWith("#") && h.length > 1) {
+        // A jump within the message. WebKit doesn't report those from a script-free frame, so it goes out like
+        // any link, to an address that never resolves, which the app turns into "scroll the conversation there".
+        el.setAttribute("href", `${ANCHOR_LINK}${h}`);
+        el.setAttribute("target", "_blank");
+      } else if (h && !h.startsWith("#")) {
         el.setAttribute("target", "_blank");
         el.setAttribute("rel", "noopener noreferrer");
       }

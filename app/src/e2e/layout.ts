@@ -94,6 +94,19 @@ export function layoutIssues(root: ParentNode = document): string[] {
         }
     }
   }
+  // Popups must be whole: not cut off by the window or by the scrolling box they sit in.
+  for (const e of root.querySelectorAll(".details-pop, .menu, .sender-card, .emoji-pop, .event-card, .compose, .qs, .toast, .advanced, .search-suggest")) {
+    if (!shown(e)) continue;
+    const r = e.getBoundingClientRect();
+    if (r.left < -1 || r.right > W + 1) out.push(`${describe(e)} is cut off by the window (${Math.round(r.left)}–${Math.round(r.right)})`);
+    for (let p = e.parentElement; p && p !== document.body; p = p.parentElement) {
+      const cs = getComputedStyle(p);
+      if (cs.overflowX === "visible" && cs.overflowY === "visible") continue;
+      const box = p.getBoundingClientRect();
+      if (r.left < box.left - 1 || r.right > box.right + 1) out.push(`${describe(e)} is cut off by ${describe(p)} on the side`);
+      break;
+    }
+  }
   for (const e of root.querySelectorAll(".app *")) {
     if (!shown(e)) continue;
     if (visibleRect(e).right > W + 1) out.push(`${describe(e)} sticks out past the right edge`);

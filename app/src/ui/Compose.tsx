@@ -337,7 +337,7 @@ function ComposeBody({ c, inline, onPopOut }: { c: ComposeData; inline?: boolean
       style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative" }}
       onKeyDown={onKey}
       onDragOver={(e) => {
-        if (e.dataTransfer.types.includes("Files")) {
+        if (e.dataTransfer.types.includes("Files") || e.dataTransfer.types.includes("application/x-courier-threads")) {
           e.preventDefault();
           setDropping(true);
         }
@@ -346,6 +346,14 @@ function ComposeBody({ c, inline, onPopOut }: { c: ComposeData; inline?: boolean
         if (!(e.currentTarget as Element).contains(e.relatedTarget as Node)) setDropping(false);
       }}
       onDrop={(e) => {
+        // Conversations dragged from the list are attached as messages (.eml), as forwarding them would.
+        const threads = e.dataTransfer.getData("application/x-courier-threads");
+        if (threads) {
+          e.preventDefault();
+          setDropping(false);
+          void attachConversations(c.id, JSON.parse(threads) as { accountId: string; threadIds: string[] });
+          return;
+        }
         if (!e.dataTransfer.files.length) return;
         e.preventDefault();
         setDropping(false);
@@ -1145,6 +1153,31 @@ function SpellDialog({ html, onClose, onFix }: { html: string; onClose: () => vo
       ))}
     </Dialog>
   );
+}
+
+/** Attach whole conversations' latest messages to a draft (dropped from the list). */
+async function attachConversations(composeId: string, drop: { accountId: string; threadIds: string[] }) {
+  try {
+    const add: { filename: string; raw: Uint8Array }[] = [];
+    for (const id of drop.threadIds.slice(0, 20)) {
+      const d = await api.thread(drop.accountId, id);
+      const m = [...d.messages].reverse().find((x) => !x.labels.includes("DRAFT"));
+      if (!m) continue;
+      add.push({
+        filename: `${
+          (m.subject || "message")
+            .replace(/[\\/:*?"<>|]+/g, " ")
+            .trim()
+            .slice(0, 80) || "message"
+        }.eml`,
+        raw: await api.raw(drop.accountId, m.id),
+      });
+    }
+    const c = useMail.getState().composes.find((x) => x.id === composeId);
+    if (c && add.length) changeCompose(composeId, { forwarded: [...c.forwarded, ...add] });
+  } catch (e) {
+    toast(`Couldn't attach that: ${errorText(e)}`);
+  }
 }
 
 // ---- emoji ----

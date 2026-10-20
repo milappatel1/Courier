@@ -31,6 +31,7 @@ import {
 } from "../state/store";
 import { ComposeInline } from "./Compose";
 import { Avatar, FileIcon, Icon, IconButton, Menu, anchorOf, useFollowAnchor, type MenuEntry } from "./common";
+import { calendarPart, EventCard } from "./EventCard";
 import { FilterDialog } from "./FilterDialog";
 import { MessageFrame, type FrameState } from "./MessageFrame";
 import { LabelAsBody, LabelAsMenu, MoveToMenu, SnoozeMenu } from "./menus";
@@ -386,7 +387,7 @@ function Message({
       <div className="msg-avatar">
         <Avatar name={name} email={m.fromEmail} size={40} />
       </div>
-      <div style={{ minWidth: 0 }}>
+      <div className="msg-main">
         <div className="msg-head">
           <div style={{ flex: 1, minWidth: 0 }} onClick={onToggle}>
             <div className="msg-from">
@@ -452,6 +453,7 @@ function Message({
         {menu && <Menu anchor={menu} items={items()} onClose={() => setMenu(null)} className="icons" label="Message options" />}
         {filter && <FilterDialog criteria={filter} onClose={() => setFilter(null)} accountId={accountId} />}
         <div className="msg-body selectable">
+          {parsed && calendarPart(parsed.attachments) && <EventCard accountId={accountId} part={calendarPart(parsed.attachments)!} />}
           {frame?.hasRemote && !allowRemote && frame.blocked > 0 && (
             <div className="images-banner" data-testid="images-banner">
               <span>Images in this message are hidden.</span>
@@ -483,7 +485,7 @@ function Message({
               <Icon name="more_horiz" />
             </button>
           )}
-          {parsed && <Attachments items={parsed.attachments.filter((a) => !a.inline || !parsed.html?.includes(`cid:${a.contentId}`))} />}
+          {parsed && <Attachments items={parsed.attachments.filter((a) => !a.alternative && (!a.inline || !parsed.html?.includes(`cid:${a.contentId}`)))} />}
         </div>
       </div>
     </div>

@@ -718,6 +718,7 @@ dependencies = [
  "hickory-resolver",
  "lettre",
  "log",
+ "mac-notification-sys",
  "mail-parser",
  "objc2",
  "objc2-app-kit",

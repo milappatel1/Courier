@@ -30,7 +30,7 @@ const bytes = (v: unknown): Uint8Array => {
 };
 
 /** What the Mac hands Courier: a mailto: link, an .eml file to read, or files to send. */
-export type OpenItem = { kind: "mailto" | "eml" | "attach"; url?: string; path?: string; paths?: string[] };
+export type OpenItem = { kind: "mailto" | "eml" | "attach" | "thread"; url?: string; path?: string; paths?: string[]; accountId?: string; threadId?: string };
 
 export const api = {
   appInfo: () => call<AppInfo>("app_info"),

@@ -1,7 +1,7 @@
 // One message body in a sandboxed iframe: sanitised HTML, remote images off until allowed, trailing quotes
 // folded, links opened outside (mailto: opens a compose window).
 import { useEffect, useMemo, useRef, useState } from "react";
-import { frameDocument, sanitizeHtml } from "../core/sanitize";
+import { ANCHOR_LINK, frameDocument, sanitizeHtml } from "../core/sanitize";
 import { textToHtml } from "../core/text";
 import type { ParsedMessage } from "../core/mime/parse";
 import { api } from "../ipc/api";
@@ -92,8 +92,8 @@ export function MessageFrame({
         if (!a) return;
         e.preventDefault();
         const href = a.getAttribute("href") ?? "";
-        if (href.startsWith("#")) {
-          d.getElementById(href.slice(1))?.scrollIntoView();
+        if (href.startsWith("#") || href.startsWith(ANCHOR_LINK)) {
+          scrollToAnchor(decodeURIComponent(href.slice(href.indexOf("#") + 1)));
           return;
         }
         if (/^mailto:/i.test(href)) void openMailto(href);
@@ -120,4 +120,18 @@ export function MessageFrame({
       data-testid={testId ?? "message-frame"}
     />
   );
+}
+
+/** Scroll the conversation to an element of an open message (an in-message link like href="#section"). */
+export function scrollToAnchor(id: string) {
+  for (const f of document.querySelectorAll<HTMLIFrameElement>("iframe.msg-frame")) {
+    const d = f.contentDocument;
+    const target = d?.getElementById(id) ?? (d?.getElementsByName(id)[0] as HTMLElement | undefined);
+    if (!target) continue;
+    const box = f.closest(".conv") ?? f.parentElement;
+    if (!box) return;
+    const y = f.getBoundingClientRect().top + target.getBoundingClientRect().top - box.getBoundingClientRect().top;
+    box.scrollTop += y - 16;
+    return;
+  }
 }

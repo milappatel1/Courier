@@ -53,7 +53,8 @@ describe("sanitiser", () => {
     const r = clean(`<a href="https://example.com">a</a><a href="mailto:x@example.com">m</a><a href="#top">t</a><a href="data:text/html,x">d</a>`);
     expect(r.html).toContain('href="https://example.com" target="_blank" rel="noopener noreferrer"');
     expect(r.html).toContain('href="mailto:x@example.com"');
-    expect(r.html).toContain('<a href="#top">t</a>');
+    // A jump within the message goes out as a reserved address the app turns into a scroll (WebKit).
+    expect(r.html).toContain('<a href="https://anchor.courier.invalid/#top" target="_blank">t</a>');
     expect(r.html).not.toContain("data:text/html");
   });
 

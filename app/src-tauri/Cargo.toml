@@ -47,6 +47,8 @@ log = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"
+# Notifications that report a click (the notification plugin's don't), so a click opens the conversation.
+mac-notification-sys = "0.6"
 objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSURL", "NSDictionary", "NSGeometry", "NSObject", "NSArray", "NSError", "NSUserDefaults", "NSValue", "NSTextCheckingResult", "NSRange", "NSOrthography", "NSProcessInfo", "NSNotification", "NSOperation", "NSSpellServer", "block2"] }

@@ -383,6 +383,9 @@ export function search(query: string) {
   const q = query.trim();
   if (!q) return go({ label: "INBOX" });
   go({ label: null, category: null, query: q });
+  // Remembered for the search box's suggestions (ten, newest first, no repeats).
+  const recent = [q, ...get().settings.recentSearches.filter((x) => x !== q)].slice(0, 10);
+  void setSetting("recentSearches", recent);
 }
 
 export async function setAccount(id: string) {
@@ -496,6 +499,18 @@ export async function loadThread(ref: ThreadRef) {
     if (seq !== threadSeq) return;
     set({ thread: { detail: null, loading: false, error: errorText(e) } });
   }
+}
+
+/** Open a conversation by id (a clicked notification), switching to its account first unless all are shown. */
+export async function openThreadById(accountId: string, threadId: string) {
+  const s = get();
+  if (s.accountId !== accountId && s.accountId !== "all" && s.accounts.some((a) => a.id === accountId)) await setAccount(accountId);
+  if (get().route.settings) set((st) => ({ route: { ...st.route, settings: null } }));
+  if (!threadId) return go({ label: "INBOX" });
+  const ref = { accountId, threadId };
+  set((st) => ({ route: { ...st.route, thread: ref }, drawer: false }));
+  pushHash();
+  void loadThread(ref);
 }
 
 export function openThread(t: ThreadSummary) {

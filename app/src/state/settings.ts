@@ -44,6 +44,8 @@ export interface Settings {
   advancedToolbar: boolean;
   /** The one-time offer to become the default mail app was answered. */
   defaultMailAsked: boolean;
+  /** Searches run lately, newest first (offered when the search box is clicked). */
+  recentSearches: string[];
   sendAndArchive: boolean;
   defaultFont: FontStyle;
   images: "always" | "ask";
@@ -89,6 +91,7 @@ export const DEFAULTS: Settings = {
   swipeRight: "none",
   advancedToolbar: false,
   defaultMailAsked: false,
+  recentSearches: [],
   sendAndArchive: false,
   defaultFont: { family: "sans", size: "normal", color: "#222222" },
   images: "always",

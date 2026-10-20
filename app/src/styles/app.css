@@ -1719,18 +1719,26 @@ a {
 .conv-foot .btn .ic {
   font-size: 20px;
 }
-.msg-to-wrap {
+/* The details box hangs under "to …" (its natural place, top: auto) but measures its width against the whole
+   message column, so it never runs past the conversation's edge. */
+.msg-main {
+  min-width: 0;
   position: relative;
-  display: inline-block;
+}
+.msg-to-wrap {
+  display: block;
   max-width: 100%;
 }
 .details-pop {
   position: absolute;
   left: 0;
-  top: calc(100% + 4px);
+  top: auto;
+  margin-top: 4px;
   z-index: 40;
   width: max-content;
-  max-width: min(560px, calc(100vw - 48px));
+  /* Never wider than the message column; the value column caps it near 560 px on wide windows. */
+  max-width: 100%;
+  box-sizing: border-box;
   overflow-wrap: anywhere;
   background: #fff;
   box-shadow: var(--shadow-menu);
@@ -1742,7 +1750,6 @@ a {
   grid-template-columns: auto 1fr;
   column-gap: 12px;
   row-gap: 2px;
-  max-width: 560px;
   -webkit-user-select: text;
   user-select: text;
 }
@@ -1753,6 +1760,8 @@ a {
 }
 .details-pop span {
   color: #222;
+  max-width: 440px;
+  min-width: 0;
 }
 
 /* ---- menus ---- */
@@ -3814,4 +3823,138 @@ a {
 }
 .send-archive:hover {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* Calendar invitation card */
+.event-card {
+  display: flex;
+  gap: 16px;
+  max-width: 640px;
+  margin: 4px 0 16px;
+  padding: 16px;
+  border: 1px solid var(--row-divider);
+  border-radius: 12px;
+  background: var(--msg-card, #fff);
+  font-family: var(--font);
+}
+.event-card.canceled .ev-title {
+  text-decoration: line-through;
+  color: var(--text-2);
+}
+.ev-date {
+  flex: none;
+  width: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--row-divider);
+  height: fit-content;
+}
+.ev-mon {
+  width: 100%;
+  text-align: center;
+  background: #d93025;
+  color: #fff;
+  font: 500 11px/18px var(--font);
+  letter-spacing: 0.5px;
+}
+.ev-day {
+  font: 400 24px/30px var(--font);
+  color: #202124;
+}
+.ev-wd {
+  font: 400 11px/16px var(--font);
+  color: #5f6368;
+  padding-bottom: 4px;
+}
+.ev-body {
+  min-width: 0;
+  flex: 1;
+}
+.ev-title {
+  font: 400 18px/24px var(--font);
+  color: #202124;
+  margin-bottom: 4px;
+}
+.ev-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 400 14px/22px var(--font);
+  color: #3c4043;
+}
+.ev-line .ic {
+  color: #5f6368;
+}
+.ev-note {
+  margin-top: 6px;
+  font: 500 14px/20px var(--font);
+  color: #3c4043;
+}
+.ev-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-top: 12px;
+}
+.ev-rsvp {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ev-q {
+  font: 500 14px/20px var(--font);
+  color: #3c4043;
+  margin-right: 4px;
+}
+.ev-ans {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 16px;
+  border: 1px solid #747775;
+  border-radius: 16px;
+  background: transparent;
+  color: #1f1f1f;
+  font: 500 14px/20px var(--font);
+  cursor: pointer;
+}
+.ev-ans.on {
+  background: #c2e7ff;
+  border-color: #c2e7ff;
+  color: #001d35;
+}
+.ev-ans:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Settings ▸ Filters: tools row and the import preview */
+.filter-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.filter-tools .grow {
+  flex: 1;
+}
+.import-box {
+  border: 1px solid var(--settings-border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 8px 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.import-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }

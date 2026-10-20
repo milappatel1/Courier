@@ -31,6 +31,8 @@ export interface ParsedAttachment {
   contentId: string | null;
   inline: boolean;
   data: Uint8Array;
+  /** Part of the message's alternatives (an invitation's calendar data), not a file to list. */
+  alternative?: boolean;
 }
 
 export interface ParsedMessage {
@@ -191,7 +193,8 @@ function collect(root: MimePart) {
           if (!htmlKid) visit(textKid, true);
           else textParts.push(partText(textKid));
         }
-        for (const k of kids) if (k !== htmlKid && k !== textKid && !k.contentType.startsWith("text/")) visit(k, inAlternative);
+        // Other alternatives: an invitation's text/calendar part, images… (other text versions are skipped).
+        for (const k of kids) if (k !== htmlKid && k !== textKid && (!k.contentType.startsWith("text/") || k.contentType === "text/calendar")) visit(k, true);
         return;
       }
       p.children.forEach((c) => visit(c, inAlternative));
@@ -220,6 +223,8 @@ function collect(root: MimePart) {
         contentId: p.contentId,
         inline: inlineImage,
         data: p.body,
+        // A calendar invitation's own part (not a file the sender attached).
+        alternative: inAlternative && p.contentType === "text/calendar" && !isAttachmentDisposition(p),
       });
     }
   };
