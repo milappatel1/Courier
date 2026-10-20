@@ -327,14 +327,43 @@ pub async fn message_raw(st: S<'_>, account_id: String, message_id: String) -> R
 
 // ---- actions ----
 
+/// The action log in courier.log: what was done, to how many, and how it ended. Never subjects, addresses or
+/// message text; label ids only.
+fn log_action<T>(account: &str, what: &str, r: &Result<T>) {
+    match r {
+        Ok(_) => crate::applog::info(&format!("{account}: {what}: done")),
+        Err(e) => crate::applog::warn(&format!("{account}: {what}: failed ({})", e.kind())),
+    }
+}
+
+fn log_bulk(account: &str, what: &str, r: &Result<crate::engine::BulkOutcome>) {
+    match r {
+        Ok(o) => crate::applog::info(&format!("{account}: {what}: {} conversation(s) done, {} not", o.conversations, o.failed_conversations)),
+        Err(e) => crate::applog::warn(&format!("{account}: {what}: failed ({})", e.kind())),
+    }
+}
+
+fn view_name(v: &ViewQuery) -> String {
+    let label = v.label.clone().unwrap_or_else(|| "search".into());
+    match v.category.as_deref() {
+        Some(c) if !c.is_empty() => format!("{label}/{c}"),
+        _ if v.query.as_deref().is_some_and(|q| !q.is_empty()) => format!("{label} (search)"),
+        _ => label,
+    }
+}
+
 #[tauri::command]
 pub async fn modify_threads(st: S<'_>, account_id: String, thread_ids: Vec<String>, add: Vec<String>, remove: Vec<String>) -> Result<()> {
-    st.engine.modify_threads(&account_id, &thread_ids, &add, &remove).await
+    let r = st.engine.modify_threads(&account_id, &thread_ids, &add, &remove).await;
+    log_action(&account_id, &format!("labels +{add:?} -{remove:?} on {} conversation(s)", thread_ids.len()), &r);
+    r
 }
 
 #[tauri::command]
 pub async fn modify_messages(st: S<'_>, account_id: String, message_ids: Vec<String>, add: Vec<String>, remove: Vec<String>) -> Result<()> {
-    st.engine.modify_messages(&account_id, &message_ids, &add, &remove).await
+    let r = st.engine.modify_messages(&account_id, &message_ids, &add, &remove).await;
+    log_action(&account_id, &format!("labels +{add:?} -{remove:?} on {} message(s)", message_ids.len()), &r);
+    r
 }
 
 #[tauri::command]
@@ -350,32 +379,45 @@ pub fn mark_unsubscribed(st: S, account_id: String, email: String) -> Result<()>
 /// "Select all conversations in this view" actions: every page, on the server, minus the ones to keep.
 #[tauri::command]
 pub async fn bulk_modify(st: S<'_>, view: ViewQuery, add: Vec<String>, remove: Vec<String>, keep: Vec<String>) -> Result<crate::engine::BulkOutcome> {
-    st.engine.bulk_modify(&view, &add, &remove, &keep).await
+    let r = st.engine.bulk_modify(&view, &add, &remove, &keep).await;
+    let what = format!("whole view {} +{add:?} -{remove:?}, {} kept", view_name(&view), keep.len());
+    log_bulk(&view.account_id, &what, &r);
+    r
 }
 
 #[tauri::command]
 pub async fn bulk_delete_forever(st: S<'_>, view: ViewQuery, keep: Vec<String>) -> Result<crate::engine::BulkOutcome> {
-    st.engine.bulk_delete_forever(&view, &keep).await
+    let r = st.engine.bulk_delete_forever(&view, &keep).await;
+    log_bulk(&view.account_id, &format!("whole view {} deleted forever, {} kept", view_name(&view), keep.len()), &r);
+    r
 }
 
 #[tauri::command]
 pub async fn delete_forever(st: S<'_>, account_id: String, thread_ids: Vec<String>) -> Result<()> {
-    st.engine.delete_forever(&account_id, &thread_ids).await
+    let r = st.engine.delete_forever(&account_id, &thread_ids).await;
+    log_action(&account_id, &format!("deleted forever {} conversation(s)", thread_ids.len()), &r);
+    r
 }
 
 #[tauri::command]
 pub async fn empty_label(st: S<'_>, account_id: String, label: String) -> Result<usize> {
-    st.engine.empty_label(&account_id, &label).await
+    let r = st.engine.empty_label(&account_id, &label).await;
+    log_action(&account_id, &format!("emptied {label}{}", r.as_ref().map(|n| format!(" ({n} message(s))")).unwrap_or_default()), &r);
+    r
 }
 
 #[tauri::command]
 pub async fn snooze_threads(st: S<'_>, account_id: String, thread_ids: Vec<String>, until: i64) -> Result<()> {
-    st.engine.snooze(&account_id, &thread_ids, until).await
+    let r = st.engine.snooze(&account_id, &thread_ids, until).await;
+    log_action(&account_id, &format!("snoozed {} conversation(s)", thread_ids.len()), &r);
+    r
 }
 
 #[tauri::command]
 pub async fn unsnooze_threads(st: S<'_>, account_id: String, thread_ids: Vec<String>) -> Result<()> {
-    st.engine.unsnooze(&account_id, &thread_ids).await
+    let r = st.engine.unsnooze(&account_id, &thread_ids).await;
+    log_action(&account_id, &format!("unsnoozed {} conversation(s)", thread_ids.len()), &r);
+    r
 }
 
 #[tauri::command]
@@ -659,7 +701,9 @@ pub async fn forwarding_remove(st: S<'_>, account_id: String, email: String) -> 
 
 #[tauri::command]
 pub async fn unsubscribe_one_click(st: S<'_>, url: String) -> Result<()> {
-    st.engine.unsubscribe_one_click(&url).await
+    let r = st.engine.unsubscribe_one_click(&url).await;
+    log_action("-", "one-click unsubscribe", &r);
+    r
 }
 
 #[tauri::command]

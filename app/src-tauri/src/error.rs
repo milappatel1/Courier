@@ -45,6 +45,23 @@ impl Error {
     pub fn is_auth(&self) -> bool {
         matches!(self, Error::Auth(_))
     }
+    /// The kind of failure, for the log (the text itself can carry a server's words about a message).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Error::Msg(_) => "refused",
+            Error::Offline(_) => "offline",
+            Error::Network(_) => "network",
+            Error::RateLimited(_) => "rate limited",
+            Error::Auth(_) => "needs sign-in",
+            Error::NotFound(_) => "not found",
+            Error::Server(_) => "server refused",
+            Error::Db(_) => "database",
+            Error::Io(_) => "file",
+            Error::Json(_) => "bad data",
+            Error::Imap(_) => "IMAP refused",
+            Error::Smtp(_) => "SMTP refused",
+        }
+    }
 }
 
 impl From<reqwest::Error> for Error {

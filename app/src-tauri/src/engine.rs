@@ -464,8 +464,11 @@ impl Engine {
                         r.new_messages
                     }
                     Err(Error::NotFound(_)) => {
+                        crate::applog::info(&format!("{account}: the server's history doesn't reach back to the last sync; syncing again in full"));
                         self.db.set_account_state(account, "initialSyncDone", json!(false))?;
                         gmail::initial_sync(&g, &self.db, account, days, 2000).await?;
+                        let n = gmail::reconcile_cache(&g, &self.db, account, 5000).await?;
+                        crate::applog::info(&format!("{account}: full sync done; {n} cached message(s) were out of date"));
                         self.changed(account, "resync");
                         vec![]
                     }
@@ -788,6 +791,9 @@ impl Engine {
         let (label_ids, q) = self.gmail_view_query_for(v);
         let include_spam_trash = label == "TRASH" || label == "SPAM";
         let (ids, next, estimate) = gmail::list_page(&g, &self.db, account, &label_ids, Some(&q), v.page_token.as_deref(), limit as u32, include_spam_trash).await?;
+        if v.page_token.is_none() && !label.is_empty() {
+            self.correct_cached_page(&g, account, v, &ids, next.is_none(), limit).await;
+        }
         // Locally snoozed threads stay hidden from the inbox.
         let snoozed: HashSet<String> = if label == "INBOX" { self.db.snoozed_thread_ids(account)?.into_iter().map(|x| x.0).collect() } else { HashSet::new() };
         let ids: Vec<(String, i64)> = ids.into_iter().filter(|i| !snoozed.contains(i)).map(|i| (i, 0)).collect();
@@ -798,6 +804,52 @@ impl Engine {
             (estimate, true)
         };
         Ok(ViewResult { has_more: next.is_some(), next_page_token: next, total, estimate: est, threads, source: "server".into() })
+    }
+
+    /// The cached first page of a view lists conversations the server's first page doesn't (changed on another
+    /// device, and the change hasn't reached Courier): ask the server about those, so the cached listing shown
+    /// first next time agrees with it.
+    async fn correct_cached_page(&self, g: &gmail::Gmail, account: &str, v: &ViewQuery, server: &[String], complete: bool, limit: i64) {
+        let mut local = v.clone();
+        local.mode = Some("cache".into());
+        let Ok((cached, _)) = self.local_list(account, &local, 0, limit) else { return };
+        let listed: HashSet<&String> = server.iter().collect();
+        // Within the span the server page covers: newer than its oldest row, or everything when it was the last page.
+        let oldest = server.iter().filter_map(|id| self.db.thread_messages(account, id).ok()).filter_map(|ms| ms.iter().map(|m| m.internal_date).max()).min().unwrap_or(0);
+        let stale: Vec<String> = cached.into_iter().filter(|t| !listed.contains(&t.thread_id) && (complete || t.last_date >= oldest)).map(|t| t.thread_id).take(50).collect();
+        if stale.is_empty() {
+            return;
+        }
+        use futures::stream::{self, StreamExt};
+        let got: Vec<(String, Result<Value>)> = stream::iter(stale.into_iter().map(|t| async move {
+            let r = g.thread_minimal(&t).await;
+            (t, r)
+        }))
+        .buffer_unordered(8)
+        .collect()
+        .await;
+        for (t, r) in got {
+            let cached = self.db.thread_messages(account, &t).unwrap_or_default();
+            match r {
+                Ok(v) => {
+                    let msgs = v["messages"].as_array().cloned().unwrap_or_default();
+                    for m in &msgs {
+                        if let Some(id) = m["id"].as_str() {
+                            let _ = self.db.set_labels(account, id, &gmail::str_labels(m));
+                        }
+                    }
+                    for m in cached.iter().filter(|c| !msgs.iter().any(|x| x["id"].as_str() == Some(c.id.as_str()))) {
+                        let _ = self.db.delete_message(account, &m.id);
+                    }
+                }
+                Err(Error::NotFound(_)) => {
+                    for m in cached {
+                        let _ = self.db.delete_message(account, &m.id);
+                    }
+                }
+                Err(_) => {}
+            }
+        }
     }
 
     // ---- reading ----

@@ -76,7 +76,8 @@ impl Gmail {
                 tokio::time::sleep(rate_limit_wait(attempt) / 2).await;
                 continue;
             }
-            crate::applog::warn(&format!("mail API {} {} → {status} {}: {msg}", method, api_path(url), api_reason(&v)));
+            // Status and reason only: the server's message can quote an address or a header.
+            crate::applog::warn(&format!("mail API {} {} → {status} {}", method, api_path(url), api_reason(&v)));
             return Err(match status {
                 401 => Error::Auth(msg),
                 404 => Error::NotFound(msg),
@@ -277,7 +278,7 @@ pub fn label_row(account: &str, v: &Value) -> LabelRow {
     }
 }
 
-fn str_labels(v: &Value) -> Vec<String> {
+pub fn str_labels(v: &Value) -> Vec<String> {
     v["labelIds"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
 }
 
@@ -550,6 +551,43 @@ pub async fn initial_sync(g: &Gmail, db: &Db, account: &str, window_days: u32, m
     }
     db.set_account_state(account, "initialSyncDone", json!(true))?;
     Ok(SyncReport { new_messages: vec![], changed: !fetched.is_empty(), history_id })
+}
+
+/// After a full resync: the history that would have told Courier what changed is gone, so ask the server about
+/// each cached message (newest first, at most `limit`): deleted ones leave the cache, the rest get their current
+/// labels. Returns how many changed.
+pub async fn reconcile_cache(g: &Gmail, db: &Db, account: &str, limit: i64) -> Result<usize> {
+    use futures::stream::{self, StreamExt};
+    let ids = db.message_ids(account, limit)?;
+    let got: Vec<(String, Result<Value>)> = stream::iter(ids.into_iter().map(|id| async move {
+        let r = g.get(&format!("/messages/{}", enc(&id)), &[("format", "minimal".into())]).await;
+        (id, r)
+    }))
+    .buffer_unordered(8)
+    .collect()
+    .await;
+    let mut changed = 0;
+    for (id, r) in got {
+        match r {
+            Ok(v) => {
+                let labels = str_labels(&v);
+                if db.message(account, &id)?.map(|m| m.labels != labels).unwrap_or(false) {
+                    db.set_labels(account, &id, &labels)?;
+                    changed += 1;
+                }
+            }
+            Err(Error::NotFound(_)) => {
+                db.delete_message(account, &id)?;
+                changed += 1;
+            }
+            Err(e) if e.is_offline() || e.is_auth() || e.is_rate_limited() => return Err(e),
+            Err(_) => {}
+        }
+    }
+    if changed > 0 {
+        refresh_labels(g, db, account).await?;
+    }
+    Ok(changed)
 }
 
 /// Apply history since the stored ID. Err(NotFound) means the ID is too old → run initial_sync again.

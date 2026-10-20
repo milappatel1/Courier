@@ -890,6 +890,15 @@ impl Db {
         })
     }
 
+    /// Every cached message of an account, newest first.
+    pub fn message_ids(&self, account: &str, limit: i64) -> Result<Vec<String>> {
+        self.with(|c| {
+            let mut st = c.prepare("SELECT id FROM messages WHERE account_id = ? ORDER BY internal_date DESC LIMIT ?")?;
+            let rows = st.query_map(params![account, limit], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+    }
+
     pub fn message_ids_in_folder(&self, account: &str, folder: &str) -> Result<HashMap<i64, String>> {
         self.with(|c| {
             let mut s = c.prepare("SELECT imap_uid, id FROM messages WHERE account_id=? AND imap_folder=? AND imap_uid IS NOT NULL")?;
