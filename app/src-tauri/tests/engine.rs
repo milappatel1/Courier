@@ -671,3 +671,25 @@ async fn a_full_resync_drops_mail_deleted_on_the_server_and_refreshes_what_moved
     let inbox = w.engine.list(&view("g1", "INBOX")).await.unwrap();
     assert_eq!(inbox.threads.iter().map(|t| t.subject.as_str()).collect::<Vec<_>>(), vec!["Still here"]);
 }
+
+#[tokio::test]
+async fn a_server_listing_corrects_cached_conversations_it_no_longer_shows() {
+    let w = world().await;
+    let a = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Stays", "x", ""), &["INBOX"]);
+    let b = w.gmail.deliver(&sample_mail("Bo <bo@x.io>", "pat@example.com", "Trashed on the phone", "x", ""), &["INBOX"]);
+    let c = w.gmail.deliver(&sample_mail("Cy <cy@x.io>", "pat@example.com", "Deleted on the phone", "x", ""), &["INBOX"]);
+    w.engine.sync_account("g1").await.unwrap();
+    // Changed on the server, and Courier hasn't heard about it yet.
+    w.gmail.state.lock().messages.get_mut(&b).unwrap().labels = vec!["TRASH".into()];
+    w.gmail.state.lock().messages.remove(&c);
+    let mut server = view("g1", "INBOX");
+    server.mode = Some("server".into());
+    let r = w.engine.list(&server).await.unwrap();
+    assert_eq!(r.threads.len(), 1);
+    // The cached listing (what shows first next time) agrees with the server now: no rows that come and go.
+    let cached = w.engine.list(&view("g1", "INBOX")).await.unwrap();
+    assert_eq!(cached.threads.iter().map(|t| t.subject.as_str()).collect::<Vec<_>>(), vec!["Stays"]);
+    assert!(w.engine.db.message("g1", &c).unwrap().is_none());
+    assert!(w.engine.db.message("g1", &b).unwrap().unwrap().labels.contains(&"TRASH".to_string()));
+    let _ = a;
+}
