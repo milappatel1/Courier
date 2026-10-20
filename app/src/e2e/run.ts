@@ -377,6 +377,29 @@ step(
   200_000,
 );
 
+step("opening a conversation that's on this Mac shows it at once, even when the server is slow", async () => {
+  await backToInbox();
+  await api.e2eControl("gmail-behaviour", { latency: { "threads.get": 800 } });
+  try {
+    for (const subject of ["Quarterly planning notes", "Your application"]) {
+      const r = await until(subject, () => row(subject));
+      const rec = recordFrames();
+      const t0 = performance.now();
+      click(r);
+      await until("the conversation", () => q("conv-subject")?.textContent?.includes(subject));
+      const ms = performance.now() - t0;
+      await sleep(1200);
+      const frames = rec.stop().frames;
+      const blank = frames.find((f) => f.conv === "");
+      check(ms < 250, `${subject}: took ${Math.round(ms)} ms to show`);
+      check(!blank, `${subject}: the pane was blank at +${blank?.t} ms`);
+      await backToInbox();
+    }
+  } finally {
+    await api.e2eControl("gmail-behaviour", { latency: {} });
+  }
+});
+
 step("deleting when the server refuses: a passing refusal is retried, a lasting one says so plainly and can be tried again", async () => {
   await backToInbox();
   for (const n of [1, 2]) await api.e2eControl("deliver-gmail", { from: "Refusal Test <refuse@test.example>", subject: `Refused ${n}`, body: "x" });
