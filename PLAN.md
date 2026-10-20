@@ -5,7 +5,7 @@ Google branding, Google's assets and Google-only services, with multiple account
 
 ## Status
 
-**1.0.5 (2026-10-20, built; not yet released)** — notifications open their conversation and can archive it, calendar invitations with RSVP, compose labels, filter import/export, drag a conversation into a message, sender warnings, in-message jump links, recent searches. See `research/VERIFY-P9.md`.
+**1.0.5 released (2026-10-20)** — https://github.com/milappatel1/Courier/releases/tag/v1.0.5 (`.dmg` and `.zip`, ad-hoc signed; SHA-256 in the release notes): — notifications open their conversation and can archive it, calendar invitations with RSVP, compose labels, filter import/export, drag a conversation into a message, sender warnings, in-message jump links, recent searches. See `research/VERIFY-P9.md`.
 
 **1.0.4 released (2026-10-20)** — https://github.com/milappatel1/Courier/releases/tag/v1.0.4 (`.dmg` and `.zip`, ad-hoc signed; SHA-256 in the release notes): — popups that stay with what they belong to (the details box, menus, the sender card), shortcuts that keep working after a click in a message, five settings that did nothing now work, Share and Paste and Match Style in the menu bar, the window remembers its frame. See `research/VERIFY-P8.md`.
 
