@@ -51,6 +51,9 @@ pub struct GState {
     pub sent: Vec<FMsg>,
     pub log: Vec<String>,
     pub unsubscribed: Vec<String>,
+    /// Every request to /unsubscribe/…: method, path, Content-Type, body, and whether it carried a cookie or
+    /// credentials (a one-click request must carry neither).
+    pub unsubscribe_requests: Vec<Value>,
     pub offline: bool,
     pub refresh_count: u32,
     /// The next N API calls get Gmail's 403 "User-rate limit exceeded".
@@ -188,7 +191,19 @@ impl FakeGmail {
             return self.token(&req);
         }
         if let Some(rest) = path.strip_prefix("/unsubscribe/") {
-            self.state.lock().unsubscribed.push(rest.to_string());
+            let mut s = self.state.lock();
+            s.unsubscribe_requests.push(json!({
+                "method": req.method, "path": rest, "contentType": req.header("content-type").unwrap_or(""),
+                "body": String::from_utf8_lossy(&req.body), "cookie": req.header("cookie").is_some(), "authorization": req.header("authorization").is_some(),
+            }));
+            // A sender's server: "redirect…" sends the client on (307 keeps the POST), "fail" breaks, the rest confirm.
+            if let Some(to) = rest.strip_prefix("redirect-") {
+                return Response { status: 307, headers: vec![("Location".into(), format!("/unsubscribe/{to}"))], body: vec![] };
+            }
+            if rest.starts_with("fail") {
+                return Response::status(500);
+            }
+            s.unsubscribed.push(rest.to_string());
             return Response::json(200, &json!({}));
         }
         // Everything else needs a valid bearer token.

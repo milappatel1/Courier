@@ -285,6 +285,7 @@ impl E2e {
                     let drafts = g.drafts.len();
                     let filters = g.filters.clone();
                     let unsub = g.unsubscribed.clone();
+                    let unsub_requests = g.unsubscribe_requests.clone();
                     let vacation = g.vacation.clone();
                     let send_as = g.send_as.clone();
                     let labels: Vec<Value> = g.user_labels.clone();
@@ -295,7 +296,7 @@ impl E2e {
                     Ok(json!({
                         "appActive": crate::macos::app_is_active(),
                         "activations": self.activations.load(std::sync::atomic::Ordering::SeqCst),
-                        "gmailSent": sent, "gmailDrafts": drafts, "filters": filters, "unsubscribed": unsub, "vacation": vacation, "sendAs": send_as,
+                        "gmailSent": sent, "gmailDrafts": drafts, "filters": filters, "unsubscribed": unsub, "unsubscribeRequests": unsub_requests, "vacation": vacation, "sendAs": send_as,
                         "gmailLabels": labels, "gmailMessages": msgs, "smtpSent": smtp, "imapFolders": folders,
                         "notifications": *self.notes.lock(), "opened": *self.opened.lock(),
                     }))

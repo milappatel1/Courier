@@ -298,9 +298,54 @@ async fn one_click_unsubscribe_posts_and_refuses_plain_http() {
     // RFC 8058: a POST with the one-click body to the sender's HTTPS link (the local fake stands in for it).
     w.engine.unsubscribe_one_click(&format!("{}/unsubscribe/deals", w.gmail.base())).await.unwrap();
     assert_eq!(w.gmail.state.lock().unsubscribed, vec!["deals".to_string()]);
+    let sent = w.gmail.state.lock().unsubscribe_requests[0].clone();
+    assert_eq!(sent["method"], "POST");
+    assert_eq!(sent["body"], "List-Unsubscribe=One-Click");
+    assert_eq!(sent["contentType"], "application/x-www-form-urlencoded");
+    assert_eq!((sent["cookie"].as_bool(), sent["authorization"].as_bool()), (Some(false), Some(false)), "no cookies or credentials go to a sender");
     // Anything else that isn't HTTPS is refused.
     assert!(w.engine.unsubscribe_one_click("http://deals.example/u/1").await.is_err());
     assert!(w.engine.unsubscribe_one_click("ftp://deals.example/u/1").await.is_err());
+}
+
+#[tokio::test]
+async fn one_click_unsubscribe_follows_a_redirect_says_plainly_when_the_sender_fails_and_stays_off_the_local_network() {
+    let w = world().await;
+    // A 307 keeps the POST and its body; the final answer decides.
+    w.engine.unsubscribe_one_click(&format!("{}/unsubscribe/redirect-news", w.gmail.base())).await.unwrap();
+    let reqs = w.gmail.state.lock().unsubscribe_requests.clone();
+    assert_eq!(reqs.iter().map(|r| r["path"].as_str().unwrap()).collect::<Vec<_>>(), vec!["redirect-news", "news"]);
+    assert_eq!(reqs[1]["body"], "List-Unsubscribe=One-Click");
+    // A server error isn't a success, and the reason reads as a sentence (no status codes).
+    let e = w.engine.unsubscribe_one_click(&format!("{}/unsubscribe/fail", w.gmail.base())).await.unwrap_err().to_string();
+    assert!(!e.contains("500") && e.ends_with('.'), "{e}");
+    // A server that never answers gives up in good time.
+    courier_lib::engine::ONE_CLICK_TIMEOUT_MS.store(300, std::sync::atomic::Ordering::Relaxed);
+    w.gmail.state.lock().latency.insert("slow".into(), 3000);
+    let t = std::time::Instant::now();
+    assert!(w.engine.unsubscribe_one_click(&format!("{}/unsubscribe/slow", w.gmail.base())).await.is_err());
+    assert!(t.elapsed() < Duration::from_millis(2500));
+    // Links into the local network or this Mac are never posted to, https or not.
+    for url in ["https://192.168.1.1/u", "https://10.0.0.8/u", "https://localhost/u", "https://printer.local/u", "https://[::1]/u", "https://169.254.1.1/u"] {
+        assert!(!courier_lib::engine::one_click_allowed(url, false), "{url}");
+    }
+    assert!(courier_lib::engine::one_click_allowed("https://news.example/u?x=1", false));
+    assert!(!courier_lib::engine::one_click_allowed("http://news.example/u", false));
+}
+
+#[tokio::test]
+async fn unsubscribing_from_a_sender_covers_each_of_their_mailing_lists() {
+    let w = world().await;
+    let a = "List-Id: Weekly <weekly.news.example>\r\nList-Unsubscribe: <https://news.example/u?l=weekly>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n";
+    let b = "List-Id: Offers <offers.news.example>\r\nList-Unsubscribe: <mailto:leave-offers@news.example>\r\n";
+    w.gmail.deliver(&sample_mail("News <hello@news.example>", "pat@example.com", "Weekly 1", "x", a), &["INBOX"]);
+    w.gmail.deliver(&sample_mail("News <hello@news.example>", "pat@example.com", "Weekly 2", "x", a), &["INBOX"]);
+    w.gmail.deliver(&sample_mail("News <hello@news.example>", "pat@example.com", "Offer", "x", b), &["INBOX"]);
+    w.engine.sync_account("g1").await.unwrap();
+    let lists = w.engine.sender_lists("g1", "Hello@news.example").unwrap();
+    let mut got: Vec<(String, String)> = lists.iter().map(|l| (l.list_id.clone(), l.list_unsubscribe.clone())).collect();
+    got.sort();
+    assert_eq!(got, vec![("Offers <offers.news.example>".into(), "<mailto:leave-offers@news.example>".into()), ("Weekly <weekly.news.example>".into(), "<https://news.example/u?l=weekly>".into())]);
 }
 
 #[tokio::test]

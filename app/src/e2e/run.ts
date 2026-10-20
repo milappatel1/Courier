@@ -29,6 +29,7 @@ interface ServerState {
   gmailDrafts: number;
   filters: { criteria?: Record<string, unknown>; action?: { addLabelIds?: string[]; removeLabelIds?: string[] } }[];
   unsubscribed: string[];
+  unsubscribeRequests: { method: string; path: string; body: string; contentType: string; cookie: boolean }[];
   gmailMessages: { id: string; threadId: string; labels: string[]; subject: string }[];
   smtpSent: { from: string; rcpts: string[]; raw: string }[];
   imapFolders: Record<string, number>;
@@ -898,7 +899,7 @@ step("a notification's Archive button archives that conversation", async () => {
   await until("back in the inbox", () => row("Dinner tonight?"), 20_000);
 });
 
-step("Promotions tab: with images set to ask, remote images held back; tracker stripped; unsubscribe", async () => {
+step("Promotions tab: with images set to ask, remote images held back; tracker stripped", async () => {
   await setSetting("images", "ask");
   click(await until("Promotions tab", () => [...document.querySelectorAll<HTMLElement>(".tab")].find((t) => t.textContent?.includes("Promotions"))));
   click(await until("promo row", () => row("48 hours only: 30% off")));
@@ -910,20 +911,64 @@ step("Promotions tab: with images set to ask, remote images held back; tracker s
   click(await el("display-images"));
   await until("remote image shown", () => /\ssrc="https:\/\/cdn\.deals\.example\/banner\.png"/.test(q<HTMLIFrameElement>("message-frame")?.srcdoc ?? ""));
   check(!q<HTMLIFrameElement>("message-frame")!.srcdoc.includes("t.deals.example/o.gif"), "tracking pixel came back with images on");
-  // The sender offers one-click only over plain HTTP here (the fake), which RFC 8058 doesn't allow, so Courier
-  // falls back to the mailto: address in the header. (The one-click POST itself is covered by the Rust tests.)
-  click(await el("unsubscribe"));
-  click(await el("confirm-ok"));
-  const req = await until(
-    "unsubscribe request sent",
-    async () => (await server()).gmailSent.find((m) => m.to.some((a) => a.email === "unsub@deals.example")),
-    30_000,
-  );
-  check(req.subject === "stop", "unsubscribe mail without the subject from the header");
-  check(!(await server()).unsubscribed.length, "one-click used over plain HTTP");
   await setSetting("images", "always");
   await backToInbox();
   click(await until("Primary tab", () => [...document.querySelectorAll<HTMLElement>(".tab")].find((t) => t.textContent?.includes("Primary"))));
+});
+
+step("unsubscribe as the web client does: one-click in the background, else an email from the account, else the website", async () => {
+  await backToInbox();
+  const base = info.fakeBase;
+  const deliver = (subject: string, from: string, headers: string) => api.e2eControl("deliver-gmail", { from, subject, body: "This week's news.", headers });
+  await deliver(
+    "Weekly issue 12",
+    "Weekly News <hello@weekly.example>",
+    `List-Unsubscribe: <mailto:leave@weekly.example>, <${base}/unsubscribe/weekly>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n`,
+  );
+  await deliver("Club bulletin", "Club Bulletin <bulletin@club.example>", "List-Unsubscribe: <mailto:leave@club.example?subject=unsubscribe>\r\n");
+  await deliver("Store news", "Corner Store <news@store.example>", "List-Unsubscribe: <https://store.example/unsubscribe?u=1>\r\n");
+  const ask = async (subject: string) => {
+    await backToInbox();
+    click(await until(subject, () => row(subject), 30_000));
+    click(await el("unsubscribe"));
+    const d = await el("confirm-dialog");
+    return { text: d.textContent ?? "", ok: q("confirm-ok", d)?.textContent ?? "" };
+  };
+  // One-click (RFC 8058): Courier posts to the sender's link; no mail goes out.
+  let d = await ask("Weekly issue 12");
+  check(d.text.startsWith("Unsubscribe") && d.text.includes("Do you want to stop getting messages from this mailing list (Weekly News)?"), d.text);
+  check(d.ok === "Unsubscribe", d.ok);
+  const sent = (await server()).gmailSent.length;
+  click(await el("confirm-ok"));
+  const post = await until("the one-click POST", async () => (await server()).unsubscribeRequests.find((r) => r.path === "weekly"), 20_000);
+  check(post.method === "POST" && post.body === "List-Unsubscribe=One-Click" && !post.cookie, JSON.stringify(post));
+  await until("the toast", () => toastWith(/^Unsubscribed from this mailing list\./));
+  await until("the message says it's done", () => q("unsubscribed"));
+  check(!q("unsubscribe"), "the Unsubscribe link is still offered");
+  check((await server()).gmailSent.length === sent, "mail was sent to a list that offers one-click");
+  // Only an address: an unsubscribe email from this account, and the dialog says so.
+  d = await ask("Club bulletin");
+  check(
+    d.text.includes(`Courier will unsubscribe for you by sending an email from ${info.gmailEmail} to leave@club.example.`) && d.ok === "Unsubscribe",
+    d.text,
+  );
+  click(await el("confirm-ok"));
+  const mail = await until(
+    "the unsubscribe email",
+    async () => (await server()).gmailSent.find((m) => m.to.some((a) => a.email === "leave@club.example")),
+    30_000,
+  );
+  check(mail.subject === "unsubscribe", `subject: ${mail.subject}`);
+  await until("the toast", () => toastWith(/^Unsubscribed from this mailing list\./));
+  // Only a web page: Go to website opens it in the browser.
+  d = await ask("Store news");
+  check(
+    d.text.includes("To stop getting messages from this mailing list (Corner Store), go to their website to unsubscribe.") && d.ok === "Go to website",
+    d.text,
+  );
+  click(await el("confirm-ok"));
+  await until("the page opened", async () => (await server()).opened.includes("https://store.example/unsubscribe?u=1") || null);
+  await backToInbox();
 });
 
 // ---- the complaints from the real-account round ----
@@ -1099,11 +1144,14 @@ step(
     await el("subscriptions");
     const deals = () => qa("sub-row").find((x) => x.textContent?.includes("news@deals.example"));
     await until("Daily Deals listed", deals);
-    const asked = async () => (await server()).gmailSent.filter((m) => m.to.some((a) => a.email === "unsub@deals.example")).length;
-    const before = await asked();
+    const posted = async () => (await server()).unsubscribeRequests.filter((r) => r.path === "deals" && r.method === "POST").length;
+    const before = await posted();
     click(await el("sub-unsubscribe", deals()!));
+    const text = (await el("confirm-dialog")).textContent ?? "";
+    check(text.includes("Do you want to stop getting messages from all mailing lists from Daily Deals (news@deals.example)?"), text);
     click(await el("confirm-ok"));
-    await until("the unsubscribe request sent", async () => ((await asked()) > before ? true : null), 30_000);
+    await until("the one-click request", async () => ((await posted()) > before ? true : null), 30_000);
+    check(!(await server()).gmailSent.some((m) => m.to.some((a) => a.email === "unsub@deals.example")), "mailed a sender that offers one-click");
     await until("shown as unsubscribed", () => deals()?.querySelector('[data-testid="sub-done"]'));
     click(await el("sub-clear", deals()!));
     click(await el("confirm-ok"));
