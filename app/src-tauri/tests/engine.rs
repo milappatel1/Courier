@@ -504,3 +504,50 @@ async fn conversations_say_whether_they_were_sent_to_me_or_only_to_me() {
     let level = |s: &str| r.threads.iter().find(|t| t.subject == s).map(|t| t.to_me).unwrap();
     assert_eq!((level("Just you"), level("You and Bo"), level("List mail")), (2, 1, 0));
 }
+
+#[tokio::test]
+async fn a_passing_precondition_failure_is_retried_not_shown() {
+    let w = world().await;
+    let a = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "One", "x", ""), &["INBOX"]);
+    let b = w.gmail.deliver(&sample_mail("Bo <bo@x.io>", "pat@example.com", "Two", "y", ""), &["INBOX"]);
+    w.engine.sync_account("g1").await.unwrap();
+    let threads: Vec<String> = [&a, &b].iter().map(|id| w.engine.db.message("g1", id).unwrap().unwrap().thread_id).collect();
+    // The API now and then refuses a change with 400 failedPrecondition and takes the same request a moment later.
+    w.gmail.state.lock().precondition_next = 2;
+    w.engine.modify_threads("g1", &threads, &["TRASH".into()], &[]).await.unwrap();
+    assert!(w.gmail.message(&a).unwrap().labels.contains(&"TRASH".into()));
+    w.gmail.state.lock().precondition_next = 1;
+    w.engine.bulk_modify(&view("g1", "TRASH"), &[], &["TRASH".into()], &[]).await.unwrap();
+    assert!(w.gmail.message(&b).unwrap().labels.contains(&"INBOX".into()));
+}
+
+#[tokio::test]
+async fn a_refused_change_rolls_back_to_exactly_what_was_there() {
+    let w = world().await;
+    let id = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Filed", "x", ""), &["Label_1"]);
+    w.engine.sync_account("g1").await.unwrap();
+    let t = w.engine.db.message("g1", &id).unwrap().unwrap().thread_id;
+    w.gmail.state.lock().precondition_ids = vec![id.clone()];
+    assert!(w.engine.modify_threads("g1", std::slice::from_ref(&t), &["TRASH".into()], &[]).await.is_err());
+    assert_eq!(w.engine.db.message("g1", &id).unwrap().unwrap().labels, vec!["Label_1".to_string()], "the cache is as it was");
+    assert_eq!(w.gmail.message(&id).unwrap().labels, vec!["Label_1".to_string()]);
+}
+
+#[tokio::test]
+async fn bulk_delete_goes_on_past_a_refused_batch() {
+    let w = world().await;
+    let old = courier_lib::error::now_ms() - 90 * 86_400_000;
+    let mut ids = Vec::new();
+    for i in 0..1100 {
+        let id = w.gmail.deliver(&sample_mail("Shop <news@shop.example>", "pat@example.com", &format!("Deal {i}"), "offer", ""), &["Label_7"]);
+        w.gmail.state.lock().messages.get_mut(&id).unwrap().internal_date = old - i;
+        ids.push(id);
+    }
+    w.engine.sync_account("g1").await.unwrap();
+    // One batch of the two is refused every time; the other must still go through.
+    w.gmail.state.lock().precondition_ids = vec![ids[1099].clone()];
+    let r = w.engine.bulk_modify(&view("g1", "Label_7"), &["TRASH".into()], &[], &[]).await;
+    assert!(r.is_ok(), "the whole bulk delete failed: {:?}", r.err());
+    let trashed = ids.iter().filter(|id| w.gmail.message(id).unwrap().labels.contains(&"TRASH".into())).count();
+    assert!(trashed >= 100 && trashed < 1100, "{trashed} of 1100 trashed");
+}

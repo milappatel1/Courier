@@ -57,6 +57,14 @@ pub struct GState {
     pub rate_limit_next: u32,
     /// Message ids whose fetch always fails with a plain 403.
     pub forbidden_ids: Vec<String>,
+    /// Extra time (ms) the server takes before it answers, by route ("batchModify", "threads.list", …): the
+    /// real API takes hundreds of milliseconds for a change, and a listing made meanwhile still shows the old state.
+    pub latency: HashMap<String, u64>,
+    /// The next N label changes or deletions (batchModify, batchDelete, modify, trash) get the API's 400
+    /// "Precondition check failed." and change nothing.
+    pub precondition_next: u32,
+    /// Message ids that make any batchModify or batchDelete naming them fail that way, every time.
+    pub precondition_ids: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -95,7 +103,13 @@ impl FakeGmail {
         let f2 = fake.clone();
         let handler: http::Handler = Arc::new(move |req| {
             let f = f2.clone();
-            Box::pin(async move { f.handle(req) })
+            Box::pin(async move {
+                let wait = f.state.lock().latency.get(route_name(&req.method, &req.path)).copied().unwrap_or(0);
+                if wait > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+                }
+                f.handle(req)
+            })
         });
         tokio::spawn(http::serve(listener, handler));
         fake
@@ -157,6 +171,14 @@ impl FakeGmail {
             }
             if s.forbidden_ids.iter().any(|id| path.contains(&format!("/messages/{id}"))) {
                 return Response::json(403, &json!({"error": {"code": 403, "message": "Forbidden", "errors": [{"reason": "forbidden"}], "status": "PERMISSION_DENIED"}}));
+            }
+            let write = req.method == "POST" && (path.ends_with("/batchModify") || path.ends_with("/batchDelete") || path.ends_with("/modify") || path.ends_with("/trash"));
+            let named_bad = write && !s.precondition_ids.is_empty() && strs(&req.json()["ids"]).iter().any(|id| s.precondition_ids.contains(id));
+            if write && (s.precondition_next > 0 || named_bad) {
+                if !named_bad {
+                    s.precondition_next -= 1;
+                }
+                return precondition_failed();
             }
         }
         if path == "/o/oauth2/v2/auth" {
@@ -544,6 +566,28 @@ impl FakeGmail {
             }
             _ => not_found(),
         }
+    }
+}
+
+/// The API's answer, word for word, when it refuses a request with failedPrecondition.
+pub fn precondition_failed() -> Response {
+    Response::json(
+        400,
+        &json!({"error": {"code": 400, "message": "Precondition check failed.", "errors": [{"message": "Precondition check failed.", "domain": "global", "reason": "failedPrecondition"}], "status": "FAILED_PRECONDITION"}}),
+    )
+}
+
+/// The latency key for a request: the last path segment for actions, "<resource>.list" / "<resource>.get" otherwise.
+fn route_name<'a>(method: &str, path: &'a str) -> &'a str {
+    let rest = path.strip_prefix("/gmail/v1/users/me/").unwrap_or(path);
+    let parts: Vec<&str> = rest.split('/').collect();
+    match (method, parts.as_slice()) {
+        ("GET", ["threads"]) => "threads.list",
+        ("GET", ["messages"]) => "messages.list",
+        ("GET", ["threads", _]) => "threads.get",
+        ("GET", ["history"]) => "history",
+        ("GET", ["labels", ..]) => "labels",
+        _ => parts.last().copied().unwrap_or(""),
     }
 }
 

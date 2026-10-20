@@ -31,6 +31,8 @@ pub struct IState {
     pub password: String,
     pub folders: BTreeMap<String, IFolder>,
     pub log: Vec<String>,
+    /// Extra time (ms) a MOVE or COPY takes, as on a real server.
+    pub move_latency: u64,
 }
 
 #[derive(Clone)]
@@ -55,7 +57,7 @@ impl FakeImap {
         folders.insert("Trash".to_string(), folder(Some("\\Trash"), 14));
         folders.insert("Junk".to_string(), folder(Some("\\Junk"), 15));
         folders.insert("Archive".to_string(), folder(Some("\\Archive"), 16));
-        let state = Arc::new(Mutex::new(IState { user: user.into(), password: password.into(), folders, log: vec![] }));
+        let state = Arc::new(Mutex::new(IState { user: user.into(), password: password.into(), folders, log: vec![], move_latency: 0 }));
         let (tx, _) = broadcast::channel(64);
         let fake = FakeImap { addr, state, changes: tx };
         let f = fake.clone();
@@ -74,7 +76,8 @@ impl FakeImap {
     pub fn deliver(&self, folder: &str, raw: &[u8], flags: &[&str]) -> u32 {
         let uid = {
             let mut s = self.state.lock();
-            let f = s.folders.get_mut(folder).expect("folder");
+            let next_uv = 20 + s.folders.len() as u32;
+            let f = s.folders.entry(folder.to_string()).or_insert_with(|| self::folder(None, next_uv));
             let uid = f.uidnext;
             f.uidnext += 1;
             f.msgs.push(IMsg { uid, flags: flags.iter().map(|x| x.to_string()).collect(), raw: raw.to_vec(), internal_date: crate::error::now_ms() });
@@ -117,6 +120,11 @@ impl FakeImap {
             let (cmd, args) = split_cmd(&rest);
             let upper = cmd.to_ascii_uppercase();
             if authed && (upper == "UID" || ["FETCH", "STORE", "COPY", "MOVE", "SEARCH", "EXPUNGE"].contains(&upper.as_str())) {
+                let sub_upper = if upper == "UID" { split_cmd(&args).0.to_ascii_uppercase() } else { upper.clone() };
+                let wait = self.state.lock().move_latency;
+                if wait > 0 && (sub_upper == "MOVE" || sub_upper == "COPY") {
+                    tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+                }
                 let bytes = if upper == "UID" {
                     let (sub, subargs) = split_cmd(&args);
                     self.command(&tag, &sub.to_ascii_uppercase(), &subargs, true, &selected)

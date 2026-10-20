@@ -7,7 +7,8 @@ import { emit } from "@tauri-apps/api/event";
 import { parseMessage } from "../core/mime/parse";
 import { htmlToText } from "../core/text";
 import { api } from "../ipc/api";
-import { applyViewportSize, getState, setSetting } from "../state/store";
+import { applyViewportSize, getState, setSetting, setState, visibleThreads } from "../state/store";
+import { flashes, recordFrames } from "./frames";
 import { layoutIssues } from "./layout";
 
 interface StepResult {
@@ -300,6 +301,80 @@ step("archives from the list, then undoes it", async () => {
   await until("row is back", () => row("Lunch on Friday?"));
   await until("back in the inbox on the server", async () => (await msgsWith("Lunch on Friday?")).some((m) => m.labels.includes("INBOX")));
 });
+
+step(
+  "deleting never flashes: hover, toolbar, open conversation and #, in the Inbox and a label, Gmail and IMAP",
+  async () => {
+    // Real servers take a while to make a change; the list must not show the old state meanwhile.
+    await api.e2eControl("gmail-behaviour", { latency: { batchModify: 700, modify: 700, "threads.list": 150, labels: 60 }, imapMoveLatency: 300 });
+    const issues: string[] = [];
+    try {
+      for (const acct of ["gmail", "imap"] as const) {
+        await switchTo(acct === "gmail" ? info.gmailEmail : info.imapEmail);
+        for (let i = 1; i <= 4; i++) {
+          const from = "Flash Test <flash@test.example>";
+          if (acct === "gmail") {
+            await api.e2eControl("deliver-gmail", { from, subject: `Flash ${acct} inbox ${i}`, body: "One." });
+            await api.e2eControl("deliver-gmail", { from, subject: `Flash ${acct} label ${i}`, body: "Two.", labels: ["Label_1"] });
+          } else {
+            await api.e2eControl("deliver-imap", { from, subject: `Flash ${acct} inbox ${i}`, body: "One." });
+            await api.e2eControl("deliver-imap", { from, subject: `Flash ${acct} label ${i}`, body: "Two.", folder: "Work" });
+          }
+        }
+        await api.e2eControl("sync");
+        for (const where of ["inbox", "label"] as const) {
+          if (where === "inbox") await openList("INBOX");
+          else {
+            click(await el(acct === "gmail" ? "nav-label-Projects" : "nav-label-Work", undefined, 30_000));
+            await until("the label's list", () => !getState().route.list.label?.startsWith("INBOX") && !getState().list.loading);
+          }
+          await until(`the ${where} test rows`, () => [1, 2, 3, 4].every((i) => row(`Flash ${acct} ${where} ${i}`)), 30_000);
+          const hows = ["hover", "toolbar", "conversation", "shortcut"] as const;
+          for (const [n, how] of hows.entries()) {
+            const subject = `Flash ${acct} ${where} ${n + 1}`;
+            const trashBefore = (await server()).imapFolders.Trash ?? 0;
+            let r = await until(subject, () => row(subject));
+            const id = r.dataset.thread!;
+            if (how === "conversation") {
+              click(r);
+              await until("the conversation", () => q("conv-subject")?.textContent?.includes(subject));
+            }
+            await sleep(400);
+            r = row(subject) ?? r;
+            const rec = recordFrames();
+            if (how === "hover") click(await el("hover-delete", r));
+            else if (how === "toolbar") {
+              click(await el("row-checkbox", r));
+              await until("selected", () => getState().selected.length === 1);
+              click(await el("tb-delete"));
+            } else if (how === "conversation") click(await el("conv-delete"));
+            else {
+              (document.activeElement as HTMLElement | null)?.blur?.();
+              setState({ cursor: visibleThreads().findIndex((t) => t.threadId === id) });
+              key(document.body, "#");
+            }
+            await until(
+              "in Trash on the server",
+              async () =>
+                acct === "gmail"
+                  ? (await msgsWith(subject)).every((m) => m.labels.includes("TRASH")) || null
+                  : ((await server()).imapFolders.Trash ?? 0) > trashBefore || null,
+              20_000,
+            );
+            await sleep(2500);
+            issues.push(...flashes(rec.stop(), [id], { conversationOpen: how === "conversation" }).map((x) => `${acct} ${where} ${how}: ${x}`));
+            if (q("conv-back")) click(q("conv-back")!);
+          }
+        }
+      }
+    } finally {
+      await api.e2eControl("gmail-behaviour", { latency: {}, imapMoveLatency: 0 });
+      await switchTo(info.gmailEmail);
+    }
+    check(!issues.length, issues.join("\n    "));
+  },
+  200_000,
+);
 
 step("labels (simplified toolbar ▸ More ▸ Label as) and stars", async () => {
   const r = await until("lunch row", () => row("Lunch on Friday?"));

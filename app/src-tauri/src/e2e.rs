@@ -245,8 +245,26 @@ impl E2e {
                 }
                 "deliver-imap" => {
                     let raw = mail(&s("from"), IMAP_ADDR, &s("subject"), &chrono::Local::now().to_rfc2822(), &s("body"), &s("headers"));
-                    let uid = self.imap.deliver("INBOX", &raw, &[]);
+                    let folder = args["folder"].as_str().unwrap_or("INBOX");
+                    let uid = self.imap.deliver(folder, &raw, &[]);
                     Ok(json!({"uid": uid}))
+                }
+                "gmail-behaviour" => {
+                    let mut g = self.gmail.state.lock();
+                    if let Some(l) = args["latency"].as_object() {
+                        g.latency = l.iter().filter_map(|(k, v)| v.as_u64().map(|ms| (k.clone(), ms))).collect();
+                    }
+                    if let Some(n) = args["preconditionNext"].as_u64() {
+                        g.precondition_next = n as u32;
+                    }
+                    if let Some(ids) = args["preconditionIds"].as_array() {
+                        g.precondition_ids = ids.iter().filter_map(|x| x.as_str().map(str::to_string)).collect();
+                    }
+                    drop(g);
+                    if let Some(ms) = args["imapMoveLatency"].as_u64() {
+                        self.imap.state.lock().move_latency = ms;
+                    }
+                    Ok(json!({}))
                 }
                 "offline" => {
                     let on = args["on"].as_bool().unwrap_or(true);
