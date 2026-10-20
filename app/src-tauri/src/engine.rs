@@ -1640,9 +1640,16 @@ impl Engine {
 
     pub async fn send_now(&self, row: &OutboxRow) -> Result<()> {
         let a = self.db.account(&row.account_id)?;
+        // Compose ▸ More ▸ Label: the labels ride in a private header that never leaves the Mac.
+        let (raw, labels) = take_header(&row.raw, LABELS_HEADER);
+        let labels: Vec<String> = labels.map(|v| v.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()).unwrap_or_default();
+        let row = &OutboxRow { raw, ..row.clone() };
         if a.kind == "gmail" {
             let g = self.gmail(&row.account_id)?;
             let sent = g.send(&row.raw, row.thread_id.as_deref()).await?;
+            if let (Some(id), false) = (sent["id"].as_str(), labels.is_empty()) {
+                let _ = g.batch_modify(&[id.to_string()], &labels, &[]).await;
+            }
             if let Some(did) = &row.draft_id {
                 let _ = self.draft_delete(&row.account_id, did).await;
             }
@@ -1692,6 +1699,38 @@ impl Engine {
         let r = self.http.post(url).header("Content-Type", "application/x-www-form-urlencoded").body("List-Unsubscribe=One-Click").send().await?;
         if r.status().is_success() { Ok(()) } else { Err(Error::Server(format!("unsubscribe {}", r.status()))) }
     }
+}
+
+/// Labels to put on a message once it's sent (Compose ▸ More ▸ Label), removed before it goes out.
+pub const LABELS_HEADER: &str = "X-Courier-Labels";
+
+/// A header's value taken out of a message (with its folded lines); the rest of the message as it was.
+pub fn take_header(raw: &[u8], name: &str) -> (Vec<u8>, Option<String>) {
+    let end = raw.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 2).unwrap_or(raw.len());
+    let head = String::from_utf8_lossy(&raw[..end]).to_string();
+    let key = format!("{}:", name.to_ascii_lowercase());
+    let mut out = String::new();
+    let mut value: Option<String> = None;
+    let mut taking = false;
+    for line in head.split_inclusive("\r\n") {
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if taking {
+                value.get_or_insert_with(String::new).push_str(line.trim_end());
+            } else {
+                out.push_str(line);
+            }
+            continue;
+        }
+        taking = line.to_ascii_lowercase().starts_with(&key);
+        if taking {
+            value = Some(line[key.len()..].trim().to_string());
+        } else {
+            out.push_str(line);
+        }
+    }
+    let mut v = out.into_bytes();
+    v.extend_from_slice(&raw[end..]);
+    (v, value)
 }
 
 /// Bcc travels only in the envelope over SMTP.
@@ -1812,6 +1851,18 @@ pub fn criteria_query(c: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_private_labels_header_is_taken_out_before_sending() {
+        let raw = b"From: a@x\r\nX-Courier-Labels: Label_1,\r\n Label_2\r\nSubject: s\r\n\r\nX-Courier-Labels: body text\r\n";
+        let (out, v) = take_header(raw, LABELS_HEADER);
+        let out = String::from_utf8(out).unwrap();
+        // A folded value comes back joined (the sender splits on commas and trims).
+        assert_eq!(v.as_deref(), Some("Label_1, Label_2"));
+        assert_eq!(out, "From: a@x\r\nSubject: s\r\n\r\nX-Courier-Labels: body text\r\n");
+        let (same, none) = take_header(b"From: a@x\r\n\r\nbody", LABELS_HEADER);
+        assert_eq!((same.as_slice(), none), (&b"From: a@x\r\n\r\nbody"[..], None));
+    }
 
     #[test]
     fn bcc_is_stripped_and_rules_expand() {

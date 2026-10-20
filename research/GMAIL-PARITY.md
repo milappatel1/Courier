@@ -26,6 +26,7 @@ Status: ✅ done · 🔧 fixed in this round · ➕ added in this round · ⛔ l
 | Two-finger swipe back/forward between screens | ➕ |
 | Default mail app: offered once, also in Settings ▸ Accounts; other apps' "Email this file" (Scribe) and Open With → a new message with the file attached | ➕ |
 | Dock badge, notifications, mailto:, .eml, Share, drag-out, sleep/wake, offline outbox | ✅ |
+| Clicking a notification opens that conversation; an Archive button on it | ➕ |
 
 ## Header
 
@@ -34,6 +35,7 @@ Status: ✅ done · 🔧 fixed in this round · ➕ added in this round · ⛔ l
 | Main menu: nav ↔ rail | ✅ |
 | The rail slides the whole menu out over the content while the pointer rests on it | ➕ |
 | Search: operators, suggestions, filter chips, advanced search panel, create filter | ✅ |
+| Recent searches offered in the search box | ➕ |
 | Quick settings panel (density, theme, inbox type, reading pane) | ✅ |
 | Account menu: switch, add, sign out, all inboxes | ✅ |
 | Narrow window: search becomes the phone app's rounded bar with the menu button and avatar | ➕ |
@@ -78,6 +80,9 @@ Status: ✅ done · 🔧 fixed in this round · ➕ added in this round · ⛔ l
 | Details popover, print, show original, download message, mark unread from here, block, report spam/phishing, filter like this | ✅ |
 | Pointing at a sender's name shows their card: write to them, copy the address, find their mail | ➕ |
 | Unsubscribe next to the sender | ✅ |
+| Calendar invitations: event card, Yes / Maybe / No (iTIP REPLY), Add to Calendar | ➕ |
+| A caution banner for senders that fail their checks; a Not spam banner in Spam | ➕ |
+| In-message jump links (#section) scroll the conversation | 🔧 |
 | Reply/reply all/forward, inline compose, fold of long threads | ✅ |
 | Translate, reactions | ⛔ Google services / proprietary |
 
@@ -88,6 +93,8 @@ Status: ✅ done · 🔧 fixed in this round · ➕ added in this round · ⛔ l
 | Stacked windows, minimise, full screen, pop out | ✅ |
 | Windows that don't fit a narrow window fold to their title bar (click one to bring it forward) | ➕ |
 | The To / Cc / Bcc labels open a people picker (tick several, add them at once) | ➕ |
+| More ▸ Label puts labels on the sent conversation (mail-API accounts) | ➕ |
+| Drag a conversation from the list onto a message to attach it | ➕ |
 | Rich text toolbar, links, emoji, inline images, attachments, signatures, templates, plain text, spelling, schedule, undo send | ✅ |
 | Phone width: compose fills the window | ➕ |
 | Smart compose, Help me write, confidential mode | ⛔ Google services |
@@ -97,7 +104,7 @@ Status: ✅ done · 🔧 fixed in this round · ➕ added in this round · ⛔ l
 General, Labels, Inbox, Accounts, Filters and blocked addresses, Forwarding and POP/IMAP, Advanced, Offline,
 Themes: ✅ (see `research/VERIFY-P4.md`). Added: swipe actions ➕. Fixed in 1.0.4 (they did nothing before): Send
 and Archive, Button labels (text), Personal level indicators, Include starred in Primary, Create contacts for
-auto-complete 🔧.
+auto-complete 🔧. Filters: export and import (the web client's XML format), edit, delete several ➕.
 
 ## Layout at every size
 

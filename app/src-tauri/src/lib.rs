@@ -50,6 +50,20 @@ impl Notifier for TauriNotifier {
     }
 }
 
+/// A notification's button: archive the conversation (in the background; the app needn't come forward).
+pub(crate) fn notification_action(app: &AppHandle, account: &str, thread: &str, action: &str) {
+    if action != "archive" || thread.is_empty() {
+        return;
+    }
+    if let Some(st) = app.try_state::<Arc<AppState>>() {
+        let engine = st.engine.clone();
+        let (a, t) = (account.to_string(), thread.to_string());
+        tauri::async_runtime::spawn(async move {
+            let _ = engine.modify_threads(&a, &[t], &[], &["INBOX".into()]).await;
+        });
+    }
+}
+
 /// Notifications waiting for a click (each holds a thread until it's clicked or dismissed); kept small.
 #[cfg(target_os = "macos")]
 static WAITING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -70,12 +84,20 @@ fn notify_and_open_on_click(app: &AppHandle, title: &str, body: &str, account_id
         if wait {
             WAITING.fetch_add(1, Ordering::SeqCst);
         }
-        let r = mac_notification_sys::Notification::new().title(&title).message(&body).default_sound().wait_for_click(wait).send();
+        let mut n = mac_notification_sys::Notification::new();
+        n.title(&title).message(&body).default_sound().wait_for_click(wait);
+        // One conversation: an Archive button, as on the phone.
+        if wait && !thread.is_empty() {
+            n.main_button(mac_notification_sys::MainButton::SingleAction("Archive"));
+        }
+        let r = n.send();
         if wait {
             WAITING.fetch_sub(1, Ordering::SeqCst);
         }
-        if matches!(r, Ok(mac_notification_sys::NotificationResponse::Click)) {
-            deliver_open(&app, json!({"kind": "thread", "accountId": account, "threadId": thread}));
+        match r {
+            Ok(mac_notification_sys::NotificationResponse::Click) => deliver_open(&app, json!({"kind": "thread", "accountId": account, "threadId": thread})),
+            Ok(mac_notification_sys::NotificationResponse::ActionButton(a)) if a == "Archive" => notification_action(&app, &account, &thread, "archive"),
+            _ => {}
         }
     });
     true

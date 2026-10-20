@@ -190,7 +190,7 @@ function finalHtml(c: ComposeData): { html: string; inline: ComposeAttachment[] 
   return { html, inline };
 }
 
-export function buildRaw(c: ComposeData): { raw: Uint8Array; messageId: string; size: number } {
+export function buildRaw(c: ComposeData, opts: { forSending?: boolean } = {}): { raw: Uint8Array; messageId: string; size: number } {
   const acct = accountById(c.accountId);
   const name = acct?.name ?? "";
   const from: Address = { name, email: c.from };
@@ -217,7 +217,8 @@ export function buildRaw(c: ComposeData): { raw: Uint8Array; messageId: string; 
       forwarded: c.forwarded,
       inReplyTo: c.reply?.inReplyTo ?? null,
       references: c.reply?.references ?? [],
-      headers: { "X-Mailer": "Courier 1.0" },
+      // The labels header is read and removed by the engine before the message leaves (never in drafts).
+      headers: { "X-Mailer": "Courier 1.0", ...(opts.forSending && c.labels?.length ? { "X-Courier-Labels": c.labels.join(",") } : {}) },
     },
     { includeBcc: true },
   );
@@ -344,7 +345,7 @@ export async function sendCompose(id: string, opts: { sendAt?: number; archiveTh
   if (t) clearTimeout(t);
   await saving.get(id);
   const latest = getState().composes.find((x) => x.id === id) ?? c;
-  const { raw } = buildRaw(latest);
+  const { raw } = buildRaw(latest, { forSending: true });
   const scheduled = opts.sendAt != null;
   const undoMs = getState().settings.undoSendSeconds * 1000;
   let outboxId: number;

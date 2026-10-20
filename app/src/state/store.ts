@@ -57,6 +57,8 @@ export interface ComposeData {
   attachments: Attachment[];
   inlineImages: Record<string, Attachment>; // blob URL → image (becomes cid: when sent)
   forwarded: { filename: string; raw: Uint8Array }[];
+  /** Labels to put on the conversation once sent (Compose ▸ More ▸ Label; mail-API accounts). */
+  labels?: string[];
   reply: { kind: "reply" | "reply-all" | "forward"; threadId: string; inReplyTo: string | null; references: string[]; quotedHtml: string } | null;
   draftId: string | null;
   threadId: string | null;

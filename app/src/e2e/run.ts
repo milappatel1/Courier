@@ -659,6 +659,25 @@ step("notifications: new Primary mail notifies, Promotions doesn't", async () =>
   check(!notes.some((x) => `${x.title} ${x.body}`.includes("Flash sale")), "notified about Promotions mail");
 });
 
+step("compose ▸ More ▸ Label puts the label on the sent conversation (and the header never goes out)", async () => {
+  await backToInbox();
+  const w = await newCompose();
+  await fill(w, "ana@friends.example", "Filed under Projects", "<div>For the project folder.</div>");
+  click(await el("compose-more", w));
+  const lbl = await el("compose-label");
+  lbl.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  lbl.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+  click(lbl);
+  click(await el("compose-label-Projects"));
+  key(document.body, "Escape");
+  click(await el("compose-send", w));
+  const sent = await until("sent", () => sentWith("Filed under Projects"), 30_000);
+  check(!/X-Courier-Labels/i.test(sent.raw), "the private labels header went out");
+  await until("labelled on the server", async () =>
+    (await server()).gmailMessages.find((m) => m.subject === "Filed under Projects")?.labels.includes("Label_1") ? true : null,
+  );
+});
+
 step("a conversation dragged from the list onto a new message is attached to it", async () => {
   await backToInbox();
   const t = getState().list.result?.threads.find((x) => x.subject === "Quarterly planning notes");
@@ -711,6 +730,24 @@ step("filters: import a filter file, edit one, export and delete them", async ()
   click(await el("settings-close"));
 });
 
+step("warnings: an unverified sender gets a caution banner; mail in Spam offers Not spam", async () => {
+  await backToInbox();
+  click(await until("the spoof", () => row("Confirm your account now")));
+  const banner = await el("auth-banner");
+  check(banner.textContent?.includes("bank.example"), "the banner doesn't name the sender's domain");
+  click(await el("banner-looks-safe"));
+  await until("dismissed", () => !q("auth-banner"));
+  await backToInbox();
+  check(!((await until("a trusted message", () => row("Lunch on Friday?"))) && q("auth-banner")), "a normal message has a warning");
+  await openList("SPAM").catch(async () => (click(await el("nav-more")), openList("SPAM")));
+  click(await until("the spam message", () => row("You won a cruise")));
+  click(await el("banner-not-spam", await el("spam-banner")));
+  await until("moved out of Spam on the server", async () =>
+    (await server()).gmailMessages.find((m) => m.subject === "You won a cruise")?.labels.includes("INBOX") ? true : null,
+  );
+  await backToInbox();
+});
+
 step("calendar invitations: the event card answers the organizer and adds to Calendar", async () => {
   await backToInbox();
   click(await until("the invitation", () => row("Invitation: Design review")));
@@ -747,6 +784,19 @@ step("a clicked notification opens its conversation (in its account)", async () 
     () => getState().route.thread?.threadId === note.threadId && q("conv-subject")?.textContent?.includes("Dinner tonight?"),
   );
   await backToInbox();
+});
+
+step("a notification's Archive button archives that conversation", async () => {
+  const note = await until("a recorded notification", async () => (await server()).notifications.find((n) => n.threadId && n.title.includes("Gil")));
+  await api.e2eControl("notification-action", { accountId: note.accountId, threadId: note.threadId, action: "archive" });
+  await until("archived on the server", async () =>
+    (await server()).gmailMessages.find((m) => m.subject === "Dinner tonight?")?.labels.includes("INBOX") === false ? true : null,
+  );
+  await until("gone from the inbox", () => !row("Dinner tonight?"), 20_000);
+  // Put it back for the steps after this one.
+  const id = (await server()).gmailMessages.find((m) => m.subject === "Dinner tonight?")!.threadId;
+  await api.modifyThreads(note.accountId, [id], ["INBOX"], []);
+  await until("back in the inbox", () => row("Dinner tonight?"), 20_000);
 });
 
 step("Promotions tab: with images set to ask, remote images held back; tracker stripped; unsubscribe", async () => {

@@ -131,6 +131,12 @@ impl E2e {
         );
         let long: String = "<p><a href=\"#last\" id=\"jump\">Jump to the end</a></p>".to_string() + &(1..=150).map(|i| format!("<p>Paragraph {i} of a long letter, long enough to need scrolling.</p>")).collect::<String>() + "<p id=\"last\">LONG-LAST-LINE</p>";
         gmail.deliver(&html_mail("Long Letter <hello@long.example>", me, "A very long message", &d(1, 4), &long, ""), &["INBOX", "CATEGORY_PERSONAL"]);
+        // A sender that failed its checks, and a message in Spam.
+        gmail.deliver(
+            &mail("Your Bank <security@bank.example>", me, "Confirm your account now", &d(0, 6), "Click the link to keep your account.", "Authentication-Results: mx.example.com; spf=fail smtp.mailfrom=bank.example; dkim=none; dmarc=fail header.from=bank.example\r\n"),
+            &["INBOX", "UNREAD", "CATEGORY_PERSONAL"],
+        );
+        gmail.deliver(&mail("Prize Desk <win@prize.example>", me, "You won a cruise", &d(1, 6), "Claim it today.", ""), &["SPAM", "UNREAD"]);
         // Awkward shapes for the layout checks: a 300-character subject, a long sender name, an unbroken word,
         // right-to-left text, and a message to 60 people.
         let long_subject = format!("Awkward subject {}", "that keeps going and going ".repeat(10)).trim().to_string();

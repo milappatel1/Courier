@@ -24,7 +24,7 @@ import {
 } from "../state/compose";
 import { FONTS, SIZES } from "../state/settings";
 import { useShallow } from "zustand/react/shallow";
-import { removeCompose, toast, ui, updateCompose, useMail, addCompose, newComposeId, type Attachment, type ComposeData } from "../state/store";
+import { removeCompose, toast, ui, updateCompose, useMail, addCompose, newComposeId, labelsFor, type Attachment, type ComposeData } from "../state/store";
 import { Avatar, Dialog, FileIcon, Icon, IconButton, Menu, anchorOf, useFollowAnchor, type MenuEntry } from "./common";
 
 type Anchor = ReturnType<typeof anchorOf>;
@@ -248,7 +248,28 @@ function ComposeBody({ c, inline, onPopOut }: { c: ComposeData; inline?: boolean
     if (s) ed.insertAdjacentHTML("beforeend", signatureHtml(s.html));
     changeCompose(c.id, { html: ed.innerHTML, signatureId: s?.id ?? null });
   };
+  const userLabels = labelsFor(c.accountId).filter((l) => l.type === "user");
   const moreItems = (): MenuEntry[] => [
+    ...(acct?.kind === "gmail" && userLabels.length
+      ? [
+          {
+            label: "Label",
+            testId: "compose-label",
+            // Applied to the conversation once the message is sent.
+            submenu: userLabels.map((l) => ({
+              label: l.name,
+              checked: (c.labels ?? []).includes(l.id),
+              keepOpen: true,
+              testId: `compose-label-${l.name}`,
+              run: () =>
+                changeCompose(c.id, {
+                  labels: (c.labels ?? []).includes(l.id) ? (c.labels ?? []).filter((x) => x !== l.id) : [...(c.labels ?? []), l.id],
+                }),
+            })),
+          } as MenuEntry,
+          { sep: true },
+        ]
+      : []),
     {
       label: "Default to full screen",
       checked: settings.compose.fullScreenDefault,
@@ -1253,6 +1274,7 @@ export function serializeCompose(c: ComposeData) {
     attachments: c.attachments.map(att),
     inlineImages: Object.fromEntries(Object.entries(c.inlineImages).map(([k, v]) => [k, att(v)])),
     forwarded: c.forwarded.map((f) => ({ filename: f.filename, raw: base64Encode(f.raw) })),
+    labels: c.labels ?? [],
   };
 }
 
@@ -1274,6 +1296,7 @@ export function deserializeCompose(x: ReturnType<typeof serializeCompose>): Comp
     attachments: x.attachments.map(att),
     inlineImages,
     forwarded: x.forwarded.map((f) => ({ filename: f.filename, raw: base64Decode(f.raw) })),
+    labels: x.labels ?? [],
     placement: "dock",
     minimized: false,
     fullscreen: false,

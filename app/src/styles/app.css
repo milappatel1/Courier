@@ -3958,3 +3958,36 @@ a {
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* Warnings at the top of a message: unverified sender, in Spam */
+.warn-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 4px 0 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #fef7e0;
+  color: #3c2c00;
+  font: 400 13px/19px var(--font);
+}
+.warn-banner.spam {
+  background: #fce8e6;
+  color: #410e0b;
+}
+.warn-banner .ic {
+  color: inherit;
+}
+.warn-banner span {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.warn-banner button {
+  border: 0;
+  background: transparent;
+  color: #0b57d0;
+  font: 500 13px/19px var(--font);
+  cursor: pointer;
+  padding: 0;
+}

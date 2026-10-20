@@ -12,6 +12,9 @@ Scope: another round of parity work and bug hunting after 1.0.4.
 | Filters: export and import (the web client's XML format), edit, select all, delete several | `core/filtersxml.ts`; imported labels are matched by name or created; editing replaces the filter (the API can't change one) | Vitest `filtersxml.test.ts` (2), e2e "filters: import a filter file, edit one, export and delete them" |
 | Links to a spot in the same message (`href="#…"`) scroll the conversation there | The sanitiser rewrites them to a reserved `.invalid` address; the native new-window handler turns it into a scroll | e2e "a link to a spot in the same message" |
 | Recent searches in the search box | The last ten searches, newest first, offered on an empty box and while typing | e2e "the search box offers recent searches" |
+| A caution banner on mail whose sender failed its checks (DMARC fail, or SPF fail without a passing DKIM), with Report spam / Looks safe; a banner on mail in Spam with Not spam | From the receiving server's Authentication-Results; own wording | e2e "warnings" (a seeded spoof and a seeded Spam message) |
+| Compose ▸ More ▸ Label (mail-API accounts) | The chosen labels ride in a private header that the engine removes before sending, then applies to the sent message | Rust `the_private_labels_header_is_taken_out_before_sending`, e2e "compose ▸ More ▸ Label" (the header never reaches the server) |
+| An Archive button on new-mail notifications | The notification's action button archives the conversation in the background | e2e "a notification's Archive button" (driven through the same function) |
 
 ## Fixed
 
@@ -26,5 +29,5 @@ Scope: another round of parity work and bug hunting after 1.0.4.
 
 ## Known gaps
 
-- The compose window's More ▸ Label (apply labels to the sent conversation) isn't there yet.
-- Notification buttons (Archive, Reply in the banner) aren't offered.
+- Real notification clicks and button presses can't be automated; the run drives the same code paths.
+- Compose ▸ More ▸ Label isn't offered for IMAP accounts (labels there are folders).

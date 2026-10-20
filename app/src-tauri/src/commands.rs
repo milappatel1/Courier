@@ -892,6 +892,11 @@ pub async fn e2e_control(app: AppHandle, st: S<'_>, action: String, args: Value)
             crate::handle_opened(&app, &urls);
             Ok(json!({"urls": urls}))
         }
+        // As if a notification's Archive button was pressed.
+        "notification-action" => {
+            crate::notification_action(&app, args["accountId"].as_str().unwrap_or(""), args["threadId"].as_str().unwrap_or(""), args["action"].as_str().unwrap_or(""));
+            Ok(json!({}))
+        }
         // Whether two-finger swipes go back and forward in the main window's web view.
         "swipe-nav" => {
             #[cfg(target_os = "macos")]

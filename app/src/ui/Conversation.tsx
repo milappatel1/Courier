@@ -302,6 +302,7 @@ function Message({
   const [frame, setFrame] = useState<FrameState | null>(null);
   const [menu, setMenu] = useState<Anchor | null>(null);
   const [details, setDetails] = useState(false);
+  const [trusted, setTrusted] = useState(false);
   const [filter, setFilter] = useState<Record<string, unknown> | null>(null);
   const settings = useMail((s) => s.settings);
   const acct = useMail((s) => s.accounts.find((a) => a.id === accountId));
@@ -453,6 +454,28 @@ function Message({
         {menu && <Menu anchor={menu} items={items()} onClose={() => setMenu(null)} className="icons" label="Message options" />}
         {filter && <FilterDialog criteria={filter} onClose={() => setFilter(null)} accountId={accountId} />}
         <div className="msg-body selectable">
+          {m.labels.includes("SPAM") && (
+            <div className="warn-banner spam" data-testid="spam-banner">
+              <Icon name="report" size={20} />
+              <span>This message is in Spam. Its links and attachments may not be safe.</span>
+              <button onClick={() => void act("not-spam", [{ accountId, threadIds: [m.threadId] }])} data-testid="banner-not-spam">
+                Not spam
+              </button>
+            </div>
+          )}
+          {parsed && !m.labels.includes("SPAM") && unverified(parsed) && !trusted && (
+            <div className="warn-banner" data-testid="auth-banner">
+              <Icon name="warning" size={20} />
+              <span>
+                Check before trusting this message: Courier couldn't confirm it really came from {m.fromEmail.split("@")[1] ?? "its sender"}. Be careful with
+                its links and attachments.
+              </span>
+              <button onClick={() => void act("spam", [{ accountId, threadIds: [m.threadId] }])}>Report spam</button>
+              <button onClick={() => setTrusted(true)} data-testid="banner-looks-safe">
+                Looks safe
+              </button>
+            </div>
+          )}
           {parsed && calendarPart(parsed.attachments) && <EventCard accountId={accountId} part={calendarPart(parsed.attachments)!} />}
           {frame?.hasRemote && !allowRemote && frame.blocked > 0 && (
             <div className="images-banner" data-testid="images-banner">
@@ -522,6 +545,12 @@ function Details({ m, p, onClose }: { m: MessageRow; p: ParsedMessage; onClose: 
       {row("security", auth.spf || auth.dkim ? `SPF ${auth.spf ?? "—"} · DKIM ${auth.dkim ?? "—"} · DMARC ${auth.dmarc ?? "—"}` : "")}
     </div>
   );
+}
+
+/** The sender's domain failed its checks: DMARC failed, or SPF failed with no passing DKIM signature. */
+function unverified(p: ParsedMessage): boolean {
+  const a = authResults(p);
+  return a.dmarc === "FAIL" || (a.spf === "FAIL" && a.dkim !== "PASS");
 }
 
 /** Pointing at a sender's name shows who it is, with quick actions (write, copy the address, find their mail). */
