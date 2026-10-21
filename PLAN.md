@@ -24,7 +24,8 @@ Google branding, Google's assets and Google-only services, with multiple account
 | P7 real-use round | done | `research/VERIFY-P7.md` |
 | P8 1.0.4 bug hunt | done | `research/VERIFY-P8.md` |
 | P9 1.0.5 parity round | done | `research/VERIFY-P9.md` |
-| Tests | passing | Vitest 93, Rust 45 (+2 opt-in live TLS checks), end to end 60 steps in ~3 min (window sizes 1440–420 px included) with an app-error trap |
+| P10 1.0.6 real-use bugs + hunt | done | `research/VERIFY-P10.md` — delete flash, "400: Precondition check failed", unsubscribe like the web client, stale cache after cleanups, label settings, a button sweep |
+| Tests | passing | Vitest 103, Rust 54 (+2 opt-in live TLS checks), end to end 70 steps + 2 run-wide checks in ~6 min (frame recorder for flashes, every button pressed, no raw error text, window sizes 1440–420 px) |
 | Real-account check | done (read-only) | 2026-10-19 with the user's own OAuth client; found bugs (first-run client setup unreachable, Inbox count from a partial cache, endless Keychain prompts after an update), fixed in 1.0.1. See `research/VERIFY-P0.md`. |
 
 Open items: things not driven automatically (mailto/.eml/Quick Look/Share/drag-out,

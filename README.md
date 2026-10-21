@@ -29,8 +29,9 @@ Both downloads are checked against the SHA-256 sums listed in the release notes.
 - **Any other provider**: choose **Add account ▸ Other mail**, type your address, and Courier finds the server
   settings. Use an app password (iCloud, Outlook, Yahoo and Fastmail all have them in their account settings).
 
-If something looks wrong, Courier's log is at `~/Library/Logs/com.milappatel.courier/courier.log` (sync and sign-in
-events only, never message content).
+If something looks wrong, Courier's log is at `~/Library/Logs/com.milappatel.courier/courier.log`: sync and
+sign-in events, every action you take (what, on how many conversations, label ids, how it ended) and every request
+the mail server refused (status and reason). Never subjects, addresses or message content.
 
 Sign-ins live in your macOS Keychain, in a single Courier entry. After an update, macOS may ask once for your
 Keychain password to let the new version read it (choose **Always Allow**); if you'd rather not, choose **Deny** and
@@ -65,6 +66,20 @@ compose.
 
 Snooze, schedule send and mute aren't available in the Gmail API, so Courier keeps them on your Mac: snoozed and
 scheduled mail need Courier running (it can be in the background) at the chosen time.
+
+## Known limitations
+
+- Courier keeps the last 30 days of mail (and older unread Inbox mail) on your Mac; older mail comes from the
+  server page by page, so it needs a connection.
+- Archiving, deleting and labelling need a connection: offline they say so and offer Try again (sends wait in
+  the Outbox).
+- Gmail's Purchases category isn't available through the Gmail API, so it has no tab or label in Courier.
+- Unsubscribe uses the sender's one-click link (RFC 8058), else an unsubscribe email from your account, else the
+  sender's web page; it can take a sender a few days to stop.
+- A phone app can keep showing mail you've already deleted elsewhere until it refreshes; the server (and
+  Courier) are the reference.
+- Builds are signed ad hoc, not notarised (see Install), so macOS may ask for your Keychain password once after
+  each update.
 
 ## Privacy
 

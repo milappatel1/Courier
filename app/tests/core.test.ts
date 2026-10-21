@@ -306,3 +306,12 @@ describe("unsubscribe and mailto", () => {
     });
   });
 });
+
+describe("settings after a restart", () => {
+  it("keeps the system labels' show/hide choices", async () => {
+    const { mergeSettings, SYSTEM_LABEL_DEFAULTS } = await import("../src/state/settings");
+    const back = mergeSettings({ systemLabels: { STARRED: "hide", ALL: "show" } });
+    expect(back.systemLabels).toEqual({ STARRED: "hide", ALL: "show" });
+    expect(SYSTEM_LABEL_DEFAULTS).toMatchObject({ IMPORTANT: "hide", ALL: "hide", SPAM: "hide", TRASH: "hide", SCHEDULED: "show if unread", DRAFT: "show" });
+  });
+});

@@ -49,6 +49,8 @@ Status: ✅ done · 🔧 fixed in this round · ➕ added in this round · ⛔ l
 | Counts update right after an action (archive, delete, read) and after changes made elsewhere | 🔧 |
 | Category counts (unread) | 🔧 |
 | Manage subscriptions: senders with an unsubscribe option, how much they send, one-click unsubscribe | ➕ |
+| Manage subscriptions follows the web client: under More, "Subscriptions" with its note, "20+ emails recently", unsubscribes from all of a sender's lists, holds still while open | 🔧 |
+| Settings ▸ Labels ▸ System labels (show / hide / show if unread) decide what sits above More, with the web client's defaults | 🔧 |
 | Label menu: colour, show/hide in label list and message list, edit, add sublabel, remove | ✅ |
 | Drag conversations onto a label | ✅ |
 | Narrow window: rail by default; phone width: an overlay drawer | ➕ |
@@ -64,6 +66,10 @@ Status: ✅ done · 🔧 fixed in this round · ➕ added in this round · ⛔ l
 | Row right-click menu: reply, reply all, forward, forward as attachment, archive, delete, mark read/unread, snooze, move to, label as, mute, find mail from the sender, find mail with this subject, open in a new window | ➕ |
 | Attachment chips under a row (first files, "+N") | ➕ |
 | Hover actions; drag rows; keyboard; density; reading pane none/right/below | ✅ |
+| Deleting, archiving and labelling never flash rows back, whatever the server or a sync is doing meanwhile | 🔧 |
+| A short cached page isn't called empty until the server has answered (no "Nothing here" before older mail) | 🔧 |
+| Trash and Spam banners: deleted after 30 days, Empty Trash now / Delete all spam messages now | ➕ |
+| Whole-view actions go on past a refused batch and say how many conversations moved and how many didn't, with Try again | 🔧 |
 | Two-finger swipe left on a row: archive (configurable per direction: archive, delete, mark read/unread, snooze, none), as in the phone app; right stays the back swipe by default | ➕ |
 | Empty views say so (own wording, no illustration) | ➕ |
 | Tabs with new-mail counts | ✅ |
@@ -80,6 +86,9 @@ Status: ✅ done · 🔧 fixed in this round · ➕ added in this round · ⛔ l
 | Details popover, print, show original, download message, mark unread from here, block, report spam/phishing, filter like this | ✅ |
 | Pointing at a sender's name shows their card: write to them, copy the address, find their mail | ➕ |
 | Unsubscribe next to the sender | ✅ |
+| Unsubscribe in the web client's order and words: one-click in the background, else an email from the account (named), else Go to website; "Unsubscribed from this mailing list." and an Unsubscribed state | 🔧 |
+| Report spam on list mail asks "Report spam or unsubscribe?" | ➕ |
+| A conversation on this Mac opens at once (the server is checked in the background); auto-advance goes to the adjacent conversation | 🔧 |
 | Calendar invitations: event card, Yes / Maybe / No (iTIP REPLY), Add to Calendar | ➕ |
 | A caution banner for senders that fail their checks; a Not spam banner in Spam | ➕ |
 | In-message jump links (#section) scroll the conversation | 🔧 |
