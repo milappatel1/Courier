@@ -1772,6 +1772,48 @@ step(
 );
 
 step(
+  "offline: a delete is made at once and waits, Undo takes it back, and it reaches the server when back online",
+  async () => {
+    await backToInbox();
+    for (const subject of ["Deleted while offline", "Undone while offline"])
+      await api.e2eControl("deliver-gmail", { from: "Offline Test <offline@test.example>", subject, body: "Changed with no connection." });
+    await until("the test rows", () => row("Deleted while offline") && row("Undone while offline"), 30_000);
+    const gone = row("Deleted while offline")!.dataset.thread!;
+    const inInbox = async (subject: string) => (await msgsWith(subject)).every((m) => m.labels.includes("INBOX") && !m.labels.includes("TRASH"));
+    await api.e2eControl("offline", { on: true });
+    try {
+      // Delete, then Undo before the connection is back: the row comes back and nothing is left to send.
+      click(await el("hover-delete", row("Undone while offline")!));
+      const queued = await until("the toast says when", () => toastWith(/^Conversation moved to Trash\. It'll sync when you're back online\./), 20_000);
+      await until("the row leaves", () => !row("Undone while offline"));
+      click(await el("toast-action", queued));
+      await until("Undo brings the row back", () => row("Undone while offline"), 20_000);
+      // Delete and leave it: gone here, still in the Inbox on the server, and a sync attempt doesn't bring it back.
+      click(await el("hover-delete", row("Deleted while offline")!));
+      await until("the toast says when", () => toastWith(/^Conversation moved to Trash\. It'll sync when you're back online\./), 20_000);
+      await until("the row leaves", () => !row("Deleted while offline"));
+      await until("offline shown", () => getState().online === false);
+      await api.e2eControl("sync");
+      await sleep(1500);
+      check(!row("Deleted while offline"), "the deleted row came back while offline");
+      check((await inInbox("Deleted while offline")) && (await inInbox("Undone while offline")), "the server changed while offline");
+    } finally {
+      await api.e2eControl("offline", { on: false });
+    }
+    const rec = recordFrames();
+    await api.e2eControl("sync");
+    await until("in Trash on the server", async () => (await msgsWith("Deleted while offline")).every((m) => m.labels.includes("TRASH")) || null, 40_000);
+    await until("online again", () => getState().online === true, 40_000);
+    await sleep(2500);
+    const back = rec.stop().frames.find((f) => f.rows.includes(gone));
+    check(!back, `the deleted row came back at +${back?.t} ms after reconnecting`);
+    check(await inInbox("Undone while offline"), "the undone delete reached the server");
+    check(row("Undone while offline") && !row("Deleted while offline"), "the Inbox doesn't match");
+  },
+  120_000,
+);
+
+step(
   "every button and menu item does something: list toolbar, conversation, message and their menus",
   async () => {
     await backToInbox();

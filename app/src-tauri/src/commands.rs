@@ -1,7 +1,7 @@
 //! Commands the web view calls. Thin wrappers over the engine and the cache; errors go back as strings.
 
 use crate::db::{AccountRow, Contact, LabelRow, OutboxRow};
-use crate::engine::{account_info, AccountInfo, Engine, ViewQuery, ViewResult};
+use crate::engine::{account_info, AccountInfo, Changed, Engine, ViewQuery, ViewResult};
 use crate::error::{now_ms, random_token, Error, Result};
 use crate::imap::{self, ImapAccountConfig};
 use crate::oauth::{self, ClientCreds, TokenManager};
@@ -336,6 +336,13 @@ fn log_action<T>(account: &str, what: &str, r: &Result<T>) {
     }
 }
 
+fn log_change(account: &str, what: &str, r: &Result<Changed>) {
+    match r {
+        Ok(Changed::Queued) => crate::applog::info(&format!("{account}: {what}: offline, queued")),
+        _ => log_action(account, what, r),
+    }
+}
+
 fn log_bulk(account: &str, what: &str, r: &Result<crate::engine::BulkOutcome>) {
     match r {
         Ok(o) => crate::applog::info(&format!("{account}: {what}: {} conversation(s) done, {} not", o.conversations, o.failed_conversations)),
@@ -353,16 +360,16 @@ fn view_name(v: &ViewQuery) -> String {
 }
 
 #[tauri::command]
-pub async fn modify_threads(st: S<'_>, account_id: String, thread_ids: Vec<String>, add: Vec<String>, remove: Vec<String>) -> Result<()> {
+pub async fn modify_threads(st: S<'_>, account_id: String, thread_ids: Vec<String>, add: Vec<String>, remove: Vec<String>) -> Result<Changed> {
     let r = st.engine.modify_threads(&account_id, &thread_ids, &add, &remove).await;
-    log_action(&account_id, &format!("labels +{add:?} -{remove:?} on {} conversation(s)", thread_ids.len()), &r);
+    log_change(&account_id, &format!("labels +{add:?} -{remove:?} on {} conversation(s)", thread_ids.len()), &r);
     r
 }
 
 #[tauri::command]
-pub async fn modify_messages(st: S<'_>, account_id: String, message_ids: Vec<String>, add: Vec<String>, remove: Vec<String>) -> Result<()> {
+pub async fn modify_messages(st: S<'_>, account_id: String, message_ids: Vec<String>, add: Vec<String>, remove: Vec<String>) -> Result<Changed> {
     let r = st.engine.modify_messages(&account_id, &message_ids, &add, &remove).await;
-    log_action(&account_id, &format!("labels +{add:?} -{remove:?} on {} message(s)", message_ids.len()), &r);
+    log_change(&account_id, &format!("labels +{add:?} -{remove:?} on {} message(s)", message_ids.len()), &r);
     r
 }
 
@@ -427,7 +434,7 @@ pub async fn mute_threads(st: S<'_>, account_id: String, thread_ids: Vec<String>
 
 /// Set (or clear) the star type of a message; the server gets STARRED.
 #[tauri::command]
-pub async fn star_message(st: S<'_>, account_id: String, message_id: String, star_type: Option<String>) -> Result<()> {
+pub async fn star_message(st: S<'_>, account_id: String, message_id: String, star_type: Option<String>) -> Result<Changed> {
     st.engine.db.set_star_type(&account_id, &message_id, star_type.as_deref())?;
     if star_type.is_some() {
         st.engine.modify_messages(&account_id, &[message_id], &["STARRED".into()], &[]).await

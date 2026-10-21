@@ -134,7 +134,7 @@ export interface MailState {
   thread: { detail: ThreadDetail | null; loading: boolean; error: string | null };
   composes: ComposeData[];
   toasts: Toast[];
-  undo: { text: string; run: () => Promise<void> } | null;
+  undo: { text: string; run: () => Promise<unknown> } | null;
   ui: UI;
   online: boolean;
   sync: Record<string, Sync>;
@@ -655,7 +655,7 @@ export async function runUndo() {
   void loadList({ quiet: true });
 }
 
-function withUndo(text: string, undo: () => Promise<void>) {
+function withUndo(text: string, undo: () => Promise<unknown>) {
   set({ undo: { text, run: undo } });
   toast(text, { action: { label: "Undo", run: () => void runUndo() } });
 }
@@ -751,6 +751,12 @@ export async function init() {
   void on("accounts-changed", () => void loadAccounts().then(() => loadLabels()));
   void on<{ accountId: string; outboxId: number; scheduled: boolean }>("message-sent", (p) => onMessageSent(p));
   void on("outbox-changed", () => refreshSoon());
+  // A change made offline that the server refused once it could be asked: it's been put back.
+  void on<{ accountId: string; messages: number }>("queued-changes-refused", (p) =>
+    toast(
+      `Couldn't make a change you made offline to ${p.messages === 1 ? "a message" : `${p.messages.toLocaleString()} messages`}. The mail server didn't accept it, so it's been put back.`,
+    ),
+  );
   // WebKit's own downloads (Download Image / Download Linked File in a message's context menu).
   void on<{ path: string | null; success: boolean }>("download-finished", (p) => {
     if (!p.success) return void toast("Couldn't download that file.");

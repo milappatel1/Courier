@@ -59,6 +59,9 @@ export function currentTargets(): Target[] {
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : `${n} ${many}`);
 
+/** Added to an action's toast when the change waits for the connection (Undo still takes it back). */
+const WHEN_ONLINE = " It'll sync when you're back online.";
+
 const RULES: Record<ActionKind, { add: string[]; remove: string[]; text: (n: number) => string; leaves?: (label: string | null) => boolean }> = {
   archive: { add: [], remove: ["INBOX"], text: (n) => `${plural(n, "Conversation", "conversations")} archived.`, leaves: (l) => l === "INBOX" },
   inbox: {
@@ -215,11 +218,12 @@ export async function act(kind: ActionKind, targets: Target[] = currentTargets()
   const wasOpen = s.route.thread;
   advanceAfter(leaving && !!wasOpen && targets.some((t) => t.threadIds.includes(wasOpen.threadId)));
   let ok = false;
+  let queued = false;
   try {
     for (const t of targets) {
       if (kind === "mute" || kind === "unmute") await api.mute(t.accountId, t.threadIds, kind === "mute");
       else if (kind === "unsnooze") await api.unsnooze(t.accountId, t.threadIds);
-      else await api.modifyThreads(t.accountId, t.threadIds, rule.add, rule.remove);
+      else if ((await api.modifyThreads(t.accountId, t.threadIds, rule.add, rule.remove)) === "queued") queued = true;
     }
     // The inverse change; removing TRASH/SPAM brings INBOX back (the engine's label rules). Muting archives what
     // was in the Inbox, so undoing it puts those back.
@@ -232,7 +236,7 @@ export async function act(kind: ActionKind, targets: Target[] = currentTargets()
         } else if (kind !== "unsnooze") await api.modifyThreads(t.accountId, t.threadIds, rule.remove, rule.add);
       }
     };
-    withUndo(rule.text(count) + (opts.note ?? ""), undo);
+    withUndo(rule.text(count) + (opts.note ?? "") + (queued ? WHEN_ONLINE : ""), undo);
     ok = true;
   } catch (e) {
     toast(failureText(doing(kind, count), e), { action: { label: "Try again", run: () => void act(kind, targets) } });
@@ -274,7 +278,8 @@ export async function applyLabels(add: string[], remove: string[], opts: { move?
   hideThreads(moved);
   let ok = false;
   try {
-    for (const t of targets) await api.modifyThreads(t.accountId, t.threadIds, add, removeAll);
+    let queued = false;
+    for (const t of targets) if ((await api.modifyThreads(t.accountId, t.threadIds, add, removeAll)) === "queued") queued = true;
     const acct = targets[0].accountId;
     const names = add.map((l) => labelName(acct, l));
     const text = opts.move
@@ -282,7 +287,7 @@ export async function applyLabels(add: string[], remove: string[], opts: { move?
       : add.length
         ? `${plural(count, "Conversation", "conversations")} added to "${names.join('", "')}".`
         : `${plural(count, "Conversation", "conversations")} removed from "${remove.map((l) => labelName(acct, l)).join('", "')}".`;
-    withUndo(text, async () => {
+    withUndo(text + (queued ? WHEN_ONLINE : ""), async () => {
       for (const t of targets) await api.modifyThreads(t.accountId, t.threadIds, removeAll, add);
     });
     ok = true;
@@ -360,9 +365,9 @@ export async function markUnreadFromHere(ref: ThreadRef, fromIndex: number) {
   const d = getState().thread.detail;
   if (!d) return;
   const ids = d.messages.slice(fromIndex).map((m) => m.id);
-  await api.modifyMessages(ref.accountId, ids, ["UNREAD"], []);
+  const changed = await api.modifyMessages(ref.accountId, ids, ["UNREAD"], []);
   closeThread();
-  toast("Marked as unread.");
+  toast("Marked as unread." + (changed === "queued" ? WHEN_ONLINE : ""));
 }
 
 export async function blockSender(accountId: string, email: string, name: string) {

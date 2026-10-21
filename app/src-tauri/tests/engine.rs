@@ -1,8 +1,9 @@
 //! Engine tests against the fakes: views (labels, categories, search, unified), actions on both account
-//! kinds, undo send, scheduled send, the offline outbox, snooze, mute, block, local filters, notifications.
+//! kinds, undo send, scheduled send, the offline outbox, label changes queued offline, snooze, mute, block,
+//! local filters, notifications.
 
 use courier_lib::db::{AccountRow, Db};
-use courier_lib::engine::{Engine, EventSink, Notifier, Opener, ViewQuery};
+use courier_lib::engine::{Changed, Engine, EventSink, Notifier, Opener, ViewQuery};
 use courier_lib::imap::{ImapAccountConfig, Security, ServerConfig};
 use courier_lib::oauth::{self, ClientCreds, TokenManager};
 use courier_lib::secrets::{self, MemoryStore, SecretStore};
@@ -46,10 +47,14 @@ struct World {
 }
 
 async fn world() -> World {
+    world_on(Db::open_in_memory().unwrap()).await
+}
+
+async fn world_on(db: Db) -> World {
     let gmail = FakeGmail::start("pat@example.com", "Pat Example").await;
     let imap = FakeImap::start("pat@example.org", "app-password").await;
     let smtp = FakeSmtp::start("pat@example.org", "app-password").await;
-    let db = Arc::new(Db::open_in_memory().unwrap());
+    let db = Arc::new(db);
     let store: Arc<dyn SecretStore> = Arc::new(MemoryStore::default());
     let rec = Arc::new(Rec::default());
     let r2 = rec.clone();
@@ -80,6 +85,14 @@ async fn world() -> World {
     store.set(&secrets::password_key("i1"), "app-password").unwrap();
     db.insert_account(&AccountRow { id: "i1".into(), kind: "imap".into(), email: "pat@example.org".into(), name: "Pat".into(), color: "#0b8043".into(), position: 1, config: serde_json::to_value(cfg).unwrap(), state: json!({}), ..Default::default() }).unwrap();
     World { engine, rec, gmail, imap, smtp }
+}
+
+/// Courier quit and opened again: a new engine on the same data file and key store.
+fn relaunch(w: &World, path: &std::path::Path) -> Arc<Engine> {
+    let db = Arc::new(Db::open(path).unwrap());
+    let engine = Engine::new(db, w.engine.secrets.clone(), Arc::new(Sink(w.rec.clone())), Arc::new(Note(w.rec.clone())), Arc::new(NoOpen), Arc::new(|_| {}));
+    *engine.google_endpoints.write() = w.gmail.endpoints();
+    engine
 }
 
 fn view(account: &str, label: &str) -> ViewQuery {
@@ -692,4 +705,104 @@ async fn a_server_listing_corrects_cached_conversations_it_no_longer_shows() {
     assert!(w.engine.db.message("g1", &c).unwrap().is_none());
     assert!(w.engine.db.message("g1", &b).unwrap().unwrap().labels.contains(&"TRASH".to_string()));
     let _ = a;
+}
+
+#[tokio::test]
+async fn a_delete_made_offline_stays_survives_a_restart_and_goes_out_once_online_and_an_undo_cancels_one() {
+    let dir = std::env::temp_dir().join(format!("courier-queue-{}", courier_lib::error::random_token(6)));
+    let path = dir.join("courier.db");
+    let w = world_on(Db::open(&path).unwrap()).await;
+    let gone = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Delete me offline", "x", ""), &["INBOX", "UNREAD"]);
+    let kept = w.gmail.deliver(&sample_mail("Bo <bo@x.io>", "pat@example.com", "Undo me offline", "y", ""), &["INBOX"]);
+    w.engine.sync_account("g1").await.unwrap();
+    let thread = |id: &str| w.engine.db.message("g1", id).unwrap().unwrap().thread_id;
+    let (t, tk) = (thread(&gone), thread(&kept));
+    w.gmail.state.lock().offline = true;
+    // Deleted here at once, and it stays deleted.
+    assert_eq!(w.engine.modify_threads("g1", std::slice::from_ref(&t), &["TRASH".into()], &[]).await.unwrap(), Changed::Queued);
+    let labels = w.engine.db.message("g1", &gone).unwrap().unwrap().labels;
+    assert!(labels.contains(&"TRASH".to_string()) && !labels.contains(&"INBOX".to_string()), "{labels:?}");
+    assert!(!w.engine.list(&view("g1", "INBOX")).await.unwrap().threads.iter().any(|x| x.thread_id == t));
+    assert_eq!(w.engine.db.label("g1", "INBOX").unwrap().unwrap().threads_total, 1, "the Inbox count");
+    // Another delete, undone (the inverse change) before the connection is back: nothing is left to send.
+    assert_eq!(w.engine.modify_threads("g1", std::slice::from_ref(&tk), &["TRASH".into()], &[]).await.unwrap(), Changed::Queued);
+    assert_eq!(w.engine.modify_threads("g1", std::slice::from_ref(&tk), &[], &["TRASH".into()]).await.unwrap(), Changed::Queued);
+    assert_eq!(w.engine.db.message("g1", &kept).unwrap().unwrap().labels, vec!["INBOX".to_string()]);
+    assert_eq!(w.engine.db.queued_changes("g1").unwrap().iter().map(|q| q.message_id.as_str()).collect::<Vec<_>>(), vec![gone.as_str()]);
+    // Quit and open again, still offline: the delete is still made here and still waiting.
+    let e2 = relaunch(&w, &path);
+    assert!(e2.db.message("g1", &gone).unwrap().unwrap().labels.contains(&"TRASH".to_string()));
+    assert!(e2.sync_account("g1").await.unwrap_err().is_offline());
+    // What the server said before the delete doesn't undo it while it waits.
+    e2.db.set_labels("g1", &gone, &["INBOX".into(), "UNREAD".into()]).unwrap();
+    let labels = e2.db.message("g1", &gone).unwrap().unwrap().labels;
+    assert!(labels.contains(&"TRASH".to_string()) && !labels.contains(&"INBOX".to_string()), "a server read undid the queued delete: {labels:?}");
+    assert_eq!(w.gmail.message(&gone).unwrap().labels, vec!["INBOX".to_string(), "UNREAD".to_string()], "the server changed while offline");
+    // Back online: the next sync sends it before anything else, once.
+    w.gmail.state.lock().offline = false;
+    let from = w.gmail.state.lock().log.len();
+    e2.sync_account("g1").await.unwrap();
+    let server = w.gmail.message(&gone).unwrap().labels;
+    assert!(server.contains(&"TRASH".to_string()) && !server.contains(&"INBOX".to_string()), "{server:?}");
+    assert_eq!(w.gmail.message(&kept).unwrap().labels, vec!["INBOX".to_string()]);
+    let sent: Vec<String> = w.gmail.state.lock().log[from..].iter().filter(|l| l.ends_with("/batchModify")).cloned().collect();
+    assert_eq!(sent.len(), 1, "the undone delete went out too: {sent:?}");
+    assert!(e2.db.queued_changes("g1").unwrap().is_empty());
+    assert!(e2.db.message("g1", &gone).unwrap().unwrap().labels.contains(&"TRASH".to_string()));
+    assert_eq!(e2.db.label("g1", "INBOX").unwrap().unwrap().threads_total, 1);
+    // Online again, a change goes straight to the server.
+    assert_eq!(e2.modify_threads("g1", std::slice::from_ref(&tk), &[], &["INBOX".into()]).await.unwrap(), Changed::Done);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn imap_changes_made_offline_go_out_in_order_once_online() {
+    let w = world().await;
+    w.imap.deliver("INBOX", &sample_mail("Cy <cy@x.io>", "pat@example.org", "Trip", "train", ""), &[]);
+    w.imap.deliver("INBOX", &sample_mail("Di <di@x.io>", "pat@example.org", "Dinner", "soup", ""), &[]);
+    w.engine.sync_account("i1").await.unwrap();
+    let inbox = w.engine.list(&view("i1", "INBOX")).await.unwrap().threads;
+    let trip = inbox.iter().find(|t| t.subject == "Trip").unwrap().thread_id.clone();
+    let dinner = inbox.iter().find(|t| t.subject == "Dinner").unwrap().thread_id.clone();
+    w.imap.state.lock().offline = true;
+    // Read, then archive: the second moves the message, so the two go out as one.
+    assert_eq!(w.engine.modify_threads("i1", std::slice::from_ref(&trip), &[], &["UNREAD".into()]).await.unwrap(), Changed::Queued);
+    assert_eq!(w.engine.modify_threads("i1", std::slice::from_ref(&trip), &[], &["INBOX".into()]).await.unwrap(), Changed::Queued);
+    // Delete, then undo.
+    assert_eq!(w.engine.modify_threads("i1", std::slice::from_ref(&dinner), &["TRASH".into()], &[]).await.unwrap(), Changed::Queued);
+    assert_eq!(w.engine.modify_threads("i1", std::slice::from_ref(&dinner), &[], &["TRASH".into()]).await.unwrap(), Changed::Queued);
+    let inbox = w.engine.list(&view("i1", "INBOX")).await.unwrap().threads;
+    assert_eq!(inbox.iter().map(|t| t.subject.as_str()).collect::<Vec<_>>(), vec!["Dinner"]);
+    assert!(w.engine.sync_account("i1").await.unwrap_err().is_offline());
+    assert_eq!(w.imap.folder("INBOX").unwrap().msgs.len(), 2, "the server changed while offline");
+    w.imap.state.lock().offline = false;
+    w.engine.sync_account("i1").await.unwrap();
+    let in_inbox = w.imap.folder("INBOX").unwrap().msgs;
+    assert_eq!(in_inbox.len(), 1);
+    assert!(String::from_utf8_lossy(&in_inbox[0].raw).contains("Dinner"));
+    let archived = w.imap.folder("Archive").unwrap().msgs;
+    assert_eq!(archived.len(), 1);
+    assert!(archived[0].flags.contains("\\Seen"), "read before it was archived: {:?}", archived[0].flags);
+    assert!(w.imap.folder("Trash").unwrap().msgs.is_empty(), "the undone delete went out");
+    assert!(w.engine.db.queued_changes("i1").unwrap().is_empty());
+    let inbox = w.engine.list(&view("i1", "INBOX")).await.unwrap().threads;
+    assert_eq!(inbox.iter().map(|t| t.subject.as_str()).collect::<Vec<_>>(), vec!["Dinner"]);
+}
+
+#[tokio::test]
+async fn a_change_made_offline_that_the_server_then_refuses_is_undone_and_said() {
+    let w = world().await;
+    let id = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Filed", "x", ""), &["INBOX", "Label_1"]);
+    w.engine.sync_account("g1").await.unwrap();
+    let t = w.engine.db.message("g1", &id).unwrap().unwrap().thread_id;
+    w.gmail.state.lock().offline = true;
+    assert_eq!(w.engine.modify_threads("g1", std::slice::from_ref(&t), &["SPAM".into()], &[]).await.unwrap(), Changed::Queued);
+    w.gmail.state.lock().offline = false;
+    w.gmail.state.lock().fail_routes.insert("batchModify".into(), 400);
+    w.engine.sync_account("g1").await.unwrap();
+    let mut labels = w.engine.db.message("g1", &id).unwrap().unwrap().labels;
+    labels.sort();
+    assert_eq!(labels, vec!["INBOX".to_string(), "Label_1".to_string()], "put back as it was");
+    assert!(w.engine.db.queued_changes("g1").unwrap().is_empty());
+    assert!(w.rec.events.lock().iter().any(|(e, p)| e == "queued-changes-refused" && p["messages"] == 1));
 }

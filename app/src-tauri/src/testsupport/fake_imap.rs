@@ -33,6 +33,9 @@ pub struct IState {
     pub log: Vec<String>,
     /// Extra time (ms) a MOVE or COPY takes, as on a real server.
     pub move_latency: u64,
+    /// Unreachable: new connections are reset, open ones at their next command (as a network that went away;
+    /// a tidy close can read as an empty answer).
+    pub offline: bool,
 }
 
 #[derive(Clone)]
@@ -40,6 +43,11 @@ pub struct FakeImap {
     pub addr: SocketAddr,
     pub state: Arc<Mutex<IState>>,
     pub changes: broadcast::Sender<String>,
+}
+
+/// Drop a connection with a reset, not a close.
+fn reset(stream: TcpStream) {
+    let _ = stream.set_zero_linger();
 }
 
 fn folder(special: Option<&str>, uv: u32) -> IFolder {
@@ -57,13 +65,17 @@ impl FakeImap {
         folders.insert("Trash".to_string(), folder(Some("\\Trash"), 14));
         folders.insert("Junk".to_string(), folder(Some("\\Junk"), 15));
         folders.insert("Archive".to_string(), folder(Some("\\Archive"), 16));
-        let state = Arc::new(Mutex::new(IState { user: user.into(), password: password.into(), folders, log: vec![], move_latency: 0 }));
+        let state = Arc::new(Mutex::new(IState { user: user.into(), password: password.into(), folders, log: vec![], move_latency: 0, offline: false }));
         let (tx, _) = broadcast::channel(64);
         let fake = FakeImap { addr, state, changes: tx };
         let f = fake.clone();
         tokio::spawn(async move {
             loop {
                 let Ok((stream, _)) = listener.accept().await else { return };
+                if f.state.lock().offline {
+                    reset(stream);
+                    continue;
+                }
                 let f = f.clone();
                 tokio::spawn(async move {
                     let _ = f.conn(stream).await;
@@ -99,6 +111,10 @@ impl FakeImap {
         let mut authed = false;
         loop {
             let Some(line) = read_line(&mut r).await? else { return Ok(()) };
+            if self.state.lock().offline {
+                reset(r.into_inner().reunite(w).expect("halves of one stream"));
+                return Ok(());
+            }
             // Literal on the command line ({n} or {n+}): read it now.
             let (line, literal) = match literal_len(&line) {
                 Some((n, sync)) => {

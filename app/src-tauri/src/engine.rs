@@ -71,6 +71,18 @@ pub struct Engine {
     imap: Mutex<HashMap<String, Arc<ImapAccount>>>,
     pub sync_interval: RwLock<Duration>,
     outbox_kick: Notify,
+    /// One flush of the queued label changes at a time per account, so they go out in order.
+    flushing: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+}
+
+/// Where a label change went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Changed {
+    /// The server has it.
+    Done,
+    /// The server couldn't be reached: it's made here and goes out when the connection is back.
+    Queued,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -178,6 +190,7 @@ impl Engine {
             imap: Mutex::new(HashMap::new()),
             sync_interval: RwLock::new(Duration::from_secs(60)),
             outbox_kick: Notify::new(),
+            flushing: Mutex::new(HashMap::new()),
         })
     }
 
@@ -234,6 +247,10 @@ impl Engine {
             if on {
                 let _ = self.db.outbox_retry_now(now_ms());
                 self.outbox_kick.notify_one();
+                // Label changes made offline go out with their account's next sync: now.
+                for a in self.db.queued_accounts().unwrap_or_default() {
+                    self.trigger(&a);
+                }
             }
         }
     }
@@ -442,6 +459,8 @@ impl Engine {
     /// One sync step for an account (initial window first time, then incremental).
     pub async fn sync_account(&self, account: &str) -> Result<()> {
         let a = self.db.account(account)?;
+        // Changes made offline first, so the server has them before it's asked what changed.
+        self.flush_queue(account).await?;
         let days = self.db.kv_get("offline").ok().flatten().and_then(|v| v["days"].as_u64()).unwrap_or(30) as u32;
         let new_messages = if a.kind == "gmail" {
             let g = self.gmail(account)?;
@@ -743,7 +762,8 @@ impl Engine {
         let label = v.label.clone().unwrap_or_default();
         let kind = self.kind(account)?;
         let local_only = matches!(label.as_str(), "SNOOZED" | "SCHEDULED" | "OUTBOX") || !v.conversations;
-        if kind == "gmail" && v.mode.as_deref() == Some("server") && !local_only && self.online.load(Ordering::SeqCst) {
+        // While changes made offline wait to go out, the server's listing is out of date: the cache has them.
+        if kind == "gmail" && v.mode.as_deref() == Some("server") && !local_only && self.online.load(Ordering::SeqCst) && self.flush_queue(account).await.is_ok() && !self.db.has_queued(account)? {
             match self.server_list(account, v, limit).await {
                 Ok(r) => return Ok(r),
                 Err(e) if e.is_offline() => self.set_online(false),
@@ -920,7 +940,7 @@ impl Engine {
         Ok(out)
     }
 
-    pub async fn modify_threads(&self, account: &str, thread_ids: &[String], add: &[String], remove: &[String]) -> Result<()> {
+    pub async fn modify_threads(&self, account: &str, thread_ids: &[String], add: &[String], remove: &[String]) -> Result<Changed> {
         // Trash/spam actions apply to the whole conversation; label removal from the inbox too.
         let ids = self.thread_message_ids(account, thread_ids)?;
         let ids: Vec<String> = if add.iter().any(|l| l == "TRASH" || l == "SPAM") || remove.iter().any(|l| l == "TRASH" || l == "SPAM") {
@@ -932,13 +952,19 @@ impl Engine {
         self.modify_messages(account, &ids, add, remove).await
     }
 
-    pub async fn modify_messages(&self, account: &str, ids: &[String], add: &[String], remove: &[String]) -> Result<()> {
+    /// Change labels: here at once, then on the server. Offline, the change waits here (and over a restart) and
+    /// goes out when the connection is back; so does one made while earlier ones still wait, after them.
+    pub async fn modify_messages(&self, account: &str, ids: &[String], add: &[String], remove: &[String]) -> Result<Changed> {
         if ids.is_empty() {
-            return Ok(());
+            return Ok(Changed::Done);
         }
         let add = expand_label_rules(add, remove);
         let (add, remove) = (add.0, add.1);
         let gmail = self.kind(account)? == "gmail";
+        if self.db.has_queued(account)? {
+            let _ = self.flush_queue(account).await;
+        }
+        let behind = self.db.has_queued(account)?;
         // Optimistic local change first so the UI updates immediately, counts included. It holds until the server
         // answers, whatever a sync reads from the server meanwhile.
         let threads = self.thread_ids_of(account, ids);
@@ -952,21 +978,29 @@ impl Engine {
             self.db.recount_labels(account).ok();
         }
         self.changed(account, "modify");
-        let result = if gmail {
-            let g = self.gmail(account)?;
-            let r = g.batch_modify(ids, &add, &remove).await;
-            if r.is_ok() {
-                // Removing INBOX from a snoozed thread that the user then un-archives clears the snooze, etc.
-                if add.iter().any(|l| l == "INBOX") {
-                    for t in self.thread_ids_of(account, ids) {
-                        let _ = self.db.unsnooze(account, &t);
-                    }
-                }
-            }
-            r
+        let result = if behind {
+            // Earlier changes still wait for the connection; this one waits behind them.
+            Err(Error::Offline("earlier changes are still waiting".into()))
+        } else if gmail {
+            self.gmail(account)?.batch_modify(ids, &add, &remove).await
         } else {
             self.imap_modify(account, ids, &add, &remove).await
         };
+        // Removing INBOX from a snoozed thread that the user then un-archives clears the snooze, etc.
+        if gmail && add.iter().any(|l| l == "INBOX") && (result.is_ok() || result.as_ref().is_err_and(Error::is_offline)) {
+            for t in self.thread_ids_of(account, ids) {
+                let _ = self.db.unsnooze(account, &t);
+            }
+        }
+        if let Err(e) = &result {
+            if e.is_offline() {
+                if !behind {
+                    self.set_online(false);
+                }
+                self.db.queue_change(account, ids, &add, &remove, &had, change)?;
+                return Ok(Changed::Queued);
+            }
+        }
         self.db.end_change(account, ids, change, result.is_ok(), &had)?;
         match result {
             Ok(()) => {
@@ -981,7 +1015,7 @@ impl Engine {
                 }
                 self.trigger(account);
                 self.changed(account, "modify");
-                Ok(())
+                Ok(Changed::Done)
             }
             Err(e) => {
                 // end_change undid the optimistic change; now its counts.
@@ -994,6 +1028,69 @@ impl Engine {
                 Err(e)
             }
         }
+    }
+
+    /// Send the label changes made offline, oldest first, messages with the same change together. No connection
+    /// (or a sign-in or rate limit) stops it, and the rest wait for the next try; a change the server refuses is
+    /// undone here and the UI is told.
+    pub async fn flush_queue(&self, account: &str) -> Result<()> {
+        let lock = self.flushing.lock().entry(account.to_string()).or_default().clone();
+        let _one_at_a_time = lock.lock().await;
+        let queued = self.db.queued_changes(account)?;
+        if queued.is_empty() {
+            return Ok(());
+        }
+        let gmail = self.kind(account)? == "gmail";
+        let mut groups: Vec<(Vec<String>, Vec<String>, Vec<String>)> = Vec::new();
+        for q in queued {
+            match groups.iter_mut().find(|g| g.0 == q.add && g.1 == q.remove) {
+                Some(g) => g.2.push(q.message_id),
+                None => groups.push((q.add, q.remove, vec![q.message_id])),
+            }
+        }
+        let (mut sent, mut refused, mut threads) = (0, 0, Vec::new());
+        let mut outcome = Ok(());
+        'groups: for (add, remove, ids) in &groups {
+            for part in ids.chunks(if gmail { 1000 } else { ids.len() }) {
+                threads.extend(self.thread_ids_of(account, part));
+                let r = if gmail { self.gmail(account)?.batch_modify(part, add, remove).await } else { self.imap_modify(account, part, add, remove).await };
+                match r {
+                    Ok(()) => {
+                        self.db.change_sent(account, part, add, remove)?;
+                        sent += part.len();
+                    }
+                    Err(e) if e.is_offline() || e.is_auth() || e.is_rate_limited() => {
+                        outcome = Err(e);
+                        break 'groups;
+                    }
+                    Err(e) => {
+                        crate::applog::warn(&format!("{account}: a change made offline to {} message(s) was refused ({}): +{add:?} -{remove:?}", part.len(), e.kind()));
+                        self.db.change_refused(account, part)?;
+                        refused += part.len();
+                    }
+                }
+            }
+        }
+        if sent + refused > 0 {
+            crate::applog::info(&format!("{account}: changes made offline: {sent} message(s) sent, {refused} refused"));
+            if gmail {
+                let mut touched: Vec<String> = self.db.label_thread_stats(account, &threads)?.into_keys().collect();
+                touched.extend(groups.iter().flat_map(|(add, remove, _)| add.iter().chain(remove).cloned()));
+                if let Ok(g) = self.gmail(account) {
+                    let _ = gmail::refresh_label_counts(&g, &self.db, account, &touched).await;
+                }
+            } else {
+                self.db.recount_labels(account).ok();
+            }
+            self.changed(account, if refused > 0 { "modify-failed" } else { "modify" });
+        }
+        if refused > 0 {
+            self.emit("queued-changes-refused", json!({"accountId": account, "messages": refused}));
+        }
+        if outcome.as_ref().is_err_and(Error::is_offline) {
+            self.set_online(false);
+        }
+        outcome
     }
 
     // ---- Manage subscriptions ----
@@ -1134,7 +1231,7 @@ impl Engine {
         for part in ids.chunks(chunk) {
             let only: Vec<String> = part.iter().map(|(id, _)| id.clone()).collect();
             match self.modify_messages(&account, &only, add, remove).await {
-                Ok(()) => out.done(part),
+                Ok(_) => out.done(part),
                 Err(e) if e.is_offline() || e.is_auth() || out.ids.is_empty() && part.len() == total => return Err(e),
                 Err(e) => out.failed(part, e),
             }

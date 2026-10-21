@@ -201,6 +201,7 @@ pub struct Db {
     conn: Mutex<Connection>,
     /// Label changes made here that the server hasn't confirmed yet, per (account, message), in order. Labels
     /// read from the server meanwhile describe the message before the change, so these are applied on top.
+    /// A message's queued change (`change_queue`, token `QUEUED`) comes first.
     pending: Mutex<HashMap<(String, String), Vec<PendingChange>>>,
     next_change: std::sync::atomic::AtomicU64,
 }
@@ -209,6 +210,18 @@ struct PendingChange {
     token: u64,
     add: Vec<String>,
     remove: Vec<String>,
+}
+
+/// The token of a message's queued change in `pending` (changes on their way count from 1).
+const QUEUED: u64 = 0;
+
+/// A label change made while the server couldn't be reached, waiting to go to it: one per message, with every
+/// change made to the message meanwhile folded in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueuedChange {
+    pub message_id: String,
+    pub add: Vec<String>,
+    pub remove: Vec<String>,
 }
 
 const SCHEMA: &str = r#"
@@ -263,6 +276,10 @@ CREATE TABLE IF NOT EXISTS signatures (id TEXT PRIMARY KEY, account_id TEXT NOT 
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS local_filters (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, criteria TEXT NOT NULL, action TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS blocked (account_id TEXT NOT NULL, email TEXT NOT NULL, filter_id TEXT, PRIMARY KEY (account_id, email));
+CREATE TABLE IF NOT EXISTS change_queue (
+  account_id TEXT NOT NULL, message_id TEXT NOT NULL, seq INTEGER NOT NULL, before TEXT, add_labels TEXT NOT NULL, remove_labels TEXT NOT NULL,
+  PRIMARY KEY (account_id, message_id)
+);
 "#;
 
 fn apply_change(labels: Vec<String>, add: &[String], remove: &[String]) -> Vec<String> {
@@ -273,6 +290,22 @@ fn apply_change(labels: Vec<String>, add: &[String], remove: &[String]) -> Vec<S
         }
     }
     out
+}
+
+/// What changed from `before` to `after`, as labels to add and labels to remove.
+fn diff(before: &[String], after: &[String]) -> (Vec<String>, Vec<String>) {
+    (after.iter().filter(|l| !before.contains(l)).cloned().collect(), before.iter().filter(|l| !after.contains(l)).cloned().collect())
+}
+
+/// Two label changes, one after the other, as one. Measured against the labels the message had before both,
+/// only the difference is left (a change and its undo leave nothing); without them, the two combined.
+fn compose(before: Option<&[String]>, first: (&[String], &[String]), then: (&[String], &[String])) -> (Vec<String>, Vec<String>) {
+    if let Some(b) = before {
+        return diff(b, &apply_change(apply_change(b.to_vec(), first.0, first.1), then.0, then.1));
+    }
+    let add = apply_change(first.0.to_vec(), then.0, then.1);
+    let remove = apply_change(first.1.to_vec(), then.1, then.0).into_iter().filter(|l| !add.contains(l)).collect();
+    (add, remove)
 }
 
 fn labels_text(labels: &[String]) -> String {
@@ -428,7 +461,15 @@ impl Db {
     }
 
     fn with_connection(conn: Connection) -> Db {
-        Db { conn: Mutex::new(conn), pending: Mutex::new(HashMap::new()), next_change: std::sync::atomic::AtomicU64::new(1) }
+        let db = Db { conn: Mutex::new(conn), pending: Mutex::new(HashMap::new()), next_change: std::sync::atomic::AtomicU64::new(1) };
+        // Changes queued before a quit still hold over whatever the server says until they've gone out.
+        if let Ok(rows) = db.with(|c| c.prepare("SELECT account_id, message_id, add_labels, remove_labels FROM change_queue")?.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()) {
+            let mut p = db.pending.lock();
+            for (account, id, add, remove) in rows {
+                p.entry((account, id)).or_default().push(PendingChange { token: QUEUED, add: pj(&add), remove: pj(&remove) });
+            }
+        }
+        db
     }
 
     pub fn with<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T> {
@@ -490,13 +531,15 @@ impl Db {
     pub fn delete_account(&self, id: &str) -> Result<()> {
         self.with(|c| {
             c.execute("DELETE FROM fts WHERE rowid IN (SELECT rowid FROM messages WHERE account_id = ?)", [id])?;
-            for t in ["messages", "labels", "drafts", "outbox", "snoozes", "bumps", "muted", "star_types", "contacts", "signatures", "local_filters", "blocked"] {
+            for t in ["messages", "labels", "drafts", "outbox", "snoozes", "bumps", "muted", "star_types", "contacts", "signatures", "local_filters", "blocked", "change_queue"] {
                 c.execute(&format!("DELETE FROM {t} WHERE account_id = ?"), [id])?;
             }
             c.execute("DELETE FROM templates WHERE account_id = ?", [id])?;
             c.execute("DELETE FROM accounts WHERE id = ?", [id])?;
             Ok(())
-        })
+        })?;
+        self.pending.lock().retain(|(a, _), _| a != id);
+        Ok(())
     }
 
     // ---- labels ----
@@ -862,13 +905,134 @@ impl Db {
         }
     }
 
-    pub fn delete_message(&self, account: &str, id: &str) -> Result<()> {
+    // ---- label changes waiting for the connection ----
+
+    /// Keep a change the server can't take now (offline, or behind earlier changes still waiting) until it goes
+    /// out: on disk, and over whatever the server says meanwhile, folded into each message's queued change. The
+    /// change `token` started (`begin_change`) becomes part of it. `before`: the labels before this change.
+    pub fn queue_change(&self, account: &str, ids: &[String], add: &[String], remove: &[String], before: &HashMap<String, Vec<String>>, token: u64) -> Result<()> {
+        let mut p = self.pending.lock();
+        for id in ids {
+            if let Some(list) = p.get_mut(&(account.to_string(), id.clone())) {
+                list.retain(|c| c.token != token);
+            }
+            match self.queued(account, id)? {
+                Some((seq, had, a, r)) => {
+                    let (a, r) = compose(had.as_deref(), (&a, &r), (add, remove));
+                    self.set_queued(&mut p, account, id, seq, had.as_ref(), a, r)?;
+                }
+                None => {
+                    let had = before.get(id);
+                    let (a, r) = compose(had.map(|h| h.as_slice()), (&[], &[]), (add, remove));
+                    let seq: i64 = self.with(|c| c.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM change_queue", [], |r| r.get(0)))?;
+                    self.set_queued(&mut p, account, id, seq, had, a, r)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// An account's queued changes, oldest first.
+    pub fn queued_changes(&self, account: &str) -> Result<Vec<QueuedChange>> {
         self.with(|c| {
+            c.prepare("SELECT message_id, add_labels, remove_labels FROM change_queue WHERE account_id=? ORDER BY seq")?
+                .query_map([account], |r| Ok(QueuedChange { message_id: r.get(0)?, add: pj(&r.get::<_, String>(1)?), remove: pj(&r.get::<_, String>(2)?) }))?
+                .collect()
+        })
+    }
+
+    pub fn has_queued(&self, account: &str) -> Result<bool> {
+        self.with(|c| c.query_row("SELECT EXISTS(SELECT 1 FROM change_queue WHERE account_id=?)", [account], |r| r.get(0)))
+    }
+
+    /// Accounts with changes waiting to go to the server.
+    pub fn queued_accounts(&self) -> Result<Vec<String>> {
+        self.with(|c| c.prepare("SELECT DISTINCT account_id FROM change_queue")?.query_map([], |r| r.get(0))?.collect())
+    }
+
+    /// The server took `add`/`remove` for these messages: their queued changes are done, or, where another change
+    /// was folded in meanwhile, what's left of it stays.
+    pub fn change_sent(&self, account: &str, ids: &[String], add: &[String], remove: &[String]) -> Result<()> {
+        let mut p = self.pending.lock();
+        for id in ids {
+            let Some((seq, had, a, r)) = self.queued(account, id)? else { continue };
+            if a == add && r == remove {
+                self.set_queued(&mut p, account, id, seq, None, vec![], vec![])?;
+            } else if let Some(had) = had {
+                let sent = apply_change(had.clone(), add, remove);
+                let (a, r) = diff(&sent, &apply_change(had, &a, &r));
+                self.set_queued(&mut p, account, id, seq, Some(&sent), a, r)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The server refused these messages' queued changes: undo them here (only what they did) and drop them.
+    pub fn change_refused(&self, account: &str, ids: &[String]) -> Result<()> {
+        let mut p = self.pending.lock();
+        for id in ids {
+            let Some((seq, _, add, remove)) = self.queued(account, id)? else { continue };
+            self.set_queued(&mut p, account, id, seq, None, vec![], vec![])?;
+            if let Some(m) = self.message(account, id)? {
+                self.write_labels(account, id, &apply_change(m.labels, &remove, &add))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// A message's queued change: its place in the queue, the labels before it (when the message was here), and
+    /// the change.
+    #[allow(clippy::type_complexity)]
+    fn queued(&self, account: &str, id: &str) -> Result<Option<(i64, Option<Vec<String>>, Vec<String>, Vec<String>)>> {
+        self.with(|c| {
+            c.query_row("SELECT seq, before, add_labels, remove_labels FROM change_queue WHERE account_id=? AND message_id=?", [account, id], |r| {
+                Ok((r.get(0)?, r.get::<_, Option<String>>(1)?.map(|b| pj(&b)), pj(&r.get::<_, String>(2)?), pj(&r.get::<_, String>(3)?)))
+            })
+            .optional()
+        })
+    }
+
+    /// Write a message's queued change (nothing left: take it out), on disk and over the server's labels.
+    #[allow(clippy::too_many_arguments)]
+    fn set_queued(&self, p: &mut HashMap<(String, String), Vec<PendingChange>>, account: &str, id: &str, seq: i64, before: Option<&Vec<String>>, add: Vec<String>, remove: Vec<String>) -> Result<()> {
+        let key = (account.to_string(), id.to_string());
+        let list = p.entry(key.clone()).or_default();
+        list.retain(|c| c.token != QUEUED);
+        if add.is_empty() && remove.is_empty() {
+            self.with(|c| c.execute("DELETE FROM change_queue WHERE account_id=? AND message_id=?", [account, id]))?;
+        } else {
+            self.with(|c| {
+                c.execute(
+                    "INSERT OR REPLACE INTO change_queue (account_id, message_id, seq, before, add_labels, remove_labels) VALUES (?,?,?,?,?,?)",
+                    params![account, id, seq, before.map(j), j(&add), j(&remove)],
+                )
+            })?;
+            list.insert(0, PendingChange { token: QUEUED, add, remove });
+        }
+        if list.is_empty() {
+            p.remove(&key);
+        }
+        Ok(())
+    }
+
+    pub fn delete_message(&self, account: &str, id: &str) -> Result<()> {
+        let queued = self.with(|c| {
             c.execute("DELETE FROM fts WHERE rowid IN (SELECT rowid FROM messages WHERE account_id=? AND id=?)", [account, id])?;
             c.execute("DELETE FROM messages WHERE account_id=? AND id=?", [account, id])?;
             c.execute("DELETE FROM star_types WHERE account_id=? AND message_id=?", [account, id])?;
-            Ok(())
-        })
+            c.execute("DELETE FROM change_queue WHERE account_id=? AND message_id=?", [account, id])
+        })?;
+        if queued > 0 {
+            let mut p = self.pending.lock();
+            let key = (account.to_string(), id.to_string());
+            if let Some(list) = p.get_mut(&key) {
+                list.retain(|c| c.token != QUEUED);
+                if list.is_empty() {
+                    p.remove(&key);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn thread_messages(&self, account: &str, thread_id: &str) -> Result<Vec<MessageRow>> {

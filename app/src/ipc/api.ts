@@ -61,9 +61,9 @@ export const api = {
   raw: async (accountId: string, messageId: string) => bytes(await call<unknown>("message_raw", { accountId, messageId })),
   // actions
   modifyThreads: (accountId: string, threadIds: string[], add: string[], remove: string[]) =>
-    call<void>("modify_threads", { accountId, threadIds, add, remove }),
+    call<Changed>("modify_threads", { accountId, threadIds, add, remove }),
   modifyMessages: (accountId: string, messageIds: string[], add: string[], remove: string[]) =>
-    call<void>("modify_messages", { accountId, messageIds, add, remove }),
+    call<Changed>("modify_messages", { accountId, messageIds, add, remove }),
   deleteForever: (accountId: string, threadIds: string[]) => call<void>("delete_forever", { accountId, threadIds }),
   subscriptions: (accountId: string) => call<Subscription[]>("subscriptions", { accountId }),
   markUnsubscribed: (accountId: string, email: string) => call<void>("mark_unsubscribed", { accountId, email }),
@@ -73,7 +73,7 @@ export const api = {
   snooze: (accountId: string, threadIds: string[], until: number) => call<void>("snooze_threads", { accountId, threadIds, until }),
   unsnooze: (accountId: string, threadIds: string[]) => call<void>("unsnooze_threads", { accountId, threadIds }),
   mute: (accountId: string, threadIds: string[], on: boolean) => call<void>("mute_threads", { accountId, threadIds, on }),
-  star: (accountId: string, messageId: string, starType: string | null) => call<void>("star_message", { accountId, messageId, starType }),
+  star: (accountId: string, messageId: string, starType: string | null) => call<Changed>("star_message", { accountId, messageId, starType }),
   block: (accountId: string, email: string) => call<void>("block_sender", { accountId, email }),
   unblock: (accountId: string, email: string) => call<void>("unblock_sender", { accountId, email }),
   blocked: (accountId: string) => call<string[]>("blocked_list", { accountId }),
@@ -158,6 +158,9 @@ export function on<T>(event: string, handler: (payload: T) => void): Promise<Unl
 }
 
 /** What a whole-view action did: the messages changed (for Undo), conversations changed and not changed. */
+/** Where a label change went: to the server, or (offline) made here and waiting to go out when back online. */
+export type Changed = "done" | "queued";
+
 export interface BulkOutcome {
   ids: string[];
   conversations: number;
