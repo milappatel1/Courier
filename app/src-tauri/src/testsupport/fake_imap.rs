@@ -36,6 +36,9 @@ pub struct IState {
     /// Unreachable: new connections are reset, open ones at their next command (as a network that went away;
     /// a tidy close can read as an empty answer).
     pub offline: bool,
+    /// The next command gets no answer: the server closes its side tidily (as one that timed out or restarted)
+    /// and ignores whatever comes after.
+    pub hang_up_next: bool,
 }
 
 #[derive(Clone)]
@@ -65,7 +68,7 @@ impl FakeImap {
         folders.insert("Trash".to_string(), folder(Some("\\Trash"), 14));
         folders.insert("Junk".to_string(), folder(Some("\\Junk"), 15));
         folders.insert("Archive".to_string(), folder(Some("\\Archive"), 16));
-        let state = Arc::new(Mutex::new(IState { user: user.into(), password: password.into(), folders, log: vec![], move_latency: 0, offline: false }));
+        let state = Arc::new(Mutex::new(IState { user: user.into(), password: password.into(), folders, log: vec![], move_latency: 0, offline: false, hang_up_next: false }));
         let (tx, _) = broadcast::channel(64);
         let fake = FakeImap { addr, state, changes: tx };
         let f = fake.clone();
@@ -113,6 +116,11 @@ impl FakeImap {
             let Some(line) = read_line(&mut r).await? else { return Ok(()) };
             if self.state.lock().offline {
                 reset(r.into_inner().reunite(w).expect("halves of one stream"));
+                return Ok(());
+            }
+            if std::mem::take(&mut self.state.lock().hang_up_next) {
+                w.shutdown().await?;
+                while read_line(&mut r).await?.is_some() {}
                 return Ok(());
             }
             // Literal on the command line ({n} or {n+}): read it now.

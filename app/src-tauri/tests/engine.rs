@@ -806,3 +806,22 @@ async fn a_change_made_offline_that_the_server_then_refuses_is_undone_and_said()
     assert!(w.engine.db.queued_changes("g1").unwrap().is_empty());
     assert!(w.rec.events.lock().iter().any(|(e, p)| e == "queued-changes-refused" && p["messages"] == 1));
 }
+
+#[tokio::test]
+async fn an_imap_server_that_hangs_up_mid_command_is_not_taken_for_a_yes() {
+    let w = world().await;
+    w.imap.deliver("INBOX", &sample_mail("Cy <cy@x.io>", "pat@example.org", "Trip", "train", ""), &[]);
+    w.engine.sync_account("i1").await.unwrap();
+    let trip = w.engine.list(&view("i1", "INBOX")).await.unwrap().threads[0].thread_id.clone();
+    // The server goes away in the middle of a sync: it's offline, and what's on this Mac stays.
+    w.imap.state.lock().hang_up_next = true;
+    assert!(w.engine.sync_account("i1").await.unwrap_err().is_offline());
+    assert_eq!(w.engine.list(&view("i1", "INBOX")).await.unwrap().threads.len(), 1, "an unanswered sync emptied the Inbox");
+    // …and while it's asked to make a change: the change waits, instead of counting as made.
+    w.imap.state.lock().hang_up_next = true;
+    assert_eq!(w.engine.modify_threads("i1", std::slice::from_ref(&trip), &["TRASH".into()], &[]).await.unwrap(), Changed::Queued);
+    assert_eq!(w.imap.folder("INBOX").unwrap().msgs.len(), 1);
+    w.engine.sync_account("i1").await.unwrap();
+    assert!(w.imap.folder("INBOX").unwrap().msgs.is_empty());
+    assert_eq!(w.imap.folder("Trash").unwrap().msgs.len(), 1);
+}
