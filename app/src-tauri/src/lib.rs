@@ -475,6 +475,15 @@ pub fn run() {
             let db = Arc::new(db::Db::open(&data_dir.join("courier.db"))?);
             let store: Arc<dyn secrets::SecretStore> = if e2e_state.is_some() {
                 Arc::new(secrets::MemoryStore::default())
+            } else if recon.is_some() {
+                let file: Arc<dyn secrets::SecretStore> = Arc::new(recon::FileStore::open(data_dir.join("recon-secrets.json")));
+                if file.get(secrets::GOOGLE_CLIENT_KEY).ok().flatten().is_none() {
+                    #[cfg(target_os = "macos")]
+                    if let Some(c) = recon::installed_google_client(&installed_dir) {
+                        let _ = file.set(secrets::GOOGLE_CLIENT_KEY, &c);
+                    }
+                }
+                file
             } else {
                 #[cfg(target_os = "macos")]
                 {
@@ -482,28 +491,16 @@ pub fn run() {
                     for a in db.accounts().unwrap_or_default() {
                         legacy.extend([secrets::oauth_key(&a.id), secrets::password_key(&a.id), secrets::smtp_password_key(&a.id)]);
                     }
-                    if recon.is_some() {
-                        legacy.clear();
-                    }
                     let vault: Arc<dyn secrets::SecretStore> = Arc::new(secrets::VaultStore::new(
-                        Box::new(secrets::LoginKeychain::new(if recon.is_some() { recon::SERVICE } else { secrets::SERVICE })),
+                        Box::new(secrets::LoginKeychain::new(secrets::SERVICE)),
                         data_dir.join("vault.json"),
                         secrets::current_build_id(),
                         legacy,
                     ));
                     // Open the vault off the main thread: if macOS asks for the Keychain password, the window stays usable.
                     let warm = vault.clone();
-                    let import_from = recon.as_ref().map(|_| installed_dir.clone());
                     std::thread::spawn(move || {
                         let _ = warm.get("");
-                        // Recon mode borrows the installed app's sign-in client (only that) the first time.
-                        if let Some(dir) = import_from {
-                            if warm.get(secrets::GOOGLE_CLIENT_KEY).ok().flatten().is_none() {
-                                if let Some(c) = recon::installed_google_client(&dir) {
-                                    let _ = warm.set(secrets::GOOGLE_CLIENT_KEY, &c);
-                                }
-                            }
-                        }
                     });
                     vault
                 }

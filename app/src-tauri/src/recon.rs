@@ -9,7 +9,44 @@ use crate::gmail::Gmail;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-pub const SERVICE: &str = "com.milappatel.courier.recon";
+/// The recon build's sign-ins (the throwaway account's tokens and the borrowed sign-in client) live in an
+/// owner-only file in its own data folder rather than the Keychain: every rebuild of a debug build would otherwise
+/// make macOS ask for the Keychain password again.
+pub struct FileStore {
+    path: std::path::PathBuf,
+    map: parking_lot::Mutex<std::collections::BTreeMap<String, String>>,
+}
+
+impl FileStore {
+    pub fn open(path: std::path::PathBuf) -> FileStore {
+        let map = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        FileStore { path, map: parking_lot::Mutex::new(map) }
+    }
+
+    fn save(&self, map: &std::collections::BTreeMap<String, String>) -> Result<()> {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new().create(true).write(true).truncate(true).mode(0o600).open(&self.path)?;
+        f.write_all(&serde_json::to_vec(map)?)?;
+        Ok(())
+    }
+}
+
+impl crate::secrets::SecretStore for FileStore {
+    fn get(&self, key: &str) -> Result<Option<String>> {
+        Ok(self.map.lock().get(key).cloned())
+    }
+    fn set(&self, key: &str, value: &str) -> Result<()> {
+        let mut m = self.map.lock();
+        m.insert(key.into(), value.into());
+        self.save(&m)
+    }
+    fn delete(&self, key: &str) -> Result<()> {
+        let mut m = self.map.lock();
+        m.remove(key);
+        self.save(&m)
+    }
+}
 
 /// The recon account's address, when this is a debug build started in recon mode.
 pub fn address() -> Option<String> {
@@ -235,7 +272,7 @@ pub async fn seed(engine: &Arc<Engine>, account: &str) -> Result<usize> {
 pub async fn when_ready(engine: Arc<Engine>) {
     let Some(addr) = address() else { return };
     let rounds: usize = std::env::var("COURIER_RECON_PROBE").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-    if !seed_requested() && rounds == 0 {
+    if !seed_requested() && rounds == 0 && std::env::var("COURIER_RECON_QUERIES").is_err() {
         return;
     }
     let account = loop {
@@ -262,6 +299,33 @@ pub async fn when_ready(engine: Arc<Engine>) {
             crate::applog::warn(&format!("{account}: probe failed: {e}"));
         }
     }
+    if let Ok(queries) = std::env::var("COURIER_RECON_QUERIES") {
+        if let Err(e) = count_queries(&engine, &account, &queries).await {
+            crate::applog::warn(&format!("{account}: queries failed: {e}"));
+        }
+    }
+}
+
+/// How many conversations the mail API lists for each search (`COURIER_RECON_QUERIES`, separated by `|`), to learn
+/// what an operator means on the real server. Logs the query and the count only.
+pub async fn count_queries(engine: &Arc<Engine>, account: &str, queries: &str) -> Result<()> {
+    let a = engine.db.account(account)?;
+    check_account(&a.email)?;
+    let g = engine.gmail(account)?;
+    for q in queries.split('|').map(str::trim).filter(|q| !q.is_empty()) {
+        let mut n = 0;
+        let mut token: Option<String> = None;
+        loop {
+            let v = g.threads_list(&[], Some(q), token.as_deref(), 500, false).await?;
+            n += v["threads"].as_array().map(|a| a.len()).unwrap_or(0);
+            token = v["nextPageToken"].as_str().map(String::from);
+            if token.is_none() {
+                break;
+            }
+        }
+        crate::applog::info(&format!("query [{q}]: {n} conversation(s)"));
+    }
+    Ok(())
 }
 
 /// How long the mail API's listings take to reflect a change, measured on the probe conversations: each is moved
