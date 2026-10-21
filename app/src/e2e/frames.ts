@@ -4,6 +4,8 @@
 // every animation frame, every 8 ms and on every DOM change (a background window may get few frames, while DOM
 // changes are always seen).
 
+import { listTrace, traceList } from "../state/store";
+
 interface Frame {
   t: number;
   rows: string[];
@@ -17,6 +19,10 @@ interface Frame {
 
 export interface Recording {
   frames: Frame[];
+  /** Wall-clock start (ms), to line the recording up with the app log's `[trace]` lines. */
+  wall0: number;
+  /** What the list did meanwhile (store.ts listTrace), times relative to the start. */
+  trace: { t: number; what: string; ids?: string[] }[];
   /** Rows added to or removed from the DOM, by thread id, in order. */
   changes: { t: number; added: string[]; removed: string[] }[];
 }
@@ -41,7 +47,8 @@ function snapshot(t0: number): Frame {
 
 export function recordFrames() {
   const t0 = performance.now();
-  const rec: Recording = { frames: [], changes: [] };
+  traceList(true);
+  const rec: Recording = { frames: [], changes: [], trace: [], wall0: Date.now() };
   let on = true;
   const take = () => {
     const f = snapshot(t0);
@@ -73,25 +80,40 @@ export function recordFrames() {
       clearInterval(timer);
       mo.disconnect();
       take();
+      rec.trace = listTrace.map((e) => ({ ...e, t: Math.round(e.t - t0) }));
+      traceList(false);
       return rec;
     },
   };
+}
+
+/** Which traced listing put `id` back by time `t`, and what happened just before. */
+function cause(rec: Recording, id: string, t: number): string {
+  const before = rec.trace.filter((e) => e.t <= t + 2);
+  const by = [...before].reverse().find((e) => e.ids?.includes(id) && /^list#/.test(e.what));
+  const recent = before
+    .slice(-6)
+    .map((e) => `${e.what}@${e.t}`)
+    .join(", ");
+  return `; put back by ${by ? `${by.what}@${by.t}` : "nothing traced"}; just before: ${recent}; wall ${rec.wall0 + t}`;
 }
 
 /** Everything that would read as a flash while `gone` (thread ids) left the view. */
 export function flashes(rec: Recording, gone: string[], opts: { conversationOpen?: boolean } = {}): string[] {
   const issues: string[] = [];
   const first = rec.frames[0];
-  // A thread that left must not come back.
+  // A thread that left must not come back. While a conversation replaces the list, rows aren't on screen at all, so
+  // only frames that show the list count.
+  const shown = opts.conversationOpen ? rec.frames.filter((f) => f.conv === null) : rec.frames;
   for (const id of gone) {
-    const leftAt = rec.frames.findIndex((f) => !f.rows.includes(id));
+    const leftAt = shown.findIndex((f) => !f.rows.includes(id));
     if (leftAt < 0) {
       if (first.rows.includes(id)) issues.push(`row ${id} never left`);
       continue;
     }
-    const back = rec.frames.slice(leftAt).find((f) => f.rows.includes(id));
-    if (back) issues.push(`row ${id} came back at +${back.t} ms (it had left at +${rec.frames[leftAt].t} ms)`);
-    const readded = rec.changes.filter((c) => c.t >= rec.frames[leftAt].t && c.added.includes(id) && !c.removed.includes(id));
+    const back = shown.slice(leftAt).find((f) => f.rows.includes(id));
+    if (back) issues.push(`row ${id} came back at +${back.t} ms (it had left at +${shown[leftAt].t} ms)${cause(rec, id, back.t)}`);
+    const readded = opts.conversationOpen ? [] : rec.changes.filter((c) => c.t >= shown[leftAt].t && c.added.includes(id) && !c.removed.includes(id));
     if (readded.length && !back) issues.push(`row ${id} was put back into the page at +${readded[0].t} ms`);
   }
   // The other rows stay put: none disappears, even for a frame. While a conversation is open in place of the list

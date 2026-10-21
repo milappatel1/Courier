@@ -439,6 +439,17 @@ const viewKey = (v: ViewQuery) => JSON.stringify([v.accountId, v.label, v.catego
 
 let listSeq = 0;
 
+/** End-to-end runs only: what the list did and when, so the frame recorder can name what put a row back. */
+export const listTrace: { t: number; what: string; ids?: string[] }[] = [];
+let tracing = false;
+export function traceList(on: boolean) {
+  tracing = on;
+  listTrace.length = 0;
+}
+const trace = (what: string, ids?: string[]) => {
+  if (tracing) listTrace.push({ t: performance.now(), what, ids });
+};
+
 /**
  * Conversations an action took out of the view, until a listing fetched after the action finished: by id, the
  * listing number from which on the server and the cache show the change (Infinity while it is still running).
@@ -448,12 +459,14 @@ const leaving = new Map<string, number>();
 
 /** An action is taking these conversations out of the current view (hidden at once). */
 export function hideThreads(threadIds: string[]) {
+  trace("hide", threadIds);
   for (const id of threadIds) leaving.set(id, Infinity);
   set((s) => ({ hiddenThreads: [...new Set([...s.hiddenThreads, ...threadIds])], selected: s.selected.filter((x) => !threadIds.includes(x)) }));
 }
 
 /** The action is done: listings from now on show it. When it failed, the conversations come back at once. */
 export function settleThreads(threadIds: string[], ok: boolean) {
+  trace(`settle${ok ? "" : " (failed)"} from list#${listSeq + 1}`, threadIds);
   for (const id of threadIds) leaving.set(id, listSeq + 1);
   if (!ok) {
     for (const id of threadIds) leaving.delete(id);
@@ -473,11 +486,16 @@ export async function loadList(opts: { quiet?: boolean } = {}) {
   const view = currentView();
   const key = viewKey(view);
   const seq = ++listSeq;
+  trace(`list#${seq} start`);
   if (!opts.quiet || s.list.key !== key) set((st) => ({ list: { ...st.list, key, loading: true, error: null } }));
   try {
     // Fast: the cache. Then the server page for mail-API accounts (authoritative when online).
     const cached = await api.list({ ...view, mode: "cache" });
-    if (seq !== listSeq) return;
+    if (seq !== listSeq) return trace(`list#${seq} cache dropped`);
+    trace(
+      `list#${seq} cache`,
+      cached.threads.map((t) => t.threadId),
+    );
     const acct = accountById(view.accountId);
     const asking = acct?.kind === "gmail" && get().online;
     // This Mac keeps only recent mail: a short cached page may be missing older mail the server has, so it
@@ -488,7 +506,11 @@ export async function loadList(opts: { quiet?: boolean } = {}) {
       const token = view.page === 0 ? null : (get().list.tokens[view.page] ?? undefined);
       if (token === undefined && view.page > 0) return; // no token for a page we skipped to: keep the cache
       const server = await api.list({ ...view, mode: "server", pageToken: token });
-      if (seq !== listSeq) return;
+      if (seq !== listSeq) return trace(`list#${seq} server dropped`);
+      trace(
+        `list#${seq} server`,
+        server.threads.map((t) => t.threadId),
+      );
       set((st) => {
         const tokens = [...st.list.tokens];
         tokens[view.page + 1] = server.nextPageToken;
@@ -759,7 +781,10 @@ export async function init() {
           .catch(() => {});
     }, 250);
   };
-  void on<{ accountId: string }>("mail-changed", (p) => refreshSoon(p.accountId));
+  void on<{ accountId: string; reason?: string }>("mail-changed", (p) => {
+    trace(`mail-changed ${p.accountId} ${p.reason ?? ""}`);
+    refreshSoon(p.accountId);
+  });
   void on<{ accountId: string; state: Sync; error?: string }>("sync-status", (p) =>
     set((s) => ({
       sync: { ...s.sync, [p.accountId]: p.state },

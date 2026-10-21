@@ -74,9 +74,14 @@ pub struct GState {
     /// a plain label listing (`labelIds=` only) reads the labels themselves. Zero answers from the current state.
     pub search_lag_ms: u64,
     pub label_lag_ms: u64,
+    /// Time (ms) between reading the mailbox and the answer arriving, by route: a read answered from the
+    /// mailbox as it was when the request arrived, delivered later (a change can land in between).
+    pub tail_latency: HashMap<String, u64>,
     /// Each message's labels before every change (when, id, labels before; None = it didn't exist yet), so a
     /// lagging listing can answer from the past.
     pub label_log: Vec<(i64, String, Option<Vec<String>>)>,
+    /// Messages parsed for search, by id and size (see `searchable`).
+    pub parsed: Mutex<HashMap<(String, usize), search::Searchable>>,
 }
 
 #[derive(Clone)]
@@ -116,11 +121,17 @@ impl FakeGmail {
         let handler: http::Handler = Arc::new(move |req| {
             let f = f2.clone();
             Box::pin(async move {
-                let wait = f.state.lock().latency.get(route_name(&req.method, &req.path)).copied().unwrap_or(0);
+                let route = route_name(&req.method, &req.path).to_string();
+                let wait = f.state.lock().latency.get(&route).copied().unwrap_or(0);
                 if wait > 0 {
                     tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
                 }
-                f.handle(req)
+                let resp = f.handle(req);
+                let tail = f.state.lock().tail_latency.get(&route).copied().unwrap_or(0);
+                if tail > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(tail)).await;
+                }
+                resp
             })
         });
         tokio::spawn(http::serve(listener, handler));
@@ -720,10 +731,25 @@ fn label_names(s: &GState) -> HashMap<String, String> {
     map
 }
 
-fn searchable(s: &GState, m: &FMsg, names: &HashMap<String, String>) -> search::Searchable {
+/// A message for search, with `labels` as the listing sees them. Parsing is cached per message (a busy mailbox
+/// has thousands, and every search reads them all).
+fn searchable(s: &GState, m: &FMsg, labels: &[String], names: &HashMap<String, String>) -> search::Searchable {
+    let key = (m.id.clone(), m.raw.len());
+    let mut cache = s.parsed.lock();
+    let base = cache.entry(key).or_insert_with(|| parsed_searchable(m)).clone();
+    drop(cache);
+    search::Searchable {
+        labels: labels.to_vec(),
+        label_names: labels.iter().filter_map(|l| names.get(l).cloned()).collect(),
+        size: m.raw.len() as i64,
+        date_ms: m.internal_date,
+        ..base
+    }
+}
+
+fn parsed_searchable(m: &FMsg) -> search::Searchable {
     let p = mailmeta::parse_raw(&m.raw).row;
     let addrs = |l: &[crate::db::Addr]| l.iter().map(|a| format!("{} {}", a.name, a.email)).collect::<Vec<_>>().join(" ").to_lowercase();
-    let _ = s;
     search::Searchable {
         from: format!("{} {}", p.from_name, p.from_email).to_lowercase(),
         to: addrs(&p.to),
@@ -732,31 +758,27 @@ fn searchable(s: &GState, m: &FMsg, names: &HashMap<String, String>) -> search::
         delivered_to: p.delivered_to.clone(),
         subject: p.subject.clone(),
         body: p.body_text.clone(),
-        labels: m.labels.clone(),
-        label_names: m.labels.iter().filter_map(|l| names.get(l).cloned()).collect(),
         attachment_names: p.attachments.iter().map(|a| a.name.clone()).collect(),
-        size: m.raw.len() as i64,
-        date_ms: m.internal_date,
         list_id: p.list_id.clone(),
         message_id: p.message_id.clone(),
         ..Default::default()
     }
 }
 
-/// A message as a listing that runs `lag` ms behind sees it: its labels then, or None if it didn't exist yet.
-fn as_of(s: &GState, m: &FMsg, lag: u64) -> Option<FMsg> {
+/// A message's labels as a listing that runs `lag` ms behind sees them, or None if it didn't exist yet.
+fn labels_as_of<'a>(s: &'a GState, m: &'a FMsg, lag: u64) -> Option<&'a [String]> {
     if lag == 0 {
-        return Some(m.clone());
+        return Some(&m.labels);
     }
     let cutoff = crate::error::now_ms() - lag as i64;
     match s.label_log.iter().find(|(t, id, _)| *t > cutoff && id == &m.id) {
-        None => Some(m.clone()),
+        None => Some(&m.labels),
         Some((_, _, None)) => None,
-        Some((_, _, Some(before))) => Some(FMsg { labels: before.clone(), ..m.clone() }),
+        Some((_, _, Some(before))) => Some(before),
     }
 }
 
-fn list_messages(s: &GState, req: &Request) -> Vec<FMsg> {
+fn list_messages<'a>(s: &'a GState, req: &Request) -> Vec<&'a FMsg> {
     let label_ids = req.q_all("labelIds");
     let q = req.q("q").unwrap_or("");
     let include = req.q("includeSpamTrash") == Some("true");
@@ -765,13 +787,14 @@ fn list_messages(s: &GState, req: &Request) -> Vec<FMsg> {
     let names = label_names(s);
     let now = crate::error::now_ms();
     let lag = if q.trim().is_empty() { s.label_lag_ms } else { s.search_lag_ms };
-    let mut out: Vec<FMsg> = s
+    let mut out: Vec<&FMsg> = s
         .messages
         .values()
-        .filter_map(|m| as_of(s, m, lag))
-        .filter(|m| label_ids.iter().all(|l| m.labels.contains(l)))
-        .filter(|m| include || asks_spam_trash || label_ids.iter().any(|l| l == "SPAM" || l == "TRASH") || !(m.labels.iter().any(|l| l == "SPAM" || l == "TRASH")))
-        .filter(|m| node.as_ref().map(|n| search::eval(n, &searchable(s, m, &names), now)).unwrap_or(true))
+        .filter_map(|m| labels_as_of(s, m, lag).map(|labels| (m, labels)))
+        .filter(|(_, labels)| label_ids.iter().all(|l| labels.contains(l)))
+        .filter(|(_, labels)| include || asks_spam_trash || label_ids.iter().any(|l| l == "SPAM" || l == "TRASH") || !(labels.iter().any(|l| l == "SPAM" || l == "TRASH")))
+        .filter(|(m, labels)| node.as_ref().map(|n| search::eval(n, &searchable(s, m, labels, &names), now)).unwrap_or(true))
+        .map(|(m, _)| m)
         .collect();
     out.sort_by(|a, b| b.internal_date.cmp(&a.internal_date));
     out

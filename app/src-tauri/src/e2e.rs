@@ -70,6 +70,7 @@ fn with_attachment(from: &str, to: &str, subject: &str, date: &str, body: &str, 
 impl E2e {
     #[cfg(debug_assertions)]
     pub async fn start(report_path: String) -> E2e {
+        crate::db::TRACE_INBOX.store(true, std::sync::atomic::Ordering::Relaxed);
         let gmail = FakeGmail::start(GMAIL_ADDR, "Pat Example").await;
         let imap = FakeImap::start(IMAP_ADDR, IMAP_PASSWORD).await;
         let smtp = FakeSmtp::start(IMAP_ADDR, IMAP_PASSWORD).await;
@@ -366,6 +367,9 @@ impl E2e {
                         if let Some(ms) = args["labelLag"].as_u64() {
                             g.label_lag_ms = ms;
                         }
+                        if let Some(l) = args["tail"].as_object() {
+                            g.tail_latency = l.iter().filter_map(|(k, v)| v.as_u64().map(|ms| (k.clone(), ms))).collect();
+                        }
                     }
                     let mut g = self.gmail.state.lock();
                     if let Some(l) = args["latency"].as_object() {
@@ -385,6 +389,9 @@ impl E2e {
                     }
                     if let Some(ms) = args["labelLag"].as_u64() {
                         g.label_lag_ms = ms;
+                    }
+                    if let Some(l) = args["tail"].as_object() {
+                        g.tail_latency = l.iter().filter_map(|(k, v)| v.as_u64().map(|ms| (k.clone(), ms))).collect();
                     }
                     drop(g);
                     if let Some(ms) = args["imapMoveLatency"].as_u64() {

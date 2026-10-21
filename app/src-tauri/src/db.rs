@@ -215,6 +215,10 @@ struct PendingChange {
 /// The token of a message's queued change in `pending` (changes on their way count from 1).
 const QUEUED: u64 = 0;
 
+/// End-to-end runs: log every write that moves a cached message into or out of the Inbox, with the code that
+/// wrote it, so a row that comes back on screen can be traced to the write that brought it back.
+pub static TRACE_INBOX: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// A label change made while the server couldn't be reached, waiting to go to it: one per message, with every
 /// change made to the message meanwhile folded in.
 #[derive(Debug, Clone, PartialEq)]
@@ -738,8 +742,22 @@ impl Db {
 
     // ---- messages ----
 
+    #[track_caller]
+    fn trace_inbox(&self, account: &str, id: &str, labels: &[String]) {
+        if !TRACE_INBOX.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        let was = self.message(account, id).ok().flatten().map(|m| m.has("INBOX"));
+        let now = labels.iter().any(|l| l == "INBOX");
+        if was != Some(now) {
+            eprintln!("[trace] {} cache {account} {id} inbox {was:?} -> {now} at {}", crate::error::now_ms(), std::panic::Location::caller());
+        }
+    }
+
+    #[track_caller]
     pub fn upsert_message(&self, m: &MessageRow, raw: Option<&[u8]>) -> Result<()> {
         let labels = self.with_pending(&m.account_id, &m.id, m.labels.clone());
+        self.trace_inbox(&m.account_id, &m.id, &labels);
         self.with(|c| {
             c.execute(
                 "INSERT INTO messages (account_id, id, thread_id, internal_date, from_name, from_email, to_json, cc_json, bcc_json, reply_to_json, delivered_to, subject, norm_subject, snippet, size, has_attachments, attachments_json, message_id, in_reply_to, references_json, list_unsubscribe, list_unsubscribe_post, list_id, labels, raw, imap_folder, imap_uid)
@@ -813,12 +831,15 @@ impl Db {
 
     /// A message's labels as the server reports them (sync, history, a fetched thread), with the changes made
     /// here that are still on their way to the server applied on top.
+    #[track_caller]
     pub fn set_labels(&self, account: &str, id: &str, labels: &[String]) -> Result<()> {
         let labels = self.with_pending(account, id, labels.to_vec());
         self.write_labels(account, id, &labels)
     }
 
+    #[track_caller]
     fn write_labels(&self, account: &str, id: &str, labels: &[String]) -> Result<()> {
+        self.trace_inbox(account, id, labels);
         self.with(|c| c.execute("UPDATE messages SET labels=? WHERE account_id=? AND id=?", params![labels_text(labels), account, id]))?;
         Ok(())
     }
