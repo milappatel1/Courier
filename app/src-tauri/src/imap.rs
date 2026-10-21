@@ -61,10 +61,18 @@ pub enum MaybeTls {
 }
 
 impl AsyncRead for MaybeTls {
+    /// The server closing the connection is an error, never the end of an answer: async-imap takes a response stream
+    /// that just ends as a complete one, so a command the server never answered (it timed out, restarted, or the
+    /// network went) would count as done, and a sync would read an empty mailbox.
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
-        match self.get_mut() {
+        let (room, had) = (buf.remaining(), buf.filled().len());
+        let r = match self.get_mut() {
             MaybeTls::Plain(s) => Pin::new(s).poll_read(cx, buf),
             MaybeTls::Tls(s) => Pin::new(s.as_mut()).poll_read(cx, buf),
+        };
+        match r {
+            Poll::Ready(Ok(())) if room > 0 && buf.filled().len() == had => Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "the mail server closed the connection"))),
+            r => r,
         }
     }
 }

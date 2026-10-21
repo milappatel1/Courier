@@ -33,8 +33,7 @@ pub struct IState {
     pub log: Vec<String>,
     /// Extra time (ms) a MOVE or COPY takes, as on a real server.
     pub move_latency: u64,
-    /// Unreachable: new connections are reset, open ones at their next command (as a network that went away;
-    /// a tidy close can read as an empty answer).
+    /// Unreachable: new connections are reset, open ones at their next command (as a network that went away).
     pub offline: bool,
     /// The next command gets no answer: the server closes its side tidily (as one that timed out or restarted)
     /// and ignores whatever comes after.
