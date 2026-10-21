@@ -708,6 +708,26 @@ async fn deleting_or_archiving_a_conversation_takes_all_of_it_even_messages_olde
 }
 
 #[tokio::test]
+async fn a_server_answer_read_before_a_change_landed_never_puts_the_old_labels_back() {
+    let w = world().await;
+    let a = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Top of the Inbox", "x", ""), &["INBOX", "UNREAD", "CATEGORY_PERSONAL"]);
+    w.engine.sync_account("g1").await.unwrap();
+    let thread = w.gmail.message(&a).unwrap().thread_id;
+    // Read on the phone a moment ago: the server's history now has a record of it in the Inbox.
+    w.gmail.modify_elsewhere(&a, &[], &["UNREAD"]);
+    // That history answer is read from the server now but arrives later; the delete lands in between.
+    w.gmail.state.lock().tail_latency.insert("history".into(), 600);
+    let e = w.engine.clone();
+    let sync = tokio::spawn(async move { e.sync_account("g1").await });
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    w.engine.modify_threads("g1", std::slice::from_ref(&thread), &["TRASH".into()], &["INBOX".into()]).await.unwrap();
+    sync.await.unwrap().unwrap();
+    let labels = w.engine.db.message("g1", &a).unwrap().unwrap().labels;
+    assert!(!labels.contains(&"INBOX".to_string()), "the delete was undone on this Mac by an older answer: {labels:?}");
+    assert!(w.engine.list(&view("g1", "INBOX")).await.unwrap().threads.iter().all(|t| t.thread_id != thread));
+}
+
+#[tokio::test]
 async fn a_full_resync_drops_mail_deleted_on_the_server_and_refreshes_what_moved() {
     let w = world().await;
     let gone = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Deleted elsewhere", "x", ""), &["INBOX"]);

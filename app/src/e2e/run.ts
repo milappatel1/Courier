@@ -409,8 +409,11 @@ step(
       await api.e2eControl("big-accounts", { count: 3, conversations: 3000, seed: 7 });
       await until("the busy accounts", () => getState().accounts.filter((a) => a.email.startsWith("busy")).length === 3, 30_000);
     }
+    // Measured on the real API (recon account): a change ≈ 330–380 ms, a listing ≈ 200 ms. Reads are answered from the
+    // mailbox as it was when they arrived and delivered later, so a change can land in between, as on the real server.
     await api.e2eControl("gmail-behaviour", {
-      latency: { batchModify: 360, modify: 360, "threads.list": 220, "threads.get": 180, "messages.list": 200, labels: 180, history: 200 },
+      latency: { batchModify: 360, modify: 360, "threads.list": 120, "threads.get": 90, "messages.list": 100, labels: 90, history: 100 },
+      tail: { "threads.list": 100, "threads.get": 400, "messages.list": 100, labels: 90, history: 400 },
     });
     await api.e2eControl("traffic", { everyMs: 1500, accounts: [1, 2] });
     const issues: string[] = [];
@@ -463,7 +466,7 @@ step(
       }
     } finally {
       await api.e2eControl("traffic", { everyMs: 0 });
-      await api.e2eControl("gmail-behaviour", { latency: {} });
+      await api.e2eControl("gmail-behaviour", { latency: {}, tail: {} });
       await switchTo(info.gmailEmail);
     }
     check(!issues.length, issues.join("\n    "));
