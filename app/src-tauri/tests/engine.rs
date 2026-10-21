@@ -503,6 +503,26 @@ async fn label_counts_follow_actions_and_changes_made_elsewhere() {
 }
 
 #[tokio::test]
+async fn the_inbox_count_is_conversations_with_unread_inbox_mail_in_primary_starred_ones_too_when_set() {
+    let w = world().await;
+    let mail = |s: &str| sample_mail("Ana <ana@x.io>", "pat@example.com", s, "x", "");
+    w.gmail.deliver(&mail("Unread in Primary"), &["INBOX", "UNREAD", "CATEGORY_PERSONAL"]);
+    // The unread message was archived; only a read reply is in the Inbox: the web client doesn't count it.
+    let first = w.gmail.deliver(&mail("Archived unread start"), &["UNREAD", "CATEGORY_PERSONAL"]);
+    let mid = w.gmail.message(&first).unwrap();
+    let reply = sample_mail("Bo <bo@x.io>", "pat@example.com", "Re: Archived unread start", "y", &format!("In-Reply-To: {0}\r\nReferences: {0}\r\n", courier_lib::mailmeta::parse_raw(&mid.raw).row.message_id));
+    w.gmail.deliver(&reply, &["INBOX", "CATEGORY_PERSONAL"]);
+    w.gmail.deliver(&mail("Unread promotion"), &["INBOX", "UNREAD", "CATEGORY_PROMOTIONS"]);
+    w.gmail.deliver(&mail("Starred unread promotion"), &["INBOX", "UNREAD", "CATEGORY_PROMOTIONS", "STARRED"]);
+    w.engine.sync_account("g1").await.unwrap();
+    let inbox = || w.engine.labels_for_nav("g1").unwrap().into_iter().find(|l| l.id == "INBOX").map(|l| l.threads_unread).unwrap_or(-1);
+    assert_eq!(inbox(), 1);
+    // Settings ▸ Inbox ▸ Include starred in Primary: the starred promotion is in Primary, so it counts.
+    w.engine.db.kv_set("includeStarredInPrimary", &json!(true)).unwrap();
+    assert_eq!(inbox(), 2);
+}
+
+#[tokio::test]
 async fn manage_subscriptions_lists_senders_with_an_unsubscribe_option() {
     let w = world().await;
     let unsub = "List-Unsubscribe: <https://news.example/u?id=1>, <mailto:leave@news.example>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n";

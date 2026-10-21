@@ -400,6 +400,77 @@ step(
   200_000,
 );
 
+step(
+  "deleting the top row two or three times in a row never flashes, with several busy accounts syncing (the user's conditions)",
+  async () => {
+    // Shaped like the user's Macs: several mail-API accounts with thousands of conversations over the five
+    // categories, all syncing, mail arriving, the real API's timings, deletes about 4 a second.
+    if (!getState().accounts.some((a) => a.email === "busy0@example.net")) {
+      await api.e2eControl("big-accounts", { count: 3, conversations: 3000, seed: 7 });
+      await until("the busy accounts", () => getState().accounts.filter((a) => a.email.startsWith("busy")).length === 3, 30_000);
+    }
+    await api.e2eControl("gmail-behaviour", {
+      latency: { batchModify: 360, modify: 360, "threads.list": 220, "threads.get": 180, "messages.list": 200, labels: 180, history: 200 },
+    });
+    await api.e2eControl("traffic", { everyMs: 1500, accounts: [1, 2] });
+    const issues: string[] = [];
+    try {
+      await switchTo("busy0@example.net");
+      await until("the busy Inbox", () => getState().route.list.label === "INBOX" && !getState().list.loading && rows().length >= 20, 60_000);
+      // Let the first sync finish so the list is the steady one the user sees.
+      await sleep(4000);
+      const extraLabels = async (threads: string[]) => (await api.e2eControl<Record<string, string[]>>("extra-labels", { account: 0, threads })) ?? {};
+      const hows = ["hover", "toolbar", "shortcut", "conversation"] as const;
+      for (const how of hows) {
+        for (const burst of [2, 3]) {
+          await until("the Inbox list", () => getState().route.list.label === "INBOX" && !getState().route.thread && !getState().list.loading, 20_000);
+          await sleep(1500);
+          const gone: string[] = [];
+          const rec = recordFrames();
+          for (let k = 0; k < burst; k++) {
+            const top = rows()[0];
+            if (!top) break;
+            const id = top.dataset.thread!;
+            gone.push(id);
+            if (how === "hover") click(await el("hover-delete", top));
+            else if (how === "toolbar") {
+              click(await el("row-checkbox", top));
+              await until("selected", () => getState().selected.length === 1, 3000);
+              click(await el("tb-delete"));
+            } else if (how === "shortcut") {
+              (document.activeElement as HTMLElement | null)?.blur?.();
+              setState({ cursor: 0 });
+              key(document.body, "#");
+            } else {
+              click(top);
+              await until("the conversation", () => !!getState().route.thread && !!q("conv-delete"), 5000);
+              click(await el("conv-delete"));
+            }
+            await sleep(250);
+          }
+          await until(
+            "the deletes on the server",
+            async () => {
+              const labels = await extraLabels(gone);
+              return gone.every((t) => (labels[t] ?? []).includes("TRASH") && !(labels[t] ?? []).includes("INBOX")) || null;
+            },
+            20_000,
+          ).catch((e) => issues.push(`${how} ×${burst}: ${e instanceof Error ? e.message : e}`));
+          await sleep(3000);
+          issues.push(...flashes(rec.stop(), gone, { conversationOpen: how === "conversation" }).map((x) => `${how} ×${burst}: ${x}`));
+          if (q("conv-back")) click(q("conv-back")!);
+        }
+      }
+    } finally {
+      await api.e2eControl("traffic", { everyMs: 0 });
+      await api.e2eControl("gmail-behaviour", { latency: {} });
+      await switchTo(info.gmailEmail);
+    }
+    check(!issues.length, issues.join("\n    "));
+  },
+  300_000,
+);
+
 step("opening a conversation that's on this Mac shows it at once, even when the server is slow", async () => {
   await backToInbox();
   await api.e2eControl("gmail-behaviour", { latency: { "threads.get": 800 } });
@@ -1573,6 +1644,62 @@ step("a sync that fails says why in words in Settings ▸ Accounts", async () =>
     await api.e2eControl("sync");
   }
 });
+
+step(
+  "counts mean what the web client's do: tabs say only what's new since they were opened; categories stay out of the menu until shown, then count every unread conversation in them",
+  async () => {
+    await backToInbox();
+    const chip = (tab: string) => q(`tab-${tab}`)?.querySelector(".new-badge")?.textContent?.trim() ?? "";
+    // Unread mail the Promotions tab already had isn't news: the web client shows no number for it.
+    await until("the tabs", () => q("tab-promotions"));
+    await sleep(800);
+    check(chip("promotions") === "", `Promotions shows "${chip("promotions")}" for mail it already had`);
+    await api.e2eControl("deliver-gmail", {
+      from: "Lakeside Outfitters <deals@lakeside.example>",
+      subject: "Autumn sale starts",
+      body: "x",
+      labels: ["INBOX", "UNREAD", "CATEGORY_PROMOTIONS"],
+    });
+    await until("1 new on Promotions", () => chip("promotions") === "1 new", 30_000);
+    check(/Lakeside/.test(q("tab-promotions")?.textContent ?? ""), "the new sender isn't named under the tab");
+    click(await el("tab-promotions"));
+    await until("Promotions open", () => getState().route.list.category === "promotions" && !getState().list.loading);
+    click(await el("tab-primary"));
+    await until("Primary open", () => (getState().route.list.category ?? "primary") === "primary" && !getState().list.loading);
+    await sleep(500);
+    check(chip("promotions") === "", `Promotions still shows "${chip("promotions")}" after it was opened`);
+    // Categories: hidden from the menu by default, even under More.
+    if (q("nav-more") && !q("nav-IMPORTANT")) click(q("nav-more")!);
+    await sleep(300);
+    check(!q("nav-CATEGORY_UPDATES"), "Updates is in the menu although Settings ▸ Labels hides categories by default");
+    await api.e2eControl("deliver-gmail", {
+      from: "Billing <billing@shop.example>",
+      subject: "Archived unread receipt",
+      body: "x",
+      labels: ["UNREAD", "CATEGORY_UPDATES"],
+    });
+    click(await el("settings-gear"));
+    click(await el("see-all-settings"));
+    click(await el("settings-tab-labels"));
+    click(await el("sys-CATEGORY_UPDATES-show"));
+    click(await el("settings-close"));
+    const truth = async () => {
+      const msgs = (await server()).gmailMessages.filter(
+        (m) => m.labels.includes("CATEGORY_UPDATES") && m.labels.includes("UNREAD") && !m.labels.includes("TRASH") && !m.labels.includes("SPAM"),
+      );
+      return new Set(msgs.map((m) => m.threadId)).size;
+    };
+    const want = await truth();
+    check(want > 0, "the seed has no unread Updates mail");
+    await until(
+      `Updates above More with ${want}`,
+      () => aboveMore("CATEGORY_UPDATES") && q("nav-CATEGORY_UPDATES")?.querySelector(".nav-count")?.textContent?.trim() === String(want),
+      30_000,
+    );
+    await setSetting("systemLabels", {});
+    await until("Updates gone again", () => !q("nav-CATEGORY_UPDATES"));
+  },
+);
 
 step("Settings ▸ Labels: show, hide and show if unread move system labels in and out of the menu", async () => {
   await backToInbox();
