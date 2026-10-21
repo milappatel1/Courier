@@ -1456,6 +1456,39 @@ impl Db {
 
     // ---- kv ----
 
+    /// What's new in an Inbox tab since `since` (ms): unread conversations in that category whose newest unread
+    /// message arrived later, newest first, with the senders of the first few.
+    pub fn tab_news(&self, account: &str, category: &str, since: i64) -> Result<(i64, Vec<String>)> {
+        debug_assert!(category.chars().all(|ch| ch.is_ascii_uppercase() || ch == '_'));
+        let sql = format!(
+            "SELECT m.thread_id, MAX(m.internal_date) AS d FROM messages m WHERE m.account_id = ?1 AND m.labels LIKE '% INBOX %' AND m.labels LIKE '% UNREAD %' \
+             AND m.labels LIKE '% {category} %' AND m.labels NOT LIKE '% TRASH %' AND m.labels NOT LIKE '% SPAM %' \
+             AND NOT EXISTS (SELECT 1 FROM snoozes s WHERE s.account_id = m.account_id AND s.thread_id = m.thread_id) \
+             GROUP BY m.thread_id HAVING d > ?2 ORDER BY d DESC"
+        );
+        self.with(|c| {
+            let threads: Vec<String> = c.prepare(&sql)?.query_map(rusqlite::params![account, since], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<_>>()?;
+            let mut names: Vec<String> = Vec::new();
+            for t in &threads {
+                let mut st = c.prepare(
+                    "SELECT from_name, from_email FROM messages WHERE account_id = ?1 AND thread_id = ?2 AND labels LIKE '% UNREAD %' ORDER BY internal_date DESC",
+                )?;
+                for row in st.query_map(rusqlite::params![account, t], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
+                    let (name, email) = row?;
+                    let who = if name.is_empty() { email } else { name };
+                    if !who.is_empty() && !names.contains(&who) {
+                        names.push(who);
+                    }
+                }
+                if names.len() >= 3 {
+                    break;
+                }
+            }
+            names.truncate(3);
+            Ok((threads.len() as i64, names))
+        })
+    }
+
     pub fn kv_get(&self, key: &str) -> Result<Option<serde_json::Value>> {
         Ok(self.with(|c| c.query_row("SELECT value FROM kv WHERE key=?", [key], |r| r.get::<_, String>(0)).optional())?.and_then(|s| serde_json::from_str(&s).ok()))
     }
@@ -1552,17 +1585,25 @@ impl Db {
         })
     }
 
-    /// Unread conversations in the Inbox (one account, or all of them for the Dock badge), leaving out
-    /// conversations in the given category labels: with tabs on, the Inbox count covers Primary only.
-    pub fn inbox_unread(&self, account: Option<&str>, skip_categories: &[&str]) -> Result<i64> {
+    /// Unread conversations in the Inbox (one account, or all of them for the Dock badge): a conversation counts
+    /// when one of its Inbox messages is unread, as in the web client. `skip_categories` leaves out mail in those
+    /// category labels (with tabs on, the Inbox count covers Primary only), except starred conversations when
+    /// `starred_in_primary` (Settings ▸ Inbox ▸ Include starred in Primary).
+    pub fn inbox_unread(&self, account: Option<&str>, skip_categories: &[&str], starred_in_primary: bool) -> Result<i64> {
         let mut sql = String::from(
             "SELECT COUNT(DISTINCT m.account_id || ' ' || m.thread_id) FROM messages m WHERE m.labels LIKE '% INBOX %' AND m.labels LIKE '% UNREAD %' \
              AND NOT EXISTS (SELECT 1 FROM snoozes s WHERE s.account_id = m.account_id AND s.thread_id = m.thread_id)",
         );
-        for cat in skip_categories {
+        if !skip_categories.is_empty() {
             // Category ids are fixed constants (CATEGORY_*), never user input.
-            debug_assert!(cat.chars().all(|ch| ch.is_ascii_uppercase() || ch == '_'));
-            sql.push_str(&format!(" AND m.labels NOT LIKE '% {cat} %'"));
+            debug_assert!(skip_categories.iter().all(|cat| cat.chars().all(|ch| ch.is_ascii_uppercase() || ch == '_')));
+            let outside: Vec<String> = skip_categories.iter().map(|cat| format!("m.labels NOT LIKE '% {cat} %'")).collect();
+            let starred = if starred_in_primary {
+                " OR EXISTS (SELECT 1 FROM messages t WHERE t.account_id = m.account_id AND t.thread_id = m.thread_id AND t.labels LIKE '% STARRED %')"
+            } else {
+                ""
+            };
+            sql.push_str(&format!(" AND (({}){starred})", outside.join(" AND ")));
         }
         if account.is_some() {
             sql.push_str(" AND m.account_id = ?1");
@@ -1631,11 +1672,11 @@ mod tests {
         db.upsert_message(&msg("3", "t3", &["INBOX", "UNREAD", "CATEGORY_FORUMS"], 1002, "Forum"), None).unwrap();
         db.upsert_message(&msg("4", "t4", &["INBOX", "CATEGORY_PERSONAL"], 1003, "Read"), None).unwrap();
         db.upsert_message(&msg("5", "t1", &["INBOX", "UNREAD", "CATEGORY_PERSONAL"], 1004, "Re: Lunch"), None).unwrap();
-        assert_eq!(db.inbox_unread(Some("a"), &[]).unwrap(), 3);
+        assert_eq!(db.inbox_unread(Some("a"), &[], false).unwrap(), 3);
         // Tabs for promotions/social/updates: forums mail stays in Primary.
-        assert_eq!(db.inbox_unread(Some("a"), &["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES"]).unwrap(), 2);
-        assert_eq!(db.inbox_unread(None, &["CATEGORY_PROMOTIONS", "CATEGORY_FORUMS"]).unwrap(), 1);
-        assert_eq!(db.inbox_unread(Some("other"), &[]).unwrap(), 0);
+        assert_eq!(db.inbox_unread(Some("a"), &["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES"], false).unwrap(), 2);
+        assert_eq!(db.inbox_unread(None, &["CATEGORY_PROMOTIONS", "CATEGORY_FORUMS"], false).unwrap(), 1);
+        assert_eq!(db.inbox_unread(Some("other"), &[], false).unwrap(), 0);
     }
 
     #[test]

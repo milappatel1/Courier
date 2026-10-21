@@ -45,6 +45,11 @@ export const SYSTEM_LABEL_DEFAULTS: Record<string, LabelVisibility> = {
   ALL: "hide",
   SPAM: "hide",
   TRASH: "hide",
+  // Categories (Settings ▸ Labels ▸ Categories) stay out of the label list unless shown.
+  CATEGORY_SOCIAL: "hide",
+  CATEGORY_UPDATES: "hide",
+  CATEGORY_FORUMS: "hide",
+  CATEGORY_PROMOTIONS: "hide",
 };
 
 export interface Settings {

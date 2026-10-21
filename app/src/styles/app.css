@@ -982,12 +982,28 @@ a {
   border-radius: 3px 3px 0 0;
   background: var(--tab-active);
 }
-.tab .new-badge {
+.tab .new-badge,
+.nav-item .nav-new {
   font: 500 11px/16px var(--font);
   color: #fff;
   border-radius: 8px;
   padding: 0 6px;
   margin-left: 8px;
+}
+.nav-item .nav-new {
+  margin-left: auto;
+}
+.nav-new-promotions {
+  background: #188038;
+}
+.nav-new-social {
+  background: #1a73e8;
+}
+.nav-new-updates {
+  background: #e37400;
+}
+.nav-new-forums {
+  background: #9334e6;
 }
 
 /* ---- thread list ---- */

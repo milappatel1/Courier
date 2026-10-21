@@ -646,6 +646,24 @@ function LabelsTab({ accountId }: { accountId: string }) {
       .then(() => loadLabels(accountId))
       .catch((e) => toast(failureText("change the label", e)));
   const setSys = (id: string, v: LabelVisibility) => void setSetting("systemLabels", { ...vis, [id]: v });
+  const choices = (id: string, options: LabelVisibility[]) =>
+    options.map((v) => (
+      <button
+        key={v}
+        className="linkbtn"
+        aria-pressed={(vis[id] ?? SYSTEM_LABEL_DEFAULTS[id]) === v}
+        data-testid={`sys-${id}-${v.replace(/ /g, "-")}`}
+        style={{
+          marginRight: 8,
+          fontWeight: (vis[id] ?? SYSTEM_LABEL_DEFAULTS[id]) === v ? 700 : 400,
+          color: (vis[id] ?? SYSTEM_LABEL_DEFAULTS[id]) === v ? "var(--text)" : undefined,
+        }}
+        onClick={() => setSys(id, v)}
+      >
+        {v}
+      </button>
+    ));
+  const gmail = useMail((s) => s.accounts.find((a) => a.id === accountId)?.kind === "gmail");
   return (
     <>
       <table className="stable">
@@ -663,28 +681,31 @@ function LabelsTab({ accountId }: { accountId: string }) {
                 {id === "INBOX" ? (
                   <span className="muted">always shown</span>
                 ) : (
-                  (["show", "hide", ...(["SPAM", "DRAFT", "SCHEDULED"].includes(id) ? ["show if unread"] : [])] as LabelVisibility[]).map((v) => (
-                    <button
-                      key={v}
-                      className="linkbtn"
-                      aria-pressed={(vis[id] ?? SYSTEM_LABEL_DEFAULTS[id]) === v}
-                      data-testid={`sys-${id}-${v.replace(/ /g, "-")}`}
-                      style={{
-                        marginRight: 8,
-                        fontWeight: (vis[id] ?? SYSTEM_LABEL_DEFAULTS[id]) === v ? 700 : 400,
-                        color: (vis[id] ?? SYSTEM_LABEL_DEFAULTS[id]) === v ? "var(--text)" : undefined,
-                      }}
-                      onClick={() => setSys(id, v)}
-                    >
-                      {v}
-                    </button>
-                  ))
+                  choices(id, ["show", "hide", ...(["SPAM", "DRAFT", "SCHEDULED"].includes(id) ? ["show if unread" as const] : [])])
                 )}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {gmail && (
+        <table className="stable">
+          <thead>
+            <tr>
+              <th>Categories</th>
+              <th>Show in label list</th>
+            </tr>
+          </thead>
+          <tbody>
+            {["CATEGORY_SOCIAL", "CATEGORY_UPDATES", "CATEGORY_FORUMS", "CATEGORY_PROMOTIONS"].map((id) => (
+              <tr key={id}>
+                <td>{SYSTEM_DISPLAY[id]}</td>
+                <td>{choices(id, ["show", "hide"])}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
       <table className="stable">
         <thead>
           <tr>

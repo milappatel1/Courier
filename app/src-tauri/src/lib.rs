@@ -598,6 +598,8 @@ pub fn run() {
             commands::account_update,
             commands::account_remove,
             commands::labels_list,
+            commands::tab_news,
+            commands::tab_seen,
             commands::label_create,
             commands::label_update,
             commands::label_delete,

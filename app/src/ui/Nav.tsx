@@ -69,7 +69,7 @@ export function Nav() {
   const accounts = useMail((s) => s.accounts);
   const outbox = useOutbox();
   const [more, setMore] = useState(false);
-  const [cats, setCats] = useState(false);
+  const news = useMail((s) => s.tabNews[s.accountId]);
   const catSettings = useMail((s) => s.settings.categories);
   const phoneSize = useMail((s) => s.size === "phone");
   const tabsOn = useMail(() => hasTabs());
@@ -203,9 +203,10 @@ export function Nav() {
                   id={`__tab-${c.key}`}
                   icon={c.icon}
                   name={c.name}
-                  count={c.key === "primary" ? count("INBOX") : (byId.get(c.label)?.threadsUnread ?? 0)}
+                  count={c.key === "primary" ? count("INBOX") : 0}
+                  newCount={c.key === "primary" ? 0 : (news?.[c.key]?.count ?? 0)}
                   active={current === "INBOX" && (route.list.category ?? "primary") === c.key}
-                  bold={(c.key === "primary" ? count("INBOX") : (byId.get(c.label)?.threadsUnread ?? 0)) > 0}
+                  bold={(c.key === "primary" ? count("INBOX") : (news?.[c.key]?.count ?? 0)) > 0}
                   depth={0}
                   accountId={accountId}
                   test={`nav-tab-${c.key}`}
@@ -215,6 +216,7 @@ export function Nav() {
               ...SYSTEM.filter((x) => x.id !== "INBOX" && exists(x.id) && shown(x.id)).map(systemItem),
             ]
           : SYSTEM.filter((x) => exists(x.id) && shown(x.id)).map(systemItem)}
+        {acct?.kind === "gmail" && CATS.filter((c) => byId.has(c.label) && shown(c.label)).map((c) => item(c.label, c.icon, { test: `nav-${c.label}` }))}
         {pending > 0 && item("OUTBOX", "outbox", { countValue: pending, test: "nav-OUTBOX" })}
         <NavItem
           id="__more"
@@ -231,22 +233,6 @@ export function Nav() {
         {more && (
           <>
             {SYSTEM.filter((x) => exists(x.id) && !shown(x.id)).map(systemItem)}
-            {acct?.kind === "gmail" && (
-              <>
-                <NavItem
-                  id="__cats"
-                  icon={cats ? "arrow_drop_down" : "arrow_right"}
-                  name="Categories"
-                  count={0}
-                  active={false}
-                  bold={false}
-                  depth={0}
-                  accountId={accountId}
-                  onClick={() => setCats(!cats)}
-                />
-                {cats && CATS.map((c) => item(c.label, c.icon, { depth: 1, onClick: () => go({ label: c.label }), test: `nav-${c.label}` }))}
-              </>
-            )}
             {item("SUBSCRIPTIONS", "unsubscribe", { test: "nav-SUBSCRIPTIONS" })}
             {!unified && (
               <NavItem
@@ -301,6 +287,8 @@ function NavItem(props: {
   icon: string;
   name: string;
   count: number;
+  /** "N new" since the tab was last opened (the phone layout's inbox tabs). */
+  newCount?: number;
   active: boolean;
   bold: boolean;
   depth: number;
@@ -348,6 +336,7 @@ function NavItem(props: {
       <Icon name={props.icon} fill={props.active || props.icon === "label"} style={props.color ? { color: props.color } : undefined} />
       <span className="nav-name">{props.name}</span>
       {props.count > 0 && <span className="nav-count">{props.count.toLocaleString()}</span>}
+      {!!props.newCount && <span className={`new-badge nav-new nav-new-${props.id.replace("__tab-", "")}`}>{props.newCount} new</span>}
       <span className="dot" style={{ display: props.bold ? undefined : "none" }} />
       {props.label && (
         <button

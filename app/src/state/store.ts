@@ -4,7 +4,7 @@ import { sizeFor, type ViewSize } from "../core/layout";
 import { create } from "zustand";
 import type { Address } from "../core/addresses";
 import { api, errorText, failureText, on } from "../ipc/api";
-import type { Account, AppInfo, Label, ThreadDetail, ThreadSummary, ViewQuery, ViewResult } from "../ipc/types";
+import type { Account, AppInfo, Label, TabNews, ThreadDetail, ThreadSummary, ViewQuery, ViewResult } from "../ipc/types";
 import { DEFAULTS, mergeSettings, type Settings } from "./settings";
 import { applyTheme } from "./themes";
 
@@ -114,6 +114,8 @@ export interface MailState {
   accounts: Account[];
   accountId: string; // active account id or "all"
   labels: Record<string, Label[]>;
+  /** What's new in each Inbox tab since it was last opened, by account and tab. */
+  tabNews: Record<string, Record<string, TabNews>>;
   settings: Settings;
   route: Route;
   /** `settling`: the cached page is short and the server hasn't answered yet, so it isn't called empty. */
@@ -194,6 +196,7 @@ export const useMail = create<MailState>(() => ({
   accounts: [],
   accountId: "",
   labels: {},
+  tabNews: {},
   settings: DEFAULTS,
   route: { list: INBOX_ROUTE, thread: null, settings: null },
   list: { key: "", result: null, loading: false, error: null, tokens: [null] },
@@ -498,17 +501,34 @@ export async function loadList(opts: { quiet?: boolean } = {}) {
   }
 }
 
+/** Per account, the latest label load started: an older answer arriving later never replaces a newer one. */
+const labelSeq: Record<string, number> = {};
+
 export async function loadLabels(accountId?: string) {
   const ids = accountId ? [accountId] : get().accounts.map((a) => a.id);
-  const out: Record<string, Label[]> = {};
-  const unsub: Record<string, string[]> = {};
   await Promise.all(
     ids.map(async (id) => {
-      out[id] = await api.labels(id).catch(() => []);
-      unsub[id] = await api.unsubscribedSenders(id).catch(() => []);
+      const seq = (labelSeq[id] = (labelSeq[id] ?? 0) + 1);
+      const [labels, unsub, news] = await Promise.all([
+        api.labels(id).catch(() => null),
+        api.unsubscribedSenders(id).catch(() => null),
+        api.tabNews(id).catch(() => null),
+      ]);
+      if (seq !== labelSeq[id]) return;
+      set((s) => ({
+        labels: labels ? { ...s.labels, [id]: labels } : s.labels,
+        unsubscribed: unsub ? { ...s.unsubscribed, [id]: unsub } : s.unsubscribed,
+        tabNews: news ? { ...s.tabNews, [id]: Object.fromEntries(news.map((n) => [n.tab, n])) } : s.tabNews,
+      }));
     }),
   );
-  set((s) => ({ labels: { ...s.labels, ...out }, unsubscribed: { ...s.unsubscribed, ...unsub } }));
+}
+
+/** The user opened an Inbox tab (or left it): its mail is no longer news. */
+export async function markTabSeen(accountId: string, tab: string) {
+  if (accountId === "all" || tab === "primary") return;
+  await api.tabSeen(accountId, tab).catch(() => {});
+  await loadLabels(accountId);
 }
 
 export function noteUnsubscribed(accountId: string, email: string) {

@@ -30,6 +30,13 @@ export interface Account {
   config: Record<string, unknown>;
 }
 
+/** What's new in an Inbox tab since it was last opened. */
+export interface TabNews {
+  tab: string;
+  count: number;
+  names: string[];
+}
+
 export interface Label {
   accountId: string;
   id: string;

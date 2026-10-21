@@ -18,6 +18,14 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{watch, Notify};
 
+/// What's new in one Inbox tab since it was last opened (`Engine::tab_news`).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct TabNews {
+    pub tab: String,
+    pub count: i64,
+    pub names: Vec<String>,
+}
+
 pub trait EventSink: Send + Sync {
     fn emit(&self, event: &str, payload: Value);
 }
@@ -206,7 +214,7 @@ impl Engine {
     pub fn refresh_badge(&self) {
         let cfg = self.db.kv_get("badge").ok().flatten().unwrap_or(json!({"enabled": true, "primaryOnly": true}));
         let skip = if cfg["primaryOnly"].as_bool().unwrap_or(true) { self.tab_categories() } else { vec![] };
-        let n = if cfg["enabled"].as_bool().unwrap_or(true) { self.db.inbox_unread(None, &skip).unwrap_or(0) } else { 0 };
+        let n = if cfg["enabled"].as_bool().unwrap_or(true) { self.db.inbox_unread(None, &skip, !skip.is_empty() && self.starred_in_primary()).unwrap_or(0) } else { 0 };
         (self.badge)(n);
     }
 
@@ -223,6 +231,40 @@ impl Engine {
         out
     }
 
+    /// What's new in each Inbox tab (other than Primary) since the user last opened it, as the web client shows
+    /// under the tab names: unread conversations that arrived since, and their senders. A tab never opened on this
+    /// Mac starts from now, so mail that was already there isn't news.
+    pub fn tab_news(&self, account: &str) -> Result<Vec<TabNews>> {
+        let mut seen = self.db.kv_get("tabSeen")?.unwrap_or(json!({}));
+        let now = now_ms();
+        let mut out = Vec::new();
+        let mut started = false;
+        for label in self.tab_categories() {
+            let tab = label.trim_start_matches("CATEGORY_").to_lowercase();
+            let since = match seen[account][&tab].as_i64() {
+                Some(ms) => ms,
+                None => {
+                    seen[account][&tab] = json!(now);
+                    started = true;
+                    now
+                }
+            };
+            let (count, names) = self.db.tab_news(account, label, since)?;
+            out.push(TabNews { tab, count, names });
+        }
+        if started {
+            self.db.kv_set("tabSeen", &seen)?;
+        }
+        Ok(out)
+    }
+
+    /// The user opened (or left) an Inbox tab: what's in it now is no longer new.
+    pub fn tab_seen(&self, account: &str, tab: &str) -> Result<()> {
+        let mut seen = self.db.kv_get("tabSeen")?.unwrap_or(json!({}));
+        seen[account][tab] = json!(now_ms());
+        self.db.kv_set("tabSeen", &seen)
+    }
+
     /// Labels with the Inbox count Gmail shows: unread conversations in Primary when tabs are on.
     pub fn labels_for_nav(&self, account: &str) -> Result<Vec<LabelRow>> {
         let mut labels = self.db.labels(account)?;
@@ -231,7 +273,7 @@ impl Engine {
         if gmail && inbox_type == "default" {
             let skip = self.tab_categories();
             if !skip.is_empty() {
-                let n = self.db.inbox_unread(Some(account), &skip)?;
+                let n = self.db.inbox_unread(Some(account), &skip, self.starred_in_primary())?;
                 if let Some(l) = labels.iter_mut().find(|l| l.id == "INBOX") {
                     l.threads_unread = n;
                 }
@@ -774,7 +816,7 @@ impl Engine {
         Ok(ViewResult { has_more: offset + limit < total, total, threads, source: "cache".into(), ..Default::default() })
     }
 
-    fn starred_in_primary(&self) -> bool {
+    pub fn starred_in_primary(&self) -> bool {
         self.db.kv_get("includeStarredInPrimary").ok().flatten().and_then(|v| v.as_bool()).unwrap_or(false)
     }
 

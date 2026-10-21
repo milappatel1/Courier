@@ -265,6 +265,20 @@ pub async fn account_remove(st: S<'_>, id: String) -> Result<()> {
 
 // ---- labels ----
 
+/// What's new in each Inbox tab since it was last opened.
+#[tauri::command]
+pub fn tab_news(st: S, account_id: String) -> Result<Vec<crate::engine::TabNews>> {
+    if account_id == "all" {
+        return Ok(vec![]);
+    }
+    st.engine.tab_news(&account_id)
+}
+
+#[tauri::command]
+pub fn tab_seen(st: S, account_id: String, tab: String) -> Result<()> {
+    st.engine.tab_seen(&account_id, &tab)
+}
+
 #[tauri::command]
 pub fn labels_list(st: S, account_id: String) -> Result<Vec<LabelRow>> {
     st.engine.labels_for_nav(&account_id)

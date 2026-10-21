@@ -17,6 +17,7 @@ import type {
   ViewQuery,
   ViewResult,
   Subscription,
+  TabNews,
 } from "./types";
 
 const call = <T>(cmd: string, args?: Record<string, unknown>) => invoke<T>(cmd, args);
@@ -51,6 +52,8 @@ export const api = {
   removeAccount: (id: string) => call<void>("account_remove", { id }),
   // labels
   labels: (accountId: string) => call<Label[]>("labels_list", { accountId }),
+  tabNews: (accountId: string) => call<TabNews[]>("tab_news", { accountId }),
+  tabSeen: (accountId: string, tab: string) => call<void>("tab_seen", { accountId, tab }),
   labelCreate: (accountId: string, name: string, bg?: string | null, fg?: string | null) =>
     call<string>("label_create", { accountId, name, bg: bg ?? null, fg: fg ?? null }),
   labelUpdate: (accountId: string, id: string, patch: Record<string, unknown>) => call<void>("label_update", { accountId, id, patch }),

@@ -31,6 +31,7 @@ import {
   go,
   hasTabs,
   loadList,
+  markTabSeen,
   openThread,
   SYSTEM_DISPLAY,
   ui,
@@ -372,29 +373,21 @@ function CategoryTabs() {
   const route = useMail((s) => s.route);
   const cats = useMail((s) => s.settings.categories);
   const accountId = useMail((s) => s.accountId);
-  const labels = useMail((s) => s.labels[s.accountId] ?? NO_LABELS);
+  const news = useMail((s) => s.tabNews[s.accountId]);
   const tabs = CATEGORIES.filter((c) => c.key === "primary" || cats[c.key as keyof typeof cats]);
-  const [subs, setSubs] = useState<Record<string, { names: string; unread: number }>>({});
+  const open = route.list.label === "INBOX" ? (route.list.category ?? "primary") : null;
   useEffect(() => {
-    // New-mail summaries under the tab names (unread senders), like the web client.
-    let live = true;
-    for (const t of tabs.filter((x) => x.key !== "primary")) {
-      void api.list({ accountId, label: "INBOX", category: t.key, query: "is:unread", page: 0, pageSize: 5, conversations: true, mode: "cache" }).then((r) => {
-        if (!live) return;
-        const names = [...new Set(r.threads.flatMap((x) => x.participants.filter((p) => p.unread).map((p) => p.name || p.email)))].slice(0, 3).join(", ");
-        setSubs((s) => ({ ...s, [t.key]: { names, unread: r.total } }));
-      });
-    }
-    return () => {
-      live = false;
-    };
-  }, [accountId, labels, tabs.map((t) => t.key).join()]);
+    // Opening a tab, and leaving it, makes what's in it no longer new (the web client's "N new" under the tab name).
+    if (!open) return;
+    void markTabSeen(accountId, open);
+    return () => void markTabSeen(accountId, open);
+  }, [accountId, open]);
   const colors: Record<string, string> = { promotions: "#188038", social: "#1a73e8", updates: "#e37400", forums: "#9334e6" };
   return (
     <div className="tabs" role="tablist" aria-label="Inbox categories">
       {tabs.map((t) => {
         const active = (route.list.category ?? "primary") === t.key;
-        const sub = subs[t.key];
+        const sub = news?.[t.key];
         return (
           <button
             key={t.key}
@@ -408,13 +401,13 @@ function CategoryTabs() {
             <span className="tab-text">
               <span className="tab-label">
                 <span className="tab-name">{t.name}</span>
-                {!active && sub?.unread ? (
+                {!active && sub?.count ? (
                   <span className="new-badge" style={{ background: colors[t.key] }}>
-                    {sub.unread} new
+                    {sub.count} new
                   </span>
                 ) : null}
               </span>
-              {!active && sub?.names && <span className="tab-sub">{sub.names}</span>}
+              {!active && sub?.count ? <span className="tab-sub">{sub.names.join(", ")}</span> : null}
             </span>
           </button>
         );
