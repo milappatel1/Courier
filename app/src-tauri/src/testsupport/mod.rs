@@ -3,6 +3,7 @@
 
 pub mod fake_gmail;
 pub mod fake_imap;
+pub mod mailbox;
 
 pub use fake_gmail::FakeGmail;
 pub use fake_imap::{FakeImap, FakeSmtp};

@@ -38,6 +38,19 @@ impl Gmail {
     }
 
     async fn call(&self, method: Method, url: &str, query: &[(&str, String)], body: Option<&Value>) -> Result<Value> {
+        let started = std::time::Instant::now();
+        let out = self.call_inner(method.clone(), url, query, body).await;
+        if TIMING.load(std::sync::atomic::Ordering::Relaxed) {
+            let ok = match &out {
+                Ok(_) => "ok".to_string(),
+                Err(e) => e.kind().to_string(),
+            };
+            crate::applog::info(&format!("api {method} {} {ok} {} ms", api_path(url), started.elapsed().as_millis()));
+        }
+        out
+    }
+
+    async fn call_inner(&self, method: Method, url: &str, query: &[(&str, String)], body: Option<&Value>) -> Result<Value> {
         let mut attempt = 0;
         let mut refreshed = false;
         loop {
@@ -810,6 +823,9 @@ pub fn is_failed_precondition(v: &Value) -> bool {
 fn api_reason(v: &Value) -> &str {
     v["error"]["errors"][0]["reason"].as_str().or(v["error"]["status"].as_str()).unwrap_or("")
 }
+
+/// Log each mail API request's route, outcome and time (recon mode), to set the fakes' latencies from measurements.
+pub static TIMING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// A request's path for the log, with message, thread and draft ids left out.
 fn api_path(url: &str) -> String {

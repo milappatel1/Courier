@@ -34,6 +34,11 @@ pub struct E2e {
     pub opened: Mutex<Vec<String>>,
     /// Times macOS made Courier the active app during the run (each one fails the run).
     pub activations: std::sync::atomic::AtomicU32,
+    /// Extra mail-API accounts with busy mailboxes (`big-accounts`), syncing alongside the others.
+    #[cfg(debug_assertions)]
+    pub extra: Mutex<Vec<FakeGmail>>,
+    /// Background mail arriving in the extra accounts (`traffic`): bumped to stop the current stream.
+    pub traffic: Arc<std::sync::atomic::AtomicU64>,
 }
 
 pub const GMAIL_ADDR: &str = "pat@example.com";
@@ -190,7 +195,7 @@ impl E2e {
         imap.deliver("INBOX", &mail("Eli Park <eli@club.example>", "pat@example.org", "Club meeting Thursday", &d(0, 8), "Meeting moved to Thursday at 7.", ""), &[]);
         imap.deliver("INBOX", &mail("Fay Wong <fay@club.example>", "pat@example.org", "Train tickets", &d(2, 14), "Tickets for the trip are booked.", ""), &["\\Seen"]);
         imap.deliver("Sent", &mail("Pat <pat@example.org>", "eli@club.example", "Re: Club agenda", &d(5, 20), "Sounds good.", ""), &["\\Seen"]);
-        E2e { report_path, gmail, imap, smtp, notes: Mutex::new(vec![]), opened: Mutex::new(vec![]), activations: Default::default() }
+        E2e { report_path, gmail, imap, smtp, notes: Mutex::new(vec![]), opened: Mutex::new(vec![]), activations: Default::default(), extra: Mutex::new(vec![]), traffic: Default::default() }
     }
 
     pub fn info(&self) -> Value {
@@ -228,6 +233,45 @@ impl E2e {
         None
     }
 
+    /// Mail-API accounts with busy mailboxes, signed in and syncing like the user's own (`big-accounts`).
+    #[cfg(debug_assertions)]
+    pub async fn big_accounts(&self, engine: &Arc<Engine>, args: &Value) -> Result<Value> {
+        let count = args["count"].as_u64().unwrap_or(3) as usize;
+        let spec = crate::testsupport::mailbox::Spec { seed: args["seed"].as_u64().unwrap_or(1), conversations: args["conversations"].as_u64().unwrap_or(3000) as usize, ..Default::default() };
+        let creds = engine.google_client()?;
+        let mut out = Vec::new();
+        for i in 0..count {
+            let email = format!("busy{i}@example.net");
+            let fake = FakeGmail::start(&email, &format!("Busy {i}")).await;
+            let n = crate::testsupport::mailbox::fill(&fake, &crate::testsupport::mailbox::Spec { seed: spec.seed + i as u64, ..spec.clone() });
+            let access = format!("busy-access-{i}");
+            fake.state.lock().access.insert(access.clone(), crate::error::now_ms() / 1000 + 86_400);
+            let id = format!("g-busy{i}");
+            let ep = fake.endpoints();
+            let tokens = crate::oauth::Tokens { access_token: access, refresh_token: None, expires_at: crate::error::now_ms() / 1000 + 86_400, scope: String::new() };
+            crate::oauth::TokenManager::new(&id, ep.clone(), creds.clone(), engine.secrets.clone(), engine.http.clone()).save(&tokens)?;
+            let position = engine.db.accounts()?.len() as i64;
+            engine.db.insert_account(&crate::db::AccountRow {
+                id: id.clone(),
+                kind: "gmail".into(),
+                email: email.clone(),
+                name: format!("Busy {i}"),
+                color: ["#e8710a", "#9334e6", "#188038", "#d93025"][i % 4].into(),
+                position,
+                config: json!({"endpoints": ep}),
+                state: json!({}),
+                photo: None,
+                created_at: crate::error::now_ms(),
+                needs_reauth: false,
+            })?;
+            engine.start_account(&id);
+            self.extra.lock().push(fake);
+            out.push(json!({"id": id, "email": email, "messages": n}));
+        }
+        engine.emit("accounts-changed", json!({}));
+        Ok(json!({"accounts": out}))
+    }
+
     pub fn control(&self, engine: &Arc<Engine>, action: &str, args: &Value) -> Result<Value> {
         #[cfg(debug_assertions)]
         {
@@ -245,6 +289,47 @@ impl E2e {
                 }
                 // Mail that has long been in the mailbox, older than Courier's offline window and never cached: the
                 // server has it, the history doesn't mention it. An optional new label is made for it.
+                // Each listed conversation's labels (all its messages together) on extra account `account`.
+                "extra-labels" => {
+                    let fakes = self.extra.lock();
+                    let f = fakes.get(args["account"].as_u64().unwrap_or(0) as usize).ok_or_else(|| Error::msg("no such extra account"))?;
+                    let st = f.state.lock();
+                    let mut out = serde_json::Map::new();
+                    for t in args["threads"].as_array().cloned().unwrap_or_default() {
+                        let t = t.as_str().unwrap_or("").to_string();
+                        let mut labels: Vec<String> = st.messages.values().filter(|m| m.thread_id == t).flat_map(|m| m.labels.clone()).collect();
+                        labels.sort();
+                        labels.dedup();
+                        out.insert(t, json!(labels));
+                    }
+                    Ok(Value::Object(out))
+                }
+                // New mail arriving in the extra accounts every `everyMs` (0 stops it), as on a busy day.
+                "traffic" => {
+                    let stream = self.traffic.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                    let every = args["everyMs"].as_u64().unwrap_or(0);
+                    if every > 0 {
+                        // `accounts`: which extra accounts get mail (indexes; all when left out).
+                        let all = self.extra.lock().clone();
+                        let pick: Vec<usize> = args["accounts"].as_array().map(|a| a.iter().filter_map(|x| x.as_u64().map(|x| x as usize)).collect()).unwrap_or_else(|| (0..all.len()).collect());
+                        let fakes: Vec<(usize, FakeGmail)> = pick.into_iter().filter_map(|i| all.get(i).cloned().map(|f| (i, f))).collect();
+                        let stop = self.traffic.clone();
+                        let e = engine.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let mut n = 0u64;
+                            while stop.load(std::sync::atomic::Ordering::SeqCst) == stream && !fakes.is_empty() {
+                                tokio::time::sleep(std::time::Duration::from_millis(every)).await;
+                                let (i, f) = &fakes[(n as usize) % fakes.len()];
+                                let email = f.state.lock().email.clone();
+                                let raw = mail("Build Bot <ci@builds.example>", &email, &format!("Build {n} finished"), &chrono::Local::now().to_rfc2822(), "All green.", "");
+                                f.deliver(&raw, &["INBOX", "UNREAD", "CATEGORY_UPDATES"]);
+                                e.trigger(&format!("g-busy{i}"));
+                                n += 1;
+                            }
+                        });
+                    }
+                    Ok(json!({}))
+                }
                 "seed-gmail-old" => {
                     let date = (chrono::Local::now() - chrono::Duration::days(args["daysAgo"].as_i64().unwrap_or(400))).to_rfc2822();
                     let raw = mail(&s("from"), GMAIL_ADDR, &s("subject"), &date, &s("body"), "");
@@ -269,6 +354,19 @@ impl E2e {
                     Ok(json!({"uid": uid}))
                 }
                 "gmail-behaviour" => {
+                    // The extra accounts stand for the same real server: they take the same timings.
+                    for f in self.extra.lock().iter() {
+                        let mut g = f.state.lock();
+                        if let Some(l) = args["latency"].as_object() {
+                            g.latency = l.iter().filter_map(|(k, v)| v.as_u64().map(|ms| (k.clone(), ms))).collect();
+                        }
+                        if let Some(ms) = args["searchLag"].as_u64() {
+                            g.search_lag_ms = ms;
+                        }
+                        if let Some(ms) = args["labelLag"].as_u64() {
+                            g.label_lag_ms = ms;
+                        }
+                    }
                     let mut g = self.gmail.state.lock();
                     if let Some(l) = args["latency"].as_object() {
                         g.latency = l.iter().filter_map(|(k, v)| v.as_u64().map(|ms| (k.clone(), ms))).collect();
@@ -281,6 +379,12 @@ impl E2e {
                     }
                     if let Some(ids) = args["preconditionIds"].as_array() {
                         g.precondition_ids = ids.iter().filter_map(|x| x.as_str().map(str::to_string)).collect();
+                    }
+                    if let Some(ms) = args["searchLag"].as_u64() {
+                        g.search_lag_ms = ms;
+                    }
+                    if let Some(ms) = args["labelLag"].as_u64() {
+                        g.label_lag_ms = ms;
                     }
                     drop(g);
                     if let Some(ms) = args["imapMoveLatency"].as_u64() {

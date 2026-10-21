@@ -118,6 +118,7 @@ pub async fn account_add_gmail(st: S<'_>, app: AppHandle, login_hint: Option<Str
     } else {
         info.email.clone()
     };
+    crate::recon::check_account(&email)?;
     let accounts = engine.db.accounts()?;
     let existing = accounts.iter().find(|a| a.kind == "gmail" && a.email.eq_ignore_ascii_case(&email)).cloned();
     if let Some(id) = &reauth_id {
@@ -181,6 +182,9 @@ pub async fn account_test_imap(config: ImapAccountConfig, password: String, smtp
 
 #[tauri::command]
 pub async fn account_add_imap(st: S<'_>, email: String, name: String, config: ImapAccountConfig, password: String, smtp_password: Option<String>, reauth_id: Option<String>) -> Result<AccountInfo> {
+    if crate::recon::address().is_some() {
+        return Err(Error::msg("This test build signs in only the recon account."));
+    }
     account_test_imap(config.clone(), password.clone(), smtp_password.clone()).await?;
     let engine = st.engine.clone();
     let accounts = engine.db.accounts()?;
@@ -870,6 +874,10 @@ pub fn default_mail_app(st: S) -> bool {
     if st.e2e.is_some() {
         return false;
     }
+    // Recon mode never offers to become the default mail app.
+    if crate::recon::address().is_some() {
+        return true;
+    }
     #[cfg(target_os = "macos")]
     return crate::macos::is_default_mail_app();
     #[cfg(not(target_os = "macos"))]
@@ -878,7 +886,7 @@ pub fn default_mail_app(st: S) -> bool {
 
 #[tauri::command]
 pub fn set_default_mail_app(st: S, app: AppHandle) -> Result<()> {
-    if st.e2e.is_some() {
+    if st.e2e.is_some() || crate::recon::address().is_some() {
         return Err(Error::msg("Not changed during tests."));
     }
     #[cfg(target_os = "macos")]
@@ -934,6 +942,8 @@ pub fn e2e_info(st: S) -> Result<Value> {
 pub async fn e2e_control(app: AppHandle, st: S<'_>, action: String, args: Value) -> Result<Value> {
     let e = st.e2e.as_ref().ok_or_else(|| Error::msg("not running end-to-end tests"))?;
     match action.as_str() {
+        #[cfg(debug_assertions)]
+        "big-accounts" => e.big_accounts(&st.engine, &args).await,
         // Files saved by Download (end-to-end runs use their own Downloads folder).
         "downloads" => {
             let dir = st.data_dir.join("Downloads");

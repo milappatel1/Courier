@@ -11,6 +11,7 @@ pub mod imap;
 pub mod macos;
 pub mod mailmeta;
 pub mod oauth;
+pub mod recon;
 pub mod search;
 pub mod secrets;
 #[cfg(any(test, debug_assertions))]
@@ -37,6 +38,9 @@ struct TauriNotifier {
 }
 impl Notifier for TauriNotifier {
     fn notify(&self, title: &str, body: &str, account_id: &str, thread_id: &str) {
+        if recon::address().is_some() {
+            return;
+        }
         if let Some(e) = &self.e2e {
             e.notes.lock().push(json!({"title": title, "body": body, "accountId": account_id, "threadId": thread_id}));
             return;
@@ -412,7 +416,7 @@ pub fn run() {
     if e2e_report.is_some() {
         macos::disable_app_nap("Courier end-to-end tests");
     }
-    let builder = if e2e_report.is_none() {
+    let builder = if e2e_report.is_none() && recon::address().is_none() {
         builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             for a in argv.iter().skip(1) {
                 handle_open(app, a);
@@ -451,15 +455,21 @@ pub fn run() {
                 Some(path) => Some(Arc::new(tauri::async_runtime::block_on(e2e::E2e::start(path.clone())))),
                 _ => None,
             };
+            let recon = recon::address();
+            let installed_dir = handle.path().app_data_dir()?;
             let data_dir = match &e2e_report {
                 Some(path) => std::path::Path::new(path).parent().map(|p| p.join("data")).unwrap_or_else(std::env::temp_dir),
-                None => handle.path().app_data_dir()?,
+                // Recon mode never opens the installed app's cache, log or Keychain item.
+                None if recon.is_some() => installed_dir.with_file_name(format!("{}.recon", app.config().identifier)),
+                None => installed_dir.clone(),
             };
             std::fs::create_dir_all(&data_dir)?;
             let log_path = match &e2e_report {
                 Some(_) => data_dir.join("courier.log"),
+                None if recon.is_some() => data_dir.join("courier.log"),
                 None => handle.path().app_log_dir().unwrap_or_else(|_| data_dir.clone()).join("courier.log"),
             };
+            gmail::TIMING.store(recon.is_some(), std::sync::atomic::Ordering::Relaxed);
             applog::init(log_path);
             applog::info(&format!("Courier {} started", env!("CARGO_PKG_VERSION")));
             let db = Arc::new(db::Db::open(&data_dir.join("courier.db"))?);
@@ -472,16 +482,28 @@ pub fn run() {
                     for a in db.accounts().unwrap_or_default() {
                         legacy.extend([secrets::oauth_key(&a.id), secrets::password_key(&a.id), secrets::smtp_password_key(&a.id)]);
                     }
+                    if recon.is_some() {
+                        legacy.clear();
+                    }
                     let vault: Arc<dyn secrets::SecretStore> = Arc::new(secrets::VaultStore::new(
-                        Box::new(secrets::LoginKeychain::new(secrets::SERVICE)),
+                        Box::new(secrets::LoginKeychain::new(if recon.is_some() { recon::SERVICE } else { secrets::SERVICE })),
                         data_dir.join("vault.json"),
                         secrets::current_build_id(),
                         legacy,
                     ));
                     // Open the vault off the main thread: if macOS asks for the Keychain password, the window stays usable.
                     let warm = vault.clone();
+                    let import_from = recon.as_ref().map(|_| installed_dir.clone());
                     std::thread::spawn(move || {
                         let _ = warm.get("");
+                        // Recon mode borrows the installed app's sign-in client (only that) the first time.
+                        if let Some(dir) = import_from {
+                            if warm.get(secrets::GOOGLE_CLIENT_KEY).ok().flatten().is_none() {
+                                if let Some(c) = recon::installed_google_client(&dir) {
+                                    let _ = warm.set(secrets::GOOGLE_CLIENT_KEY, &c);
+                                }
+                            }
+                        }
                     });
                     vault
                 }
@@ -523,6 +545,15 @@ pub fn run() {
             {
                 let e = engine.clone();
                 tauri::async_runtime::spawn(async move { e.start() });
+            }
+            {
+                let e = engine.clone();
+                tauri::async_runtime::spawn(async move { recon::when_ready(e).await });
+            }
+            if recon.is_some() {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.set_title("Courier recon test build");
+                }
             }
             #[cfg(target_os = "macos")]
             {

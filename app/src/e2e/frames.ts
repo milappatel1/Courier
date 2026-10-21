@@ -94,9 +94,11 @@ export function flashes(rec: Recording, gone: string[], opts: { conversationOpen
     const readded = rec.changes.filter((c) => c.t >= rec.frames[leftAt].t && c.added.includes(id) && !c.removed.includes(id));
     if (readded.length && !back) issues.push(`row ${id} was put back into the page at +${readded[0].t} ms`);
   }
-  // The other rows stay put: none disappears, even for a frame.
+  // The other rows stay put: none disappears, even for a frame. While a conversation is open in place of the list
+  // (no reading pane) the list isn't on screen, so only frames showing the list count.
   const others = first.rows.filter((id) => !gone.includes(id));
-  for (const f of rec.frames) {
+  const listFrames = opts.conversationOpen ? rec.frames.filter((f) => f.conv === null) : rec.frames;
+  for (const f of listFrames) {
     const missing = others.filter((id) => !f.rows.includes(id));
     if (missing.length && f.rows.length < others.length) {
       issues.push(`${missing.length} other row(s) vanished at +${f.t} ms`);
@@ -104,15 +106,17 @@ export function flashes(rec: Recording, gone: string[], opts: { conversationOpen
     }
   }
   // Every row swapped out for a new copy (a remount through a changed key) also shows as a flash.
-  const churn = rec.changes.find((c) => c.removed.some((id) => others.includes(id)) && c.added.some((id) => others.includes(id)));
+  const churn = opts.conversationOpen
+    ? undefined
+    : rec.changes.find((c) => c.removed.some((id) => others.includes(id)) && c.added.some((id) => others.includes(id)));
   if (churn) issues.push(`other rows were taken out and put back at +${churn.t} ms`);
-  const loading = rec.frames.find((f) => f.loading && !first.loading);
+  const loading = listFrames.find((f) => f.loading && !first.loading);
   if (loading) issues.push(`the loading bar showed at +${loading.t} ms`);
-  const empty = rec.frames.find((f) => f.empty && others.length > 0);
+  const empty = listFrames.find((f) => f.empty && others.length > 0);
   if (empty) issues.push(`the list showed as empty at +${empty.t} ms`);
   // Counts move one way: a value seen before never comes back after it changed.
   const seq: string[] = [];
-  for (const f of rec.frames) if (seq[seq.length - 1] !== f.counts) seq.push(f.counts);
+  for (const f of listFrames) if (seq[seq.length - 1] !== f.counts) seq.push(f.counts);
   const revisit = seq.findIndex((c, i) => seq.indexOf(c) < i);
   if (revisit >= 0) issues.push(`the counts went back: ${seq.slice(0, revisit + 1).join(" → ")}`);
   if (opts.conversationOpen) {

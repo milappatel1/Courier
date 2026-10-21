@@ -70,6 +70,13 @@ pub struct GState {
     pub precondition_ids: Vec<String>,
     /// Routes (as in `latency`) that answer with this status and the API's error body, every time.
     pub fail_routes: HashMap<String, u16>,
+    /// How far (ms) listings run behind changes, as on the real API: a search (`q=`) reads an index that lags,
+    /// a plain label listing (`labelIds=` only) reads the labels themselves. Zero answers from the current state.
+    pub search_lag_ms: u64,
+    pub label_lag_ms: u64,
+    /// Each message's labels before every change (when, id, labels before; None = it didn't exist yet), so a
+    /// lagging listing can answer from the past.
+    pub label_log: Vec<(i64, String, Option<Vec<String>>)>,
 }
 
 #[derive(Clone)]
@@ -642,6 +649,9 @@ fn thread_for(s: &GState, raw: &[u8]) -> Option<String> {
 }
 
 fn record(s: &mut GState, kind: &str, m: &FMsg, label_ids: &[String]) {
+    if kind == "messagesAdded" {
+        s.label_log.push((crate::error::now_ms(), m.id.clone(), None));
+    }
     s.history_id += 1;
     let id = s.history_id;
     let msg = json!({"id": m.id, "threadId": m.thread_id, "labelIds": m.labels});
@@ -650,8 +660,9 @@ fn record(s: &mut GState, kind: &str, m: &FMsg, label_ids: &[String]) {
 }
 
 fn modify(s: &mut GState, id: &str, add: &[String], remove: &[String]) {
+    let Some(before) = s.messages.get(id).map(|m| m.labels.clone()) else { return };
+    s.label_log.push((crate::error::now_ms(), id.to_string(), Some(before.clone())));
     let Some(m) = s.messages.get_mut(id) else { return };
-    let before = m.labels.clone();
     m.labels.retain(|l| !remove.contains(l));
     for a in add {
         if !m.labels.contains(a) {
@@ -732,7 +743,20 @@ fn searchable(s: &GState, m: &FMsg, names: &HashMap<String, String>) -> search::
     }
 }
 
-fn list_messages<'a>(s: &'a GState, req: &Request) -> Vec<&'a FMsg> {
+/// A message as a listing that runs `lag` ms behind sees it: its labels then, or None if it didn't exist yet.
+fn as_of(s: &GState, m: &FMsg, lag: u64) -> Option<FMsg> {
+    if lag == 0 {
+        return Some(m.clone());
+    }
+    let cutoff = crate::error::now_ms() - lag as i64;
+    match s.label_log.iter().find(|(t, id, _)| *t > cutoff && id == &m.id) {
+        None => Some(m.clone()),
+        Some((_, _, None)) => None,
+        Some((_, _, Some(before))) => Some(FMsg { labels: before.clone(), ..m.clone() }),
+    }
+}
+
+fn list_messages(s: &GState, req: &Request) -> Vec<FMsg> {
     let label_ids = req.q_all("labelIds");
     let q = req.q("q").unwrap_or("");
     let include = req.q("includeSpamTrash") == Some("true");
@@ -740,9 +764,11 @@ fn list_messages<'a>(s: &'a GState, req: &Request) -> Vec<&'a FMsg> {
     let asks_spam_trash = node.as_ref().map(search::mentions_spam_trash).unwrap_or(false);
     let names = label_names(s);
     let now = crate::error::now_ms();
-    let mut out: Vec<&FMsg> = s
+    let lag = if q.trim().is_empty() { s.label_lag_ms } else { s.search_lag_ms };
+    let mut out: Vec<FMsg> = s
         .messages
         .values()
+        .filter_map(|m| as_of(s, m, lag))
         .filter(|m| label_ids.iter().all(|l| m.labels.contains(l)))
         .filter(|m| include || asks_spam_trash || label_ids.iter().any(|l| l == "SPAM" || l == "TRASH") || !(m.labels.iter().any(|l| l == "SPAM" || l == "TRASH")))
         .filter(|m| node.as_ref().map(|n| search::eval(n, &searchable(s, m, &names), now)).unwrap_or(true))
