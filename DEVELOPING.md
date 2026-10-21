@@ -99,6 +99,15 @@ These belong to the installed app, not to building it; don't delete them unless 
 - **macOS focus**: tao still activates the app at launch; an app started from a process under the active app can be
   handed activation. Launch with `open -g -n`, order the window back, and count `NSApplicationDidBecomeActive`.
   Parse the frontmost app with `lsappinfo info "$(lsappinfo front)"`. Never edit a bash script while it runs.
+- **Rust formatting**: the crate is hand-formatted (lines up to ~200 columns) and no rustfmt config reproduces it.
+  Never run `cargo fmt` over the crate; run `rustfmt --edition 2021` (max_width 160, `use_small_heuristics = "Max"`)
+  on new files only.
+- **Two Cargo build folders**: `cargo test` / `cargo check` and the e2e's `tauri build --debug` build the same crates
+  with different features; sharing one target folder makes each switch rebuild the dependencies (minutes). Give
+  the tests their own: `CARGO_TARGET_DIR=~/Library/Caches/courier-test-target cargo test`.
+- **Stale reads**: a server answer can describe a message as it was before a change made here reached the server,
+  and arrive after the change is done (the real API answers from the state when the request arrived; Courier also
+  collects answers before writing them). Fakes model this with read `tail` latency (`gmail-behaviour`).
 - **Recon** (only needed to measure the web client again): the measurements are in `LOOK-SPEC.md`; the tools in
   `research/tools/` drive an isolated Chrome profile over CDP at 127.0.0.1:9222. The original recon profile and the
   redacted screenshots were never committed, so new measurements need a new throwaway account and profile.

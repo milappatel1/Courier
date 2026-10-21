@@ -30,8 +30,10 @@ client_secret*.json
 .vscode/
 .idea/
 
-# Local agent settings
-.claude/
+# Local agent settings (the repo's verification skill and the preview launcher are shared)
+.claude/*
+!.claude/skills/
+!.claude/launch.json
 app/.claude/
 
 # TypeScript incremental build info
