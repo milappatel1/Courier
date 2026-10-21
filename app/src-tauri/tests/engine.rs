@@ -683,6 +683,31 @@ async fn delete_forever_in_bulk_goes_on_past_a_refused_batch() {
 }
 
 #[tokio::test]
+async fn deleting_or_archiving_a_conversation_takes_all_of_it_even_messages_older_than_this_mac_keeps() {
+    let w = world().await;
+    // A long conversation: its first message is older than the 30 days Courier keeps, and read (so the unread
+    // backfill doesn't fetch it either); the reply is new.
+    let first = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Daily digest", "old", ""), &["INBOX", "CATEGORY_UPDATES"]);
+    w.gmail.state.lock().messages.get_mut(&first).unwrap().internal_date = courier_lib::error::now_ms() - 60 * 86_400_000;
+    let mid = courier_lib::mailmeta::parse_raw(&w.gmail.message(&first).unwrap().raw).row.message_id;
+    let reply = w.gmail.deliver(
+        &sample_mail("Ana <ana@x.io>", "pat@example.com", "Re: Daily digest", "new", &format!("In-Reply-To: {mid}\r\nReferences: {mid}\r\n")),
+        &["INBOX", "UNREAD", "CATEGORY_UPDATES"],
+    );
+    let thread = w.gmail.message(&reply).unwrap().thread_id;
+    w.engine.sync_account("g1").await.unwrap();
+    assert!(w.engine.db.message("g1", &first).unwrap().is_none(), "the old message shouldn't be on this Mac for this test");
+    let labels = |id: &str| w.gmail.message(id).unwrap().labels;
+    w.engine.modify_threads("g1", std::slice::from_ref(&thread), &["TRASH".into()], &["INBOX".into()]).await.unwrap();
+    assert!(labels(&reply).contains(&"TRASH".to_string()));
+    assert!(labels(&first).contains(&"TRASH".to_string()) && !labels(&first).contains(&"INBOX".to_string()), "the old message stayed in the Inbox: {:?}", labels(&first));
+    // And the Inbox no longer lists the conversation, on the server or here.
+    let mut server = view("g1", "INBOX");
+    server.mode = Some("server".into());
+    assert!(w.engine.list(&server).await.unwrap().threads.iter().all(|t| t.thread_id != thread));
+}
+
+#[tokio::test]
 async fn a_full_resync_drops_mail_deleted_on_the_server_and_refreshes_what_moved() {
     let w = world().await;
     let gone = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Deleted elsewhere", "x", ""), &["INBOX"]);
