@@ -110,6 +110,9 @@ backs up: every build rewrites thousands of files.
 `npm run dev` and `/browser-preview.html` show the whole interface in a browser with a stand-in for the native
 side (`app/dev/tauri-mock.ts`), which is handy for working on the UI.
 
+Picking the project up on another Mac (setup, the project's rules, releasing, lessons learned):
+[DEVELOPING.md](DEVELOPING.md).
+
 ## Tests
 
 ```bash

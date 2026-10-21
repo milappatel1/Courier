@@ -5,6 +5,8 @@ Google branding, Google's assets and Google-only services, with multiple account
 
 ## Status
 
+**1.0.7 released (2026-10-21)** — https://github.com/milappatel1/Courier/releases/tag/v1.0.7 (`.dmg` and `.zip`, ad-hoc signed; SHA-256 in the release notes): — archiving, deleting, labelling, read/unread and stars made offline happen at once and wait (over a restart too) until the connection is back, with Undo; an IMAP server that hangs up mid-command no longer counts as having done it. See `research/VERIFY-P11.md`. Picking the project up again on another Mac: `DEVELOPING.md`.
+
 **1.0.6 released (2026-10-21)** — https://github.com/milappatel1/Courier/releases/tag/v1.0.6 (`.dmg` and `.zip`, ad-hoc signed; SHA-256 in the release notes): — deleting no longer flashes, mass delete rides out Gmail's passing "400: Precondition check failed" and keeps going past refused batches, failures said in words (never raw server text), unsubscribe the way the web client does (one-click first), the cache keeps up with changes made on other devices, Settings ▸ Labels works, conversations on this Mac open at once, Report spam or unsubscribe, Trash and Spam banners, an action log, and every button checked by an automated sweep. See `research/VERIFY-P10.md`; limitations are in the README.
 
 **1.0.5 released (2026-10-20)** — https://github.com/milappatel1/Courier/releases/tag/v1.0.5 (`.dmg` and `.zip`, ad-hoc signed; SHA-256 in the release notes): — notifications open their conversation and can archive it, calendar invitations with RSVP, compose labels, filter import/export, drag a conversation into a message, sender warnings, in-message jump links, recent searches. See `research/VERIFY-P9.md`.
@@ -27,7 +29,8 @@ Google branding, Google's assets and Google-only services, with multiple account
 | P8 1.0.4 bug hunt | done | `research/VERIFY-P8.md` |
 | P9 1.0.5 parity round | done | `research/VERIFY-P9.md` |
 | P10 1.0.6 real-use bugs + hunt | done | `research/VERIFY-P10.md` — delete flash, "400: Precondition check failed", unsubscribe like the web client, stale cache after cleanups, label settings, a button sweep |
-| Tests | passing | Vitest 103, Rust 54 (+2 opt-in live TLS checks), end to end 70 steps + 2 run-wide checks in ~6 min (frame recorder for flashes, every button pressed, no raw error text, window sizes 1440–420 px) |
+| P11 1.0.7 offline label changes | done | `research/VERIFY-P11.md` — changes made offline wait in a queue and go out when back online; IMAP hang-ups read as offline |
+| Tests | passing | Vitest 103, Rust 58 (+2 opt-in live TLS checks), end to end 71 steps + 2 run-wide checks in ~7 min (frame recorder for flashes, every button pressed, no raw error text, window sizes 1440–420 px) |
 | Real-account check | done (read-only) | 2026-10-19 with the user's own OAuth client; found bugs (first-run client setup unreachable, Inbox count from a partial cache, endless Keychain prompts after an update), fixed in 1.0.1. See `research/VERIFY-P0.md`. |
 
 Open items: things not driven automatically (mailto/.eml/Quick Look/Share/drag-out,
@@ -66,7 +69,7 @@ pop-out compose, templates, multiple inboxes) are listed under "Known gaps" in t
 
 ```
 mail-clone/
-  PLAN.md  README.md  SETUP-GOOGLE.md  .gitignore
+  PLAN.md  README.md  DEVELOPING.md  SETUP-GOOGLE.md  .gitignore
   app/                      Tauri + React app
     src/core/               pure modules: search, mime, sanitize, threading, labels, dates, addresses, shortcuts
     src/ipc/                typed wrappers for the Rust commands + events
@@ -83,15 +86,16 @@ mail-clone/
     look/LOOK-SPEC.md       measured look (committed); raw measurements gitignored
     tools/                  CDP/REA helper scripts
     goldens/ captures/      redacted captures (gitignored, local only)
-    VERIFY-P0.md … VERIFY-P6.md
+    VERIFY-P0.md … VERIFY-P11.md, GMAIL-PARITY.md
   release/                  build output (gitignored)
 ```
 
 ## Data model (SQLite)
 
 `accounts`, `labels`, `messages` (+ `message_labels`, `fts` FTS5), `threads` (derived), `outbox` (undo-send /
-scheduled / offline), `snoozes`, `muted`, `star_types`, `contacts`, `templates`, `signatures`, `local_filters`,
-`blocked`, `kv` (settings), `sync_state` (Gmail history ID, IMAP UIDVALIDITY/UIDNEXT/MODSEQ per folder).
+scheduled / offline), `change_queue` (label changes made offline, one per message), `snoozes`, `muted`,
+`star_types`, `contacts`, `templates`, `signatures`, `local_filters`, `blocked`, `kv` (settings), `sync_state`
+(Gmail history ID, IMAP UIDVALIDITY/UIDNEXT/MODSEQ per folder).
 
 ## Behaviour decisions (API gaps)
 
