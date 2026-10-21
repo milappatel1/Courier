@@ -207,6 +207,10 @@ export async function act(kind: ActionKind, targets: Target[] = currentTargets()
     return;
   }
   const moved = leaving ? targets.flatMap((t) => t.threadIds) : [];
+  const wasInInbox = new Set([
+    ...(s.list.result?.threads ?? []).filter((t) => t.labels.includes("INBOX")).map((t) => t.threadId),
+    ...(s.thread.detail?.messages.some((m) => m.labels.includes("INBOX")) ? [s.thread.detail.threadId] : []),
+  ]);
   hideThreads(moved);
   const wasOpen = s.route.thread;
   advanceAfter(leaving && !!wasOpen && targets.some((t) => t.threadIds.includes(wasOpen.threadId)));
@@ -217,17 +221,18 @@ export async function act(kind: ActionKind, targets: Target[] = currentTargets()
       else if (kind === "unsnooze") await api.unsnooze(t.accountId, t.threadIds);
       else await api.modifyThreads(t.accountId, t.threadIds, rule.add, rule.remove);
     }
-    // The inverse change; removing TRASH/SPAM brings INBOX back (the engine's label rules).
+    // The inverse change; removing TRASH/SPAM brings INBOX back (the engine's label rules). Muting archives what
+    // was in the Inbox, so undoing it puts those back.
     const undo = async () => {
       for (const t of targets) {
-        if (kind === "mute" || kind === "unmute") await api.mute(t.accountId, t.threadIds, kind !== "mute");
-        else if (kind !== "unsnooze") await api.modifyThreads(t.accountId, t.threadIds, rule.remove, rule.add);
+        if (kind === "mute" || kind === "unmute") {
+          await api.mute(t.accountId, t.threadIds, kind !== "mute");
+          const back = t.threadIds.filter((id) => wasInInbox.has(id));
+          if (kind === "mute" && back.length) await api.modifyThreads(t.accountId, back, ["INBOX"], []);
+        } else if (kind !== "unsnooze") await api.modifyThreads(t.accountId, t.threadIds, rule.remove, rule.add);
       }
     };
-    if (["read", "unread", "star", "unstar", "important", "not-important"].includes(kind) && !leaving) {
-      toast(rule.text(count));
-      setState({ undo: { text: rule.text(count), run: undo } });
-    } else withUndo(rule.text(count) + (opts.note ?? ""), undo);
+    withUndo(rule.text(count) + (opts.note ?? ""), undo);
     ok = true;
   } catch (e) {
     toast(failureText(doing(kind, count), e), { action: { label: "Try again", run: () => void act(kind, targets) } });

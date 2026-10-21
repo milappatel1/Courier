@@ -7,7 +7,7 @@ import { emit } from "@tauri-apps/api/event";
 import { parseMessage } from "../core/mime/parse";
 import { htmlToText } from "../core/text";
 import { api } from "../ipc/api";
-import { applyViewportSize, getState, setSetting, setState, visibleThreads } from "../state/store";
+import { applyViewportSize, getState, loadLabels, setSetting, setState, visibleThreads } from "../state/store";
 import { flashes, recordFrames } from "./frames";
 import { layoutIssues } from "./layout";
 
@@ -1769,6 +1769,237 @@ step(
     await until("online again", () => getState().online === true);
   },
   90_000,
+);
+
+step(
+  "every button and menu item does something: list toolbar, conversation, message and their menus",
+  async () => {
+    await backToInbox();
+    await api.e2eControl("deliver-gmail", { from: "Sweep Target <sweep@test.example>", subject: "Sweep target", body: "Something to act on." });
+    await until("the target", () => row("Sweep target"), 30_000);
+    const original = async () => (await msgsWith("Sweep target")).map((m) => m.labels.slice().sort().join()).join("|");
+    const start = await original();
+    const dead: string[] = [];
+    const broken: string[] = [];
+    const SKIP = /print|new window|download|share|delete forever|add to calendar|report phishing/i;
+    const snap = async () =>
+      JSON.stringify({
+        hash: location.hash,
+        toasts: qa("toast").map((t) => t.firstChild?.textContent),
+        dialogs: document.querySelectorAll("[role=dialog],[role=alertdialog]").length,
+        menus: [...document.querySelectorAll<HTMLElement>(".menu, [role=menu], [role=listbox], .popover")].map(
+          (m) => m.getAttribute("aria-label") ?? m.textContent?.slice(0, 40),
+        ),
+        selected: getState().selected.length,
+        composes: getState().composes.length,
+        ui: getState().ui,
+        settings: getState().settings,
+        details: !!document.querySelector(".details-pop, [data-testid=details]"),
+        server: await original(),
+      });
+    const escape = () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    const settle = async () => {
+      for (let i = 0; i < 4; i++) {
+        const cancel =
+          q("confirm-cancel") ??
+          [...document.querySelectorAll<HTMLElement>("[role=dialog] button, [role=alertdialog] button")].find((b) =>
+            /^(Cancel|Close)$/.test(b.textContent?.trim() ?? ""),
+          );
+        if (cancel) click(cancel);
+        else if (document.querySelector("[role=dialog],[role=alertdialog],.menu")) escape();
+        await sleep(120);
+      }
+      for (const w of qa("compose-window")) click(await el("compose-discard", w));
+      const inline = q("inline-compose");
+      if (inline) click(await el("compose-discard", inline));
+      if (getState().route.settings) click(await el("settings-close"));
+      const undo = qa("toast-action").find((b) => b.textContent === "Undo");
+      if (undo) click(undo);
+      // Whatever Undo didn't cover (a star, a label), straight through the API, so the next button starts clean.
+      await until("the target as it was", async () => ((await original()) === start ? true : null), undo ? 6000 : 1500).catch(async () => {
+        const want = start.split("|")[0].split(",");
+        for (const m of await msgsWith("Sweep target")) {
+          const acct = getState().accounts.find((a) => a.kind === "gmail")!.id;
+          await api.modifyMessages(
+            acct,
+            [m.id],
+            want.filter((l) => !m.labels.includes(l)),
+            m.labels.filter((l) => !want.includes(l)),
+          );
+        }
+        await until("the target as it was", async () => ((await original()) === start ? true : null), 10_000).catch(() =>
+          broken.push("couldn't put the target back"),
+        );
+      });
+      await api.mute(getState().accounts.find((a) => a.kind === "gmail")!.id, [(await msgsWith("Sweep target"))[0].threadId], false);
+      for (const t of qa("toast")) q("toast-close", t) && click(q("toast-close", t)!);
+    };
+    const press = async (where: string, b: HTMLElement) => {
+      const name = (b.getAttribute("aria-label") || b.querySelector(":scope > span:not(.ic)")?.textContent || b.dataset.testid || b.textContent || "").trim();
+      if (!name || SKIP.test(name) || (b as HTMLButtonElement).disabled) return;
+      const before = await snap();
+      const errors = appErrors.length;
+      click(b);
+      let changed = false;
+      for (let i = 0; i < 10 && !changed; i++) {
+        await sleep(150);
+        changed = (await snap()) !== before;
+      }
+      if (!changed) dead.push(`${where}: ${name}`);
+      if (appErrors.length > errors) broken.push(`${where}: ${name} threw ${appErrors[appErrors.length - 1]}`);
+      await settle();
+    };
+    const buttons = (root: Element | null) => [...(root?.querySelectorAll<HTMLElement>("button, [role=button]") ?? [])].filter((b) => b.offsetParent !== null);
+    const menuItems = () => [...document.querySelectorAll<HTMLElement>(".menu .menu-item")].filter((b) => !b.classList.contains("disabled"));
+    const sweepMenu = async (where: string, open: () => Promise<void>) => {
+      await open();
+      const names = menuItems().map((m) => m.textContent?.trim() ?? "");
+      escape();
+      await sleep(120);
+      for (const n of names) {
+        await open();
+        const item = menuItems().find((m) => m.textContent?.trim() === n);
+        if (item && !item.querySelector(".submenu-arrow, [data-submenu]")) await press(where, item);
+        else escape();
+        await sleep(80);
+      }
+    };
+    const selectTarget = async () => {
+      await backToInbox();
+      if (!getState().selected.length) click(await el("row-checkbox", await until("target row", () => row("Sweep target"), 15_000)));
+      await until("selected", () => getState().selected.length === 1);
+    };
+    // The list toolbar with the target ticked, then its More menu.
+    await selectTarget();
+    const tbNames = buttons(q("list-view")?.querySelector(".toolbar") ?? null)
+      .map((b) => b.dataset.testid)
+      .filter((t): t is string => !!t && t !== "tb-more" && !t.startsWith("page-"));
+    for (const t of tbNames) {
+      await selectTarget();
+      const b = q(t);
+      if (b) await press("list toolbar", b);
+    }
+    await sweepMenu("list toolbar ▸ More", async () => {
+      await selectTarget();
+      click(await el("tb-more"));
+      await until("the menu", () => menuItems().length);
+    });
+    // The open conversation: its toolbar, its More menu, the message's own buttons and menu.
+    const openTarget = async () => {
+      if (q("conv-subject")?.textContent?.includes("Sweep target")) return;
+      await backToInbox();
+      click(await until("target row", () => row("Sweep target"), 15_000));
+      await until("open", () => q("conv-subject")?.textContent?.includes("Sweep target"));
+    };
+    await openTarget();
+    const convNames = buttons(q("conversation")?.querySelector(".conv-toolbar") ?? null)
+      .map((b) => b.dataset.testid)
+      .filter((t): t is string => !!t && t !== "conv-more");
+    for (const t of convNames) {
+      await openTarget();
+      const b = q(t);
+      if (b) await press("conversation toolbar", b);
+    }
+    await sweepMenu("conversation ▸ More", async () => {
+      await openTarget();
+      click(await el("conv-more"));
+      await until("the menu", () => menuItems().length);
+    });
+    for (const t of ["msg-star", "msg-reply", "msg-details", "reply", "reply-all", "forward"]) {
+      await openTarget();
+      const b = q(t);
+      if (b) await press("message", b);
+    }
+    await sweepMenu("message ▸ More", async () => {
+      await openTarget();
+      click(await el("msg-more"));
+      await until("the menu", () => menuItems().length);
+    });
+    // A row's right-click menu.
+    await sweepMenu("row menu", async () => {
+      await backToInbox();
+      const r = await until("target row", () => row("Sweep target"), 15_000);
+      const box = r.getBoundingClientRect();
+      r.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: box.left + 300, clientY: box.top + 10 }));
+      await until("the menu", () => menuItems().length);
+    });
+    // The header: menu, search options, quick settings, help and its items, the account menu.
+    for (const t of ["main-menu", "search-options", "settings-gear", "account-button"]) {
+      await backToInbox();
+      const b = q(t);
+      if (b) await press("header", b);
+      if (t === "main-menu" && !getState().settings.navOpen) await setSetting("navOpen", true);
+    }
+    await sweepMenu("header ▸ Help", async () => {
+      await backToInbox();
+      click(await until("help", () => document.querySelector<HTMLElement>('[aria-label="Support"], [aria-label="Help"]')));
+      await until("the menu", () => menuItems().length);
+    });
+    // A label's ⋮ menu in the nav.
+    await sweepMenu("label menu", async () => {
+      await backToInbox();
+      // Undo what the last item did to the label (hidden, recoloured), so it can be found again.
+      const acct = getState().accounts.find((a) => a.kind === "gmail")!.id;
+      await api.labelUpdate(acct, "Label_1", { labelListVisibility: "labelShow", messageListVisibility: "show" }).catch(() => {});
+      await loadLabels(acct);
+      click(await until("the label's options", () => document.querySelector<HTMLElement>('[aria-label="Options for Projects"]')));
+      await until("the menu", () => menuItems().length);
+    });
+    // A new message: every button but Send and the file pickers, with text selected for the formatting ones.
+    const compose = async () => {
+      const w = qa("compose-window")[0] ?? (await newCompose());
+      // A minimised window shows only its title bar; clicking it brings the message back.
+      if (getState().composes.find((c) => c.placement === "dock")?.minimized) click(await el("compose-head", w));
+      const body = await el("compose-body", w);
+      if (!body.textContent?.includes("Sweep text")) setHtml(body, "<div>Sweep text</div>");
+      const r = document.createRange();
+      r.selectNodeContents(body);
+      getSelection()?.removeAllRanges();
+      getSelection()?.addRange(r);
+      return w;
+    };
+    const composeSnap = () =>
+      JSON.stringify([
+        q("compose-body")?.innerHTML,
+        !!q("fmt-bold"),
+        getState().composes.map((c) => [c.minimized, c.fullscreen, c.showCc, c.showBcc, c.plain]),
+      ]);
+    const w = await compose();
+    if (!q("fmt-bold", w)) click(await el("compose-format", w));
+    const composeIds = buttons(w)
+      .map((b) => b.dataset.testid)
+      .filter((t): t is string => !!t && !/compose-send|send-options|compose-attach|compose-photo|compose-discard|compose-close/.test(t));
+    for (const t of composeIds) {
+      const cw = await compose();
+      if (!q("fmt-bold", cw) && t.startsWith("fmt-")) click(await el("compose-format", cw));
+      const b = q(t, cw);
+      if (!b || (b as HTMLButtonElement).disabled) continue;
+      const before = composeSnap() + (await snap());
+      click(b);
+      let changed = false;
+      for (let i = 0; i < 8 && !changed; i++) {
+        await sleep(120);
+        changed = composeSnap() + (await snap()) !== before;
+      }
+      if (!changed) dead.push(`compose: ${b.getAttribute("aria-label") ?? t}`);
+      escape();
+      for (const c of qa("confirm-cancel")) click(c);
+      for (const d of [...document.querySelectorAll<HTMLElement>("[role=dialog] button")].filter((x) => /^(Cancel|Close)$/.test(x.textContent?.trim() ?? "")))
+        click(d);
+      const cwin = qa("compose-window")[0];
+      if (cwin) {
+        const st = getState().composes.find((c) => c.placement === "dock");
+        if (st?.minimized) click(await el("compose-head", cwin));
+        if (st?.fullscreen) click(await el("compose-fullscreen", cwin));
+        setHtml(await el("compose-body", cwin), "<div>Sweep text</div>");
+      }
+      await sleep(100);
+    }
+    for (const cw of qa("compose-window")) click(await el("compose-discard", cw));
+    await backToInbox();
+    check(!dead.length && !broken.length, [...broken, ...dead.map((d) => `did nothing: ${d}`)].join("\n    "));
+  },
+  360_000,
 );
 
 step("IMAP: reply goes out over SMTP and is saved to Sent", async () => {

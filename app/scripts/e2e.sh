@@ -2,7 +2,7 @@
 # End-to-end tests (npm run test:e2e). Builds a debug app and starts it with COURIER_E2E, which makes it run
 # against the local fake Gmail API / IMAP / SMTP servers in a window that never takes focus (no activation,
 # no App Nap, no background throttling). The in-app runner (src/e2e/run.ts) gives every step its own timeout,
-# logs progress here and writes a JSON report; this script stops it after 8 minutes at most, checks that
+# logs progress here and writes a JSON report; this script stops it after 12 minutes at most, checks that
 # Courier never became the frontmost app, prints a summary and exits non-zero on any failure.
 #
 #   COURIER_E2E_SKIP_BUILD=1   reuse the last debug build
@@ -15,7 +15,7 @@ OUT="${COURIER_E2E_DIR:-$(mktemp -d -t courier-e2e)}"
 mkdir -p "$OUT"
 rm -rf "$OUT/data" "$OUT/report.json"
 REPORT="$OUT/report.json"
-LIMIT=480
+LIMIT=720
 
 if [ -z "${COURIER_E2E_SKIP_BUILD:-}" ]; then
   echo "building the debug app…"
