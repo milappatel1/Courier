@@ -1,0 +1,3 @@
+[
+  { "name": "inbox-default", "ops": [{ "go": "https://mail.google.com/mail/u/0/#inbox" }, { "wait": 5000 }] }
+]

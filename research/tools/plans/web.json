@@ -1,0 +1,852 @@
+[
+ {
+  "name": "inbox-primary",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#inbox"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "click": [
+     "[role=tab][aria-label=Primary]"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "hover": [
+     "header"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "inbox-promotions",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#inbox"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "click": [
+     "[role=tab][aria-label=Promotions]"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "hover": [
+     "header"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "inbox-social",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#inbox"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "click": [
+     "[role=tab][aria-label=Social]"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "hover": [
+     "header"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "inbox-updates-empty",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#inbox"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "click": [
+     "[role=tab][aria-label=Updates]"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "hover": [
+     "header"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "row-hover",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#inbox"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "click": [
+     "[role=tab][aria-label=Primary]"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "hover": [
+     "tr.zA@@2"
+    ]
+   },
+   {
+    "wait": 500
+   }
+  ]
+ },
+ {
+  "name": "row-selected-toolbar",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#inbox"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "click": [
+     "[role=tab][aria-label=Primary]"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "click": [
+     "tr.zA [role=checkbox]@@2"
+    ]
+   },
+   {
+    "wait": 700
+   },
+   {
+    "hover": [
+     "header"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "toolbar-more-menu",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#inbox"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "click": [
+     "[role=tab][aria-label=Primary]"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "click": [
+     "tr.zA [role=checkbox]@@2"
+    ]
+   },
+   {
+    "wait": 600
+   },
+   {
+    "click": [
+     "[aria-label='More email options']"
+    ]
+   },
+   {
+    "wait": 800
+   }
+  ]
+ },
+ {
+  "name": "list-more-menu",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#inbox"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "click": [
+     "[role=tab][aria-label=Primary]"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "click": [
+     "[aria-label='More email options']"
+    ]
+   },
+   {
+    "wait": 800
+   }
+  ]
+ },
+ {
+  "name": "row-context-menu",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#inbox"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "click": [
+     "[role=tab][aria-label=Primary]"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "rightClick": [
+     "tr.zA@@3"
+    ]
+   },
+   {
+    "wait": 800
+   }
+  ]
+ },
+ {
+  "name": "conversation",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#inbox"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "click": [
+     "[role=tab][aria-label=Primary]"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "clickContains": [
+     "tr.zA",
+     "Primary b:"
+    ]
+   },
+   {
+    "wait": 2500
+   },
+   {
+    "hover": [
+     "header"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "message-more-menu",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#inbox"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "click": [
+     "[role=tab][aria-label=Primary]"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "clickContains": [
+     "tr.zA",
+     "Primary b:"
+    ]
+   },
+   {
+    "wait": 2500
+   },
+   {
+    "click": [
+     "[aria-label='More message options']"
+    ]
+   },
+   {
+    "wait": 800
+   }
+  ]
+ },
+ {
+  "name": "compose",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#inbox"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "click": [
+     "[role=tab][aria-label=Primary]"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "clickText": "Compose"
+   },
+   {
+    "wait": 2000
+   }
+  ]
+ },
+ {
+  "name": "search-results",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#search/from%3Anorthwind"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "hover": [
+     "header"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "advanced-search",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#inbox"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "click": [
+     "[role=tab][aria-label=Primary]"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "click": [
+     "[aria-label='Advanced search options']"
+    ]
+   },
+   {
+    "wait": 1000
+   }
+  ]
+ },
+ {
+  "name": "quick-settings",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#inbox"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "click": [
+     "[role=tab][aria-label=Primary]"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "click": [
+     "[aria-label='Settings']"
+    ]
+   },
+   {
+    "wait": 1500
+   }
+  ]
+ },
+ {
+  "name": "settings-general",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#settings/general"
+   },
+   {
+    "wait": 4000
+   }
+  ]
+ },
+ {
+  "name": "settings-labels",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#settings/labels"
+   },
+   {
+    "wait": 4000
+   }
+  ]
+ },
+ {
+  "name": "settings-inbox",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#settings/inbox"
+   },
+   {
+    "wait": 4000
+   }
+  ]
+ },
+ {
+  "name": "settings-accounts",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#settings/accounts"
+   },
+   {
+    "wait": 4000
+   }
+  ]
+ },
+ {
+  "name": "settings-filters",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#settings/filters"
+   },
+   {
+    "wait": 4000
+   }
+  ]
+ },
+ {
+  "name": "settings-fwdandpop",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#settings/fwdandpop"
+   },
+   {
+    "wait": 4000
+   }
+  ]
+ },
+ {
+  "name": "settings-advanced",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#settings/advanced"
+   },
+   {
+    "wait": 4000
+   }
+  ]
+ },
+ {
+  "name": "settings-offline",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#settings/offline"
+   },
+   {
+    "wait": 4000
+   }
+  ]
+ },
+ {
+  "name": "starred",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#starred"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "hover": [
+     "header"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "sent-empty",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#sent"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "hover": [
+     "header"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "trash-banner",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#trash"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "hover": [
+     "header"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "spam-banner",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#spam"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "hover": [
+     "header"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "label-view",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#label/Recon%2FCounts"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "hover": [
+     "header"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "category-updates-label",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#category/updates"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "hover": [
+     "header"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "all-mail",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#all"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "hover": [
+     "header"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "inbox-primary-1024",
+  "width": 1024,
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#inbox"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "click": [
+     "[role=tab][aria-label=Primary]"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "hover": [
+     "header"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "inbox-primary-800",
+  "width": 800,
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "https://mail.google.com/mail/u/0/#inbox"
+   },
+   {
+    "wait": 4500
+   },
+   {
+    "click": [
+     "[role=tab][aria-label=Primary]"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "hover": [
+     "header"
+    ]
+   }
+  ]
+ }
+]

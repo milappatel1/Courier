@@ -2,7 +2,7 @@
 // Used only for measuring (computed styles, boxes); it never changes the page.
 // usage: node cdp-eval.mjs <targetId> '<expression>'
 const [targetId, expression] = process.argv.slice(2);
-const { webSocketDebuggerUrl } = await (await fetch("http://127.0.0.1:9222/json/version")).json();
+const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${process.env.CDP_PORT ?? 9222}/json/version`)).json();
 const ws = new WebSocket(webSocketDebuggerUrl);
 await new Promise((r) => ws.addEventListener("open", r));
 let id = 0;

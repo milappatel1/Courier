@@ -7,10 +7,12 @@
 //         {"clickText": "Menu item label"}, {"hoverText": "Menu item label"},
 //         {"key": "Tab" | "Enter" | "Escape" | "ArrowDown" ..., "mods": ["Meta","Shift","Alt"]},
 //         {"wait": ms}, {"wheel": deltaY}, {"status": selector}, {"dump": selector},
-//         {"eval": "read-only expression"}, {"go": url}, {"files": [selector, [paths]]}]   ← status/dump/eval print what they read
+//         {"eval": "read-only expression"}, {"go": url}, {"files": [selector, [paths]]},
+//         {"rightClick": [selector, dx?, dy?]}, {"clickContains": [selector, text]}, {"hoverContains": [selector, text]}]
+//         ← status/dump/eval print what they read
 const [targetId, opsJson] = process.argv.slice(2);
 const ops = JSON.parse(opsJson);
-const { webSocketDebuggerUrl } = await (await fetch("http://127.0.0.1:9222/json/version")).json();
+const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${process.env.CDP_PORT ?? 9222}/json/version`)).json();
 const ws = new WebSocket(webSocketDebuggerUrl);
 await new Promise((r) => ws.addEventListener("open", r));
 let id = 0;
@@ -46,15 +48,23 @@ async function boxByText(text) {
   if (!result.value) throw new Error(`no visible control labelled ${text}`);
   return result.value;
 }
-async function mouse(selector, dx, dy, press, byText = false) {
-  const [l, t, w, h] = byText ? await boxByText(selector) : await box(selector);
+async function boxContaining(selector, text) {
+  const { result } = await s("Runtime.evaluate", {
+    expression: `(() => { const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find(e => e.getBoundingClientRect().width > 0 && e.innerText.includes(${JSON.stringify(text)})); const r = el?.getBoundingClientRect(); return r ? [r.left, r.top, r.width, r.height] : null; })()`,
+    returnByValue: true,
+  });
+  if (!result.value) throw new Error(`no visible ${selector} containing ${text}`);
+  return result.value;
+}
+async function mouse(selector, dx, dy, press, byText = false, button = "left", within = null) {
+  const [l, t, w, h] = within ? await boxContaining(selector, within) : byText ? await boxByText(selector) : await box(selector);
   const x = l + (dx ?? w / 2);
   const y = t + (dy ?? h / 2);
   await s("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
   await sleep(120);
   if (press) {
-    await s("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
-    await s("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+    await s("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button, clickCount: 1 });
+    await s("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button, clickCount: 1 });
   }
 }
 const KEYS = { Tab: 9, Enter: 13, Escape: 27, Backspace: 8, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 };
@@ -70,6 +80,9 @@ async function key(name, mods = []) {
 
 for (const op of ops) {
   if (op.click) await mouse(op.click[0], op.click[1], op.click[2], true);
+  else if (op.rightClick) await mouse(op.rightClick[0], op.rightClick[1], op.rightClick[2], true, false, "right");
+  else if (op.clickContains) await mouse(op.clickContains[0], undefined, undefined, true, false, "left", op.clickContains[1]);
+  else if (op.hoverContains) await mouse(op.hoverContains[0], undefined, undefined, false, false, "left", op.hoverContains[1]);
   else if (op.clickText) await mouse(op.clickText, undefined, undefined, true, true);
   else if (op.hoverText) await mouse(op.hoverText, undefined, undefined, false, true);
   else if (op.hover) await mouse(op.hover[0], op.hover[1], op.hover[2], false);
