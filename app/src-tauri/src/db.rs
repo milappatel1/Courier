@@ -5,7 +5,7 @@ use crate::error::{now_ms, Error, Result};
 use parking_lot::Mutex;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -207,6 +207,11 @@ pub struct Db {
     /// Courier's clock for server reads and acknowledgements (see `Read`). The launch's generation is in the high
     /// bits, so a stamp kept from an earlier launch is older than any taken now.
     clock: std::sync::atomic::AtomicU64,
+    /// Reads still out, by stamp, and changes the server confirmed on messages this Mac didn't have then (by
+    /// message: the confirmation's stamp and the change). An answer read before the confirmation that brings one
+    /// of those messages gets the change on top; a mark goes once no read older than it is out.
+    reads_out: Mutex<BTreeMap<i64, usize>>,
+    marks: Mutex<HashMap<(String, String), (i64, Vec<String>, Vec<String>)>>,
 }
 
 /// A server read in progress, opened before its request goes out (the mail API client's read methods take one).
@@ -218,6 +223,21 @@ pub struct Read<'a> {
     db: &'a Db,
     account: String,
     stamp: i64,
+}
+
+impl Drop for Read<'_> {
+    fn drop(&mut self) {
+        let mut out = self.db.reads_out.lock();
+        if let Some(n) = out.get_mut(&self.stamp) {
+            *n -= 1;
+            if *n == 0 {
+                out.remove(&self.stamp);
+            }
+        }
+        let oldest = out.keys().next().copied().unwrap_or(i64::MAX);
+        drop(out);
+        self.db.marks.lock().retain(|_, (at, _, _)| *at > oldest);
+    }
 }
 
 impl Read<'_> {
@@ -323,11 +343,19 @@ CREATE TABLE IF NOT EXISTS signatures (id TEXT PRIMARY KEY, account_id TEXT NOT 
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS local_filters (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, criteria TEXT NOT NULL, action TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS blocked (account_id TEXT NOT NULL, email TEXT NOT NULL, filter_id TEXT, PRIMARY KEY (account_id, email));
+CREATE TABLE IF NOT EXISTS thread_queue (
+  account_id TEXT NOT NULL, thread_id TEXT NOT NULL, seq INTEGER NOT NULL, add_labels TEXT NOT NULL, remove_labels TEXT NOT NULL,
+  PRIMARY KEY (account_id, thread_id)
+);
 CREATE TABLE IF NOT EXISTS change_queue (
   account_id TEXT NOT NULL, message_id TEXT NOT NULL, seq INTEGER NOT NULL, before TEXT, add_labels TEXT NOT NULL, remove_labels TEXT NOT NULL,
   PRIMARY KEY (account_id, message_id)
 );
 "#;
+
+fn same_set(a: &[String], b: &[String]) -> bool {
+    a.len() == b.len() && a.iter().all(|x| b.contains(x))
+}
 
 /// A message's labels with the changes made here that the server doesn't have yet, in order, on top.
 fn fold_pending(p: &HashMap<(String, String), Vec<PendingChange>>, account: &str, id: &str, labels: Vec<String>) -> Vec<String> {
@@ -564,6 +592,8 @@ impl Db {
             pending: Mutex::new(HashMap::new()),
             next_change: std::sync::atomic::AtomicU64::new(1),
             clock: std::sync::atomic::AtomicU64::new((generation as u64) << 32),
+            reads_out: Mutex::new(BTreeMap::new()),
+            marks: Mutex::new(HashMap::new()),
         };
         // Changes queued before a quit still hold over whatever the server says until they've gone out.
         if let Ok(rows) = db.with(|c| c.prepare("SELECT account_id, message_id, add_labels, remove_labels FROM change_queue")?.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()) {
@@ -634,7 +664,7 @@ impl Db {
     pub fn delete_account(&self, id: &str) -> Result<()> {
         self.with(|c| {
             c.execute("DELETE FROM fts WHERE rowid IN (SELECT rowid FROM messages WHERE account_id = ?)", [id])?;
-            for t in ["messages", "labels", "drafts", "outbox", "snoozes", "bumps", "muted", "star_types", "contacts", "signatures", "local_filters", "blocked", "change_queue"] {
+            for t in ["messages", "labels", "drafts", "outbox", "snoozes", "bumps", "muted", "star_types", "contacts", "signatures", "local_filters", "blocked", "change_queue", "thread_queue"] {
                 c.execute(&format!("DELETE FROM {t} WHERE account_id = ?"), [id])?;
             }
             c.execute("DELETE FROM templates WHERE account_id = ?", [id])?;
@@ -855,7 +885,30 @@ impl Db {
     }
 
     pub fn begin_read(&self, account: &str) -> Read<'_> {
-        Read { db: self, account: account.to_string(), stamp: self.tick() }
+        let stamp = self.tick();
+        *self.reads_out.lock().entry(stamp).or_default() += 1;
+        Read { db: self, account: account.to_string(), stamp }
+    }
+
+    /// A change the server confirmed on messages this Mac doesn't have: answers read before now that bring them
+    /// get it on top (see `marks`).
+    pub fn mark_landed(&self, account: &str, ids: &[String], add: &[String], remove: &[String]) {
+        if ids.is_empty() {
+            return;
+        }
+        let at = self.tick();
+        let mut m = self.marks.lock();
+        for id in ids {
+            m.insert((account.to_string(), id.clone()), (at, add.to_vec(), remove.to_vec()));
+        }
+    }
+
+    /// Server labels read at `stamp`, with a confirmed change the read couldn't have seen on top.
+    fn with_mark(&self, account: &str, id: &str, labels: Vec<String>, stamp: i64) -> (Vec<String>, i64) {
+        match self.marks.lock().get(&(account.to_string(), id.to_string())) {
+            Some((at, add, remove)) if *at > stamp => (apply_change(labels, add, remove), *at),
+            _ => (labels, stamp),
+        }
     }
 
     fn tick(&self) -> i64 {
@@ -871,7 +924,7 @@ impl Db {
         let held: Option<(String, i64)> = c.query_row("SELECT server_labels, server_stamp FROM messages WHERE account_id=? AND id=?", [&m.account_id, &m.id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
         let (base, base_stamp) = match held {
             Some((b, s)) if s > stamp => (labels_from(&b), s),
-            _ => (m.labels.clone(), stamp),
+            _ => self.with_mark(&m.account_id, &m.id, m.labels.clone(), stamp),
         };
         let shown = fold_pending(&p, &m.account_id, &m.id, base.clone());
         self.trace_inbox(&c, &m.account_id, &m.id, &shown);
@@ -1099,6 +1152,51 @@ impl Db {
         Ok(())
     }
 
+    /// A conversation change that waits for the connection (mail-API accounts): when it goes out, the conversation
+    /// is read again and every message it applies to is changed, the ones this Mac doesn't have included. The
+    /// exact opposite of a waiting change cancels it; another change to the same conversation joins it.
+    pub fn queue_thread(&self, account: &str, thread: &str, add: &[String], remove: &[String]) -> Result<()> {
+        self.with(|c| {
+            let held: Option<(String, String)> = c
+                .query_row("SELECT add_labels, remove_labels FROM thread_queue WHERE account_id=? AND thread_id=?", [account, thread], |r| Ok((r.get(0)?, r.get(1)?)))
+                .optional()?;
+            match held {
+                Some((a, r)) => {
+                    let (a, r): (Vec<String>, Vec<String>) = (pj(&a), pj(&r));
+                    let cancels = same_set(&a, remove) && same_set(&r, add);
+                    if cancels {
+                        c.execute("DELETE FROM thread_queue WHERE account_id=? AND thread_id=?", [account, thread])?;
+                    } else {
+                        let (a, r) = compose(None, (&a, &r), (add, remove));
+                        c.execute("UPDATE thread_queue SET add_labels=?, remove_labels=? WHERE account_id=? AND thread_id=?", params![j(&a), j(&r), account, thread])?;
+                    }
+                }
+                None => {
+                    c.execute(
+                        "INSERT INTO thread_queue (account_id, thread_id, seq, add_labels, remove_labels) VALUES (?,?,(SELECT COALESCE(MAX(seq), 0) + 1 FROM thread_queue),?,?)",
+                        params![account, thread, j(&add), j(&remove)],
+                    )?;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// An account's conversation changes waiting for the connection, oldest first: (conversation, add, remove).
+    pub fn queued_threads(&self, account: &str) -> Result<Vec<(String, Vec<String>, Vec<String>)>> {
+        self.with(|c| {
+            c.prepare("SELECT thread_id, add_labels, remove_labels FROM thread_queue WHERE account_id=? ORDER BY seq")?
+                .query_map([account], |r| Ok((r.get(0)?, pj(&r.get::<_, String>(1)?), pj(&r.get::<_, String>(2)?))))?
+                .collect()
+        })
+    }
+
+    /// The conversation's waiting change went out (or was refused): it no longer waits.
+    pub fn thread_done(&self, account: &str, thread: &str) -> Result<()> {
+        self.with(|c| c.execute("DELETE FROM thread_queue WHERE account_id=? AND thread_id=?", [account, thread]))?;
+        Ok(())
+    }
+
     /// An account's queued changes, oldest first.
     pub fn queued_changes(&self, account: &str) -> Result<Vec<QueuedChange>> {
         self.with(|c| {
@@ -1109,12 +1207,12 @@ impl Db {
     }
 
     pub fn has_queued(&self, account: &str) -> Result<bool> {
-        self.with(|c| c.query_row("SELECT EXISTS(SELECT 1 FROM change_queue WHERE account_id=?)", [account], |r| r.get(0)))
+        self.with(|c| c.query_row("SELECT EXISTS(SELECT 1 FROM change_queue WHERE account_id=?1) OR EXISTS(SELECT 1 FROM thread_queue WHERE account_id=?1)", [account], |r| r.get(0)))
     }
 
     /// Accounts with changes waiting to go to the server.
     pub fn queued_accounts(&self) -> Result<Vec<String>> {
-        self.with(|c| c.prepare("SELECT DISTINCT account_id FROM change_queue")?.query_map([], |r| r.get(0))?.collect())
+        self.with(|c| c.prepare("SELECT account_id FROM change_queue UNION SELECT account_id FROM thread_queue")?.query_map([], |r| r.get(0))?.collect())
     }
 
     /// The server took `add`/`remove` for these messages: their queued changes are done, or, where another change

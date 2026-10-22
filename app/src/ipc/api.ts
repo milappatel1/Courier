@@ -65,6 +65,9 @@ export const api = {
   // actions
   modifyThreads: (accountId: string, threadIds: string[], add: string[], remove: string[]) =>
     call<Changed>("modify_threads", { accountId, threadIds, add, remove }),
+  changeThreads: (accountId: string, threadIds: string[], add: string[], remove: string[]) =>
+    call<{ result: "done" | "queued"; change: number }>("change_threads", { accountId, threadIds, add, remove }),
+  undoChange: (accountId: string, change: number) => call<"done" | "queued">("undo_change", { accountId, change }),
   modifyMessages: (accountId: string, messageIds: string[], add: string[], remove: string[]) =>
     call<Changed>("modify_messages", { accountId, messageIds, add, remove }),
   deleteForever: (accountId: string, threadIds: string[]) => call<void>("delete_forever", { accountId, threadIds }),

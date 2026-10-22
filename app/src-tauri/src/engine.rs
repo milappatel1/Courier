@@ -81,6 +81,31 @@ pub struct Engine {
     outbox_kick: Notify,
     /// One flush of the queued label changes at a time per account, so they go out in order.
     flushing: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// Recent changes made here, for Undo: what each message had before, for the labels the change touched.
+    made: Mutex<std::collections::VecDeque<Made>>,
+    next_made: std::sync::atomic::AtomicU64,
+}
+
+/// A change made here, as Undo needs it.
+#[derive(Clone)]
+struct Made {
+    id: u64,
+    account: String,
+    add: Vec<String>,
+    remove: Vec<String>,
+    /// Each changed message's labels before the change (messages this Mac didn't have included, as the server had
+    /// them when the change went out).
+    prior: HashMap<String, Vec<String>>,
+    /// Conversations whose change still waits for the connection when it was made.
+    queued_threads: Vec<String>,
+}
+
+/// A change made, and how Undo finds it.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Receipt {
+    pub result: Changed,
+    pub change: u64,
 }
 
 /// Where a label change went.
@@ -199,6 +224,8 @@ impl Engine {
             sync_interval: RwLock::new(Duration::from_secs(60)),
             outbox_kick: Notify::new(),
             flushing: Mutex::new(HashMap::new()),
+            made: Mutex::new(std::collections::VecDeque::new()),
+            next_made: std::sync::atomic::AtomicU64::new(1),
         })
     }
 
@@ -986,25 +1013,92 @@ impl Engine {
     }
 
     pub async fn modify_threads(&self, account: &str, thread_ids: &[String], add: &[String], remove: &[String]) -> Result<Changed> {
-        // Trash/spam actions apply to the whole conversation; label removal from the inbox too.
-        let ids = self.thread_message_ids(account, thread_ids)?;
-        let ids: Vec<String> = if add.iter().any(|l| l == "TRASH" || l == "SPAM") || remove.iter().any(|l| l == "TRASH" || l == "SPAM") {
-            ids
-        } else {
-            // Don't pull trashed messages back when labelling a conversation.
-            ids.into_iter().filter(|id| self.db.message(account, id).ok().flatten().map(|m| !m.has("TRASH") && !m.has("SPAM")).unwrap_or(true)).collect()
-        };
-        self.modify_messages(account, &ids, add, remove).await
+        Ok(self.change_threads(account, thread_ids, add, remove).await?.result)
+    }
+
+    /// Change whole conversations, as the web client does: every message of each one on the server, the ones this
+    /// Mac doesn't keep included (mail-API accounts read each conversation when the change goes out). Trash and
+    /// spam changes take every message; other changes leave the conversation's trashed or spam messages alone.
+    pub async fn change_threads(&self, account: &str, thread_ids: &[String], add: &[String], remove: &[String]) -> Result<Receipt> {
+        let (add, remove) = expand_label_rules(add, remove);
+        let bin = add.iter().chain(&remove).any(|l| l == "TRASH" || l == "SPAM");
+        let ids: Vec<String> = self
+            .thread_message_ids(account, thread_ids)?
+            .into_iter()
+            .filter(|id| bin || self.db.message(account, id).ok().flatten().map(|m| !m.has("TRASH") && !m.has("SPAM")).unwrap_or(true))
+            .collect();
+        let threads: &[String] = if self.kind(account)? == "gmail" { thread_ids } else { &[] };
+        self.change(account, &ids, &add, &remove, threads).await
+    }
+
+    /// Every message of these conversations as the server has them now (id, labels), the ones a change applies to:
+    /// all for Trash/Spam changes, else those not in Trash or Spam. Read under a `Read`, so the cache learns them too.
+    async fn resolve_threads(&self, g: &Gmail, account: &str, threads: &[String], bin: bool) -> Result<Vec<(String, Vec<String>)>> {
+        use futures::stream::{self, StreamExt};
+        let read = self.db.begin_read(account);
+        let read = &read;
+        let got: Vec<Result<Value>> = stream::iter(threads.to_vec().into_iter().map(|t| async move { g.thread_minimal(read, &t).await })).buffer_unordered(8).collect().await;
+        let mut out = Vec::new();
+        for r in got {
+            let v = match r {
+                Ok(v) => v,
+                Err(Error::NotFound(_)) => continue,
+                Err(e) => return Err(e),
+            };
+            for m in v["messages"].as_array().cloned().unwrap_or_default() {
+                let Some(id) = m["id"].as_str() else { continue };
+                let labels = gmail::str_labels(&m);
+                read.set_labels(id, &labels)?;
+                if bin || !labels.iter().any(|l| l == "TRASH" || l == "SPAM") {
+                    out.push((id.to_string(), labels));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Undo a change made here: whatever of it still waits is cancelled, and every message it changed gets back
+    /// the labels it touched as they were before (on the server too, the messages this Mac doesn't keep included).
+    pub async fn undo_change(&self, account: &str, change: u64) -> Result<Changed> {
+        let made = self.made.lock().iter().find(|m| m.id == change && m.account == account).cloned().ok_or_else(|| Error::NotFound("that change".into()))?;
+        for t in &made.queued_threads {
+            self.db.queue_thread(account, t, &made.remove, &made.add)?;
+        }
+        let touched: Vec<String> = made.add.iter().chain(&made.remove).cloned().collect();
+        let mut groups: Vec<(Vec<String>, Vec<String>, Vec<String>)> = Vec::new();
+        for (id, before) in &made.prior {
+            let add: Vec<String> = touched.iter().filter(|l| before.contains(l)).cloned().collect();
+            let remove: Vec<String> = touched.iter().filter(|l| !before.contains(l)).cloned().collect();
+            match groups.iter_mut().find(|g| g.0 == add && g.1 == remove) {
+                Some(g) => g.2.push(id.clone()),
+                None => groups.push((add, remove, vec![id.clone()])),
+            }
+        }
+        let mut out = Changed::Done;
+        for (add, remove, ids) in groups {
+            if self.change(account, &ids, &add, &remove, &[]).await?.result == Changed::Queued {
+                out = Changed::Queued;
+            }
+        }
+        Ok(out)
     }
 
     /// Change labels: here at once, then on the server. Offline, the change waits here (and over a restart) and
     /// goes out when the connection is back; so does one made while earlier ones still wait, after them.
     pub async fn modify_messages(&self, account: &str, ids: &[String], add: &[String], remove: &[String]) -> Result<Changed> {
-        if ids.is_empty() {
-            return Ok(Changed::Done);
+        let (add, remove) = expand_label_rules(add, remove);
+        Ok(self.change(account, ids, &add, &remove, &[]).await?.result)
+    }
+
+    /// A label change, exactly as given: here at once on the cached messages `ids`, then on the server; with
+    /// `threads`, on every message of those conversations the server has (read when it goes out).
+    async fn change(&self, account: &str, ids: &[String], add: &[String], remove: &[String], threads: &[String]) -> Result<Receipt> {
+        let id = self.next_made.fetch_add(1, Ordering::SeqCst);
+        if ids.is_empty() && threads.is_empty() {
+            return Ok(Receipt { result: Changed::Done, change: id });
         }
-        let add = expand_label_rules(add, remove);
-        let (add, remove) = (add.0, add.1);
+        let (add, remove) = (add.to_vec(), remove.to_vec());
+        let bin = add.iter().chain(&remove).any(|l| l == "TRASH" || l == "SPAM");
         let gmail = self.kind(account)? == "gmail";
         if self.db.has_queued(account)? {
             let _ = self.flush_queue(account).await;
@@ -1012,24 +1106,41 @@ impl Engine {
         let behind = self.db.has_queued(account)?;
         // Optimistic local change first so the UI updates immediately, counts included. It holds until the server
         // answers, whatever a sync reads from the server meanwhile.
-        let threads = self.thread_ids_of(account, ids);
-        let before = self.db.label_thread_stats(account, &threads)?;
+        let cached_threads = self.thread_ids_of(account, ids);
+        let before = self.db.label_thread_stats(account, &cached_threads)?;
         let had: HashMap<String, Vec<String>> = ids.iter().filter_map(|id| self.db.message(account, id).ok().flatten().map(|m| (id.clone(), m.labels))).collect();
         let change = self.db.begin_change(account, ids, &add, &remove)?;
-        let after = self.db.label_thread_stats(account, &threads)?;
+        let after = self.db.label_thread_stats(account, &cached_threads)?;
         if gmail {
             self.db.apply_label_deltas(account, &before, &after)?;
         } else {
             self.db.recount_labels(account).ok();
         }
         self.changed(account, "modify");
-        let result = if behind {
+        let mut prior = had.clone();
+        let result: Result<Vec<String>> = if behind {
             // Earlier changes still wait for the connection; this one waits behind them.
             Err(Error::Offline("earlier changes are still waiting".into()))
         } else if gmail {
-            self.gmail(account)?.batch_modify(ids, &add, &remove).await
+            let g = self.gmail(account)?;
+            let mut all = ids.to_vec();
+            let mut uncached = Vec::new();
+            let resolved = if threads.is_empty() { Ok(vec![]) } else { self.resolve_threads(&g, account, threads, bin).await };
+            match resolved {
+                Ok(found) => {
+                    for (m, labels) in found {
+                        if !all.contains(&m) {
+                            all.push(m.clone());
+                            uncached.push(m.clone());
+                            prior.insert(m, labels);
+                        }
+                    }
+                    g.batch_modify(&all, &add, &remove).await.map(|_| uncached)
+                }
+                Err(e) => Err(e),
+            }
         } else {
-            self.imap_modify(account, ids, &add, &remove).await
+            self.imap_modify(account, ids, &add, &remove).await.map(|_| vec![])
         };
         // Removing INBOX from a snoozed thread that the user then un-archives clears the snooze, etc.
         if gmail && add.iter().any(|l| l == "INBOX") && (result.is_ok() || result.as_ref().is_err_and(Error::is_offline)) {
@@ -1043,12 +1154,18 @@ impl Engine {
                     self.set_online(false);
                 }
                 self.db.queue_change(account, ids, &add, &remove, &had, change)?;
-                return Ok(Changed::Queued);
+                for t in threads {
+                    self.db.queue_thread(account, t, &add, &remove)?;
+                }
+                self.remember(Made { id, account: account.into(), add: add.clone(), remove: remove.clone(), prior, queued_threads: threads.to_vec() });
+                return Ok(Receipt { result: Changed::Queued, change: id });
             }
         }
         self.db.end_change(account, ids, change, result.is_ok())?;
         match result {
-            Ok(()) => {
+            Ok(uncached) => {
+                self.db.mark_landed(account, &uncached, &add, &remove);
+                self.remember(Made { id, account: account.into(), add: add.clone(), remove: remove.clone(), prior, queued_threads: vec![] });
                 if gmail {
                     // The server's own counts for every label involved.
                     let touched: Vec<String> = before.keys().chain(after.keys()).cloned().collect();
@@ -1060,7 +1177,7 @@ impl Engine {
                 }
                 self.trigger(account);
                 self.changed(account, "modify");
-                Ok(Changed::Done)
+                Ok(Receipt { result: Changed::Done, change: id })
             }
             Err(e) => {
                 // end_change undid the optimistic change; now its counts.
@@ -1075,6 +1192,14 @@ impl Engine {
         }
     }
 
+    fn remember(&self, m: Made) {
+        let mut made = self.made.lock();
+        made.push_back(m);
+        while made.len() > 100 {
+            made.pop_front();
+        }
+    }
+
     /// Send the label changes made offline, oldest first, messages with the same change together. No connection
     /// (or a sign-in or rate limit) stops it, and the rest wait for the next try; a change the server refuses is
     /// undone here and the UI is told.
@@ -1082,20 +1207,76 @@ impl Engine {
         let lock = self.flushing.lock().entry(account.to_string()).or_default().clone();
         let _one_at_a_time = lock.lock().await;
         let queued = self.db.queued_changes(account)?;
-        if queued.is_empty() {
+        let queued_threads = self.db.queued_threads(account)?;
+        if queued.is_empty() && queued_threads.is_empty() {
             return Ok(());
         }
         let gmail = self.kind(account)? == "gmail";
+        let (mut sent, mut refused, mut threads) = (0, 0, Vec::new());
+        let mut outcome = Ok(());
+        // Conversation changes first: each conversation is read now and every message the change applies to is
+        // changed, the ones this Mac didn't have included; its cached messages' waiting rows go with it.
+        let mut covered: HashSet<String> = HashSet::new();
+        if gmail {
+            let g = self.gmail(account)?;
+            for (t, add, remove) in &queued_threads {
+                let bin = add.iter().chain(remove).any(|l| l == "TRASH" || l == "SPAM");
+                // A cached message's waiting row keeps only what the change does to it, so the conversation's change
+                // covers it when the row's labels are all part of it (else it goes out on its own after).
+                let cached: Vec<String> = queued
+                    .iter()
+                    .filter(|q| q.add.iter().all(|l| add.contains(l)) && q.remove.iter().all(|l| remove.contains(l)))
+                    .filter(|q| self.db.message(account, &q.message_id).ok().flatten().is_some_and(|m| m.thread_id == *t))
+                    .map(|q| q.message_id.clone())
+                    .collect();
+                let r = match self.resolve_threads(&g, account, std::slice::from_ref(t), bin).await {
+                    Ok(found) => {
+                        let mut ids: Vec<String> = found.into_iter().map(|(m, _)| m).collect();
+                        for c in &cached {
+                            if !ids.contains(c) {
+                                ids.push(c.clone());
+                            }
+                        }
+                        if ids.is_empty() { Ok(ids) } else { g.batch_modify(&ids, add, remove).await.map(|_| ids) }
+                    }
+                    Err(e) => Err(e),
+                };
+                match r {
+                    Ok(ids) => {
+                        let uncached: Vec<String> = ids.iter().filter(|m| !self.db.has_message(account, m).unwrap_or(false)).cloned().collect();
+                        for c in &cached {
+                            if let Some(q) = queued.iter().find(|q| q.message_id == *c) {
+                                self.db.change_sent(account, std::slice::from_ref(c), &q.add, &q.remove)?;
+                            }
+                        }
+                        self.db.mark_landed(account, &uncached, add, remove);
+                        self.db.thread_done(account, t)?;
+                        covered.extend(cached);
+                        threads.push(t.clone());
+                        sent += ids.len();
+                    }
+                    Err(e) if e.is_offline() || e.is_auth() || e.is_rate_limited() => {
+                        outcome = Err(e);
+                        break;
+                    }
+                    Err(e) => {
+                        crate::applog::warn(&format!("{account}: a change made offline to a conversation was refused ({}): +{add:?} -{remove:?}", e.kind()));
+                        self.db.change_refused(account, &cached)?;
+                        self.db.thread_done(account, t)?;
+                        refused += cached.len().max(1);
+                        covered.extend(cached);
+                    }
+                }
+            }
+        }
         let mut groups: Vec<(Vec<String>, Vec<String>, Vec<String>)> = Vec::new();
-        for q in queued {
+        for q in queued.into_iter().filter(|q| !covered.contains(&q.message_id)) {
             match groups.iter_mut().find(|g| g.0 == q.add && g.1 == q.remove) {
                 Some(g) => g.2.push(q.message_id),
                 None => groups.push((q.add, q.remove, vec![q.message_id])),
             }
         }
-        let (mut sent, mut refused, mut threads) = (0, 0, Vec::new());
-        let mut outcome = Ok(());
-        'groups: for (add, remove, ids) in &groups {
+        'groups: for (add, remove, ids) in groups.iter().filter(|_| outcome.is_ok()) {
             for part in ids.chunks(if gmail { 1000 } else { ids.len() }) {
                 threads.extend(self.thread_ids_of(account, part));
                 let r = if gmail { self.gmail(account)?.batch_modify(part, add, remove).await } else { self.imap_modify(account, part, add, remove).await };

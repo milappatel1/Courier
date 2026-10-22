@@ -605,6 +605,8 @@ pub fn run() {
             commands::message_raw,
             commands::modify_threads,
             commands::modify_messages,
+            commands::change_threads,
+            commands::undo_change,
             commands::delete_forever,
             commands::empty_label,
             commands::snooze_threads,

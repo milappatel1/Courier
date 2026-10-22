@@ -576,6 +576,25 @@ function modify(accountId: string, ids: string[], add: string[], remove: string[
   emit("mail-changed", { accountId, reason: "modify" });
 }
 
+/** Changes made here, for Undo: each changed message's labels before. */
+const made = new Map<number, { accountId: string; prior: Map<string, string[]> }>();
+let nextMade = 1;
+function changeThreads(accountId: string, tids: string[], add: string[], remove: string[]) {
+  const ids = threadMsgIds(accountId, tids);
+  const prior = new Map(msgs.filter((m) => m.accountId === accountId && ids.includes(m.id)).map((m) => [m.id, [...m.labels]]));
+  modify(accountId, ids, add, remove);
+  const change = nextMade++;
+  made.set(change, { accountId, prior });
+  return { result: "done", change };
+}
+function undoChange(change: number) {
+  const c = made.get(change);
+  if (!c) return "done";
+  for (const m of msgs) if (m.accountId === c.accountId && c.prior.has(m.id)) m.labels = [...c.prior.get(m.id)!];
+  emit("mail-changed", { accountId: c.accountId, reason: "modify" });
+  return "done";
+}
+
 const threadMsgIds = (accountId: string, tids: string[]) => msgs.filter((m) => m.accountId === accountId && tids.includes(m.threadId)).map((m) => m.id);
 
 function contacts(q: string) {
@@ -725,6 +744,8 @@ const handlers: Record<string, (a: Args) => unknown> = {
   },
   message_raw: (a) => msgs.find((m) => m.id === a.messageId)?.raw.slice().buffer ?? new ArrayBuffer(0),
   modify_threads: (a) => modify(String(a.accountId), threadMsgIds(String(a.accountId), a.threadIds as string[]), a.add as string[], a.remove as string[]),
+  change_threads: (a) => changeThreads(String(a.accountId), a.threadIds as string[], a.add as string[], a.remove as string[]),
+  undo_change: (a) => undoChange(Number(a.change)),
   modify_messages: (a) => modify(String(a.accountId), a.messageIds as string[], a.add as string[], a.remove as string[]),
   bulk_modify: (a) => {
     const v = { ...(a.view as ViewQuery), page: 0, pageSize: 100000 };

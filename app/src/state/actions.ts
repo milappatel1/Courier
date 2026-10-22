@@ -219,22 +219,28 @@ export async function act(kind: ActionKind, targets: Target[] = currentTargets()
   advanceAfter(leaving && !!wasOpen && targets.some((t) => t.threadIds.includes(wasOpen.threadId)));
   let ok = false;
   let queued = false;
+  const changes: { accountId: string; change: number }[] = [];
   try {
     for (const t of targets) {
       if (kind === "mute" || kind === "unmute") await api.mute(t.accountId, t.threadIds, kind === "mute");
       else if (kind === "unsnooze") await api.unsnooze(t.accountId, t.threadIds);
-      else if ((await api.modifyThreads(t.accountId, t.threadIds, rule.add, rule.remove)) === "queued") queued = true;
+      else {
+        const r = await api.changeThreads(t.accountId, t.threadIds, rule.add, rule.remove);
+        if (r.result === "queued") queued = true;
+        changes.push({ accountId: t.accountId, change: r.change });
+      }
     }
-    // The inverse change; removing TRASH/SPAM brings INBOX back (the engine's label rules). Muting archives what
-    // was in the Inbox, so undoing it puts those back.
+    // Muting archives what was in the Inbox, so undoing it puts those back.
     const undo = async () => {
       for (const t of targets) {
         if (kind === "mute" || kind === "unmute") {
           await api.mute(t.accountId, t.threadIds, kind !== "mute");
           const back = t.threadIds.filter((id) => wasInInbox.has(id));
           if (kind === "mute" && back.length) await api.modifyThreads(t.accountId, back, ["INBOX"], []);
-        } else if (kind !== "unsnooze") await api.modifyThreads(t.accountId, t.threadIds, rule.remove, rule.add);
+        }
       }
+      // Label changes: each message gets back exactly what it had (the server's older messages included).
+      for (const c of changes) await api.undoChange(c.accountId, c.change);
     };
     withUndo(rule.text(count) + (opts.note ?? "") + (queued ? WHEN_ONLINE : ""), undo);
     ok = true;
@@ -279,7 +285,12 @@ export async function applyLabels(add: string[], remove: string[], opts: { move?
   let ok = false;
   try {
     let queued = false;
-    for (const t of targets) if ((await api.modifyThreads(t.accountId, t.threadIds, add, removeAll)) === "queued") queued = true;
+    const changes: { accountId: string; change: number }[] = [];
+    for (const t of targets) {
+      const r = await api.changeThreads(t.accountId, t.threadIds, add, removeAll);
+      if (r.result === "queued") queued = true;
+      changes.push({ accountId: t.accountId, change: r.change });
+    }
     const acct = targets[0].accountId;
     const names = add.map((l) => labelName(acct, l));
     const text = opts.move
@@ -288,7 +299,7 @@ export async function applyLabels(add: string[], remove: string[], opts: { move?
         ? `${plural(count, "Conversation", "conversations")} added to "${names.join('", "')}".`
         : `${plural(count, "Conversation", "conversations")} removed from "${remove.map((l) => labelName(acct, l)).join('", "')}".`;
     withUndo(text + (queued ? WHEN_ONLINE : ""), async () => {
-      for (const t of targets) await api.modifyThreads(t.accountId, t.threadIds, removeAll, add);
+      for (const c of changes) await api.undoChange(c.accountId, c.change);
     });
     ok = true;
   } catch (e) {

@@ -727,6 +727,67 @@ async fn a_server_answer_read_before_a_change_landed_never_puts_the_old_labels_b
     assert!(w.engine.list(&view("g1", "INBOX")).await.unwrap().threads.iter().all(|t| t.thread_id != thread));
 }
 
+/// A long conversation: two old messages this Mac doesn't keep (one archived, one still in the Inbox), a reply
+/// sent from here, and a new unread message. Returns (thread, [old archived, old in Inbox, sent, new]).
+fn long_conversation(w: &World) -> (String, Vec<String>) {
+    let old = |subject: &str, refs: &str, labels: &[&str], days: i64| {
+        let id = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", subject, "x", refs), labels);
+        w.gmail.state.lock().messages.get_mut(&id).unwrap().internal_date = courier_lib::error::now_ms() - days * 86_400_000;
+        id
+    };
+    let first = old("Plans", "", &["CATEGORY_PERSONAL"], 70);
+    let mid = courier_lib::mailmeta::parse_raw(&w.gmail.message(&first).unwrap().raw).row.message_id;
+    let refs = format!("In-Reply-To: {mid}\r\nReferences: {mid}\r\n");
+    let second = old("Re: Plans", &refs, &["INBOX", "CATEGORY_PERSONAL"], 60);
+    let sent = w.gmail.deliver(&sample_mail("Pat <pat@example.com>", "ana@x.io", "Re: Plans", "y", &refs), &["SENT"]);
+    let new = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Re: Plans", "z", &refs), &["INBOX", "UNREAD", "CATEGORY_PERSONAL"]);
+    (w.gmail.message(&new).unwrap().thread_id, vec![first, second, sent, new])
+}
+
+#[tokio::test]
+async fn undo_puts_each_message_of_the_conversation_back_as_it_was_on_the_server_too() {
+    let w = world().await;
+    let (t, ids) = long_conversation(&w);
+    w.engine.sync_account("g1").await.unwrap();
+    let server = |id: &str| {
+        let mut l = w.gmail.message(id).unwrap().labels;
+        l.sort();
+        l
+    };
+    let before: Vec<Vec<String>> = ids.iter().map(|id| server(id)).collect();
+    for (add, remove) in [(vec!["TRASH".to_string()], vec![]), (vec![], vec!["INBOX".to_string()]), (vec![], vec!["UNREAD".to_string()])] {
+        let made = w.engine.change_threads("g1", std::slice::from_ref(&t), &add, &remove).await.unwrap();
+        assert_eq!(made.result, Changed::Done);
+        assert!(ids.iter().any(|id| server(id) != before[ids.iter().position(|x| x == id).unwrap()]), "the change {add:?} -{remove:?} did nothing");
+        w.engine.undo_change("g1", made.change).await.unwrap();
+        let after: Vec<Vec<String>> = ids.iter().map(|id| server(id)).collect();
+        assert_eq!(after, before, "Undo of +{add:?} -{remove:?} didn't put every message back as it was");
+    }
+}
+
+#[tokio::test]
+async fn a_conversation_deleted_offline_covers_its_older_messages_when_it_goes_out_after_a_restart() {
+    let dir = std::env::temp_dir().join(format!("courier-thread-queue-{}", courier_lib::error::random_token(6)));
+    let path = dir.join("courier.db");
+    let w = world_on(Db::open(&path).unwrap()).await;
+    let (t, ids) = long_conversation(&w);
+    w.engine.sync_account("g1").await.unwrap();
+    w.gmail.state.lock().offline = true;
+    assert_eq!(w.engine.modify_threads("g1", std::slice::from_ref(&t), &["TRASH".into()], &[]).await.unwrap(), Changed::Queued);
+    let e2 = relaunch(&w, &path);
+    w.gmail.state.lock().offline = false;
+    e2.sync_account("g1").await.unwrap();
+    for id in &ids {
+        let l = w.gmail.message(id).unwrap().labels;
+        assert!(l.contains(&"TRASH".to_string()) && !l.contains(&"INBOX".to_string()), "{id} on the server: {l:?}");
+    }
+    assert!(e2.db.queued_threads("g1").unwrap().is_empty() && e2.db.queued_changes("g1").unwrap().is_empty());
+    let mut server = view("g1", "INBOX");
+    server.mode = Some("server".into());
+    assert!(e2.list(&server).await.unwrap().threads.iter().all(|x| x.thread_id != t));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[tokio::test]
 async fn a_full_resync_drops_mail_deleted_on_the_server_and_refreshes_what_moved() {
     let w = world().await;
@@ -789,9 +850,10 @@ async fn a_delete_made_offline_stays_survives_a_restart_and_goes_out_once_online
     assert!(labels.contains(&"TRASH".to_string()) && !labels.contains(&"INBOX".to_string()), "{labels:?}");
     assert!(!w.engine.list(&view("g1", "INBOX")).await.unwrap().threads.iter().any(|x| x.thread_id == t));
     assert_eq!(w.engine.db.label("g1", "INBOX").unwrap().unwrap().threads_total, 1, "the Inbox count");
-    // Another delete, undone (the inverse change) before the connection is back: nothing is left to send.
-    assert_eq!(w.engine.modify_threads("g1", std::slice::from_ref(&tk), &["TRASH".into()], &[]).await.unwrap(), Changed::Queued);
-    assert_eq!(w.engine.modify_threads("g1", std::slice::from_ref(&tk), &[], &["TRASH".into()]).await.unwrap(), Changed::Queued);
+    // Another delete, undone before the connection is back: nothing is left to send.
+    let undone = w.engine.change_threads("g1", std::slice::from_ref(&tk), &["TRASH".into()], &[]).await.unwrap();
+    assert_eq!(undone.result, Changed::Queued);
+    assert_eq!(w.engine.undo_change("g1", undone.change).await.unwrap(), Changed::Queued);
     assert_eq!(w.engine.db.message("g1", &kept).unwrap().unwrap().labels, vec!["INBOX".to_string()]);
     assert_eq!(w.engine.db.queued_changes("g1").unwrap().iter().map(|q| q.message_id.as_str()).collect::<Vec<_>>(), vec![gone.as_str()]);
     // Quit and open again, still offline: the delete is still made here and still waiting.

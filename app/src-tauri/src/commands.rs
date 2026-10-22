@@ -384,6 +384,26 @@ pub async fn modify_threads(st: S<'_>, account_id: String, thread_ids: Vec<Strin
     r
 }
 
+/// Change whole conversations (every message on the server); the receipt names the change for Undo.
+#[tauri::command]
+pub async fn change_threads(st: S<'_>, account_id: String, thread_ids: Vec<String>, add: Vec<String>, remove: Vec<String>) -> Result<crate::engine::Receipt> {
+    let r = st.engine.change_threads(&account_id, &thread_ids, &add, &remove).await;
+    let what = format!("labels +{add:?} -{remove:?} on {} conversation(s)", thread_ids.len());
+    match &r {
+        Ok(x) if x.result == Changed::Queued => crate::applog::info(&format!("{account_id}: {what}: offline, queued")),
+        _ => log_action(&account_id, &what, &r),
+    }
+    r
+}
+
+/// Undo a change made here: each message gets back what it had.
+#[tauri::command]
+pub async fn undo_change(st: S<'_>, account_id: String, change: u64) -> Result<Changed> {
+    let r = st.engine.undo_change(&account_id, change).await;
+    log_change(&account_id, "undo", &r);
+    r
+}
+
 #[tauri::command]
 pub async fn modify_messages(st: S<'_>, account_id: String, message_ids: Vec<String>, add: Vec<String>, remove: Vec<String>) -> Result<Changed> {
     let r = st.engine.modify_messages(&account_id, &message_ids, &add, &remove).await;
