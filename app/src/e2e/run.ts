@@ -510,16 +510,30 @@ step("archiving with e moves on to the next conversation at once (auto-advance),
     click(row("Advance 3")!);
     await until("Advance 3 open", () => q("conv-subject")?.textContent?.includes("Advance 3"));
     await sleep(800);
+    const recStart = performance.now();
     const rec = recordFrames();
     (document.activeElement as HTMLElement | null)?.blur?.();
     key(document.body, "e");
-    const t0 = performance.now();
+    const keyAt = performance.now() - recStart;
     await until("the next one open", () => q("conv-subject")?.textContent?.includes(next), 5000);
-    const ms = performance.now() - t0;
     await until("archived on the server", async () => (await msgsWith("Advance 3")).every((m) => !m.labels.includes("INBOX")) || null, 20_000);
     await sleep(2000);
-    const issues = flashes(rec.stop(), [gone], { conversationOpen: true });
-    check(ms < 250, `the next conversation took ${Math.round(ms)} ms`);
+    const stopped = rec.stop();
+    // When the pane showed the next conversation, from the recorder's own frames: the test's polling can be slowed by
+    // WebKit's timer throttling in a background window, the app's frames can't.
+    const shown = stopped.frames.find((f) => f.t >= keyAt - 1 && f.conv?.includes(next));
+    const ms = shown ? shown.t - keyAt : Infinity;
+    const issues = flashes(stopped, [gone], { conversationOpen: true });
+    check(
+      ms < 250,
+      `the next conversation took ${Math.round(ms)} ms; longest stall ${stopped.stall.ms} ms ending at +${stopped.stall.at}; pane: ${stopped.frames
+        .filter((f, i, all) => i === 0 || f.conv !== all[i - 1].conv)
+        .map((f) => `${f.conv === null ? "list" : f.conv.includes(next) ? "next" : f.conv === "" ? "blank" : `other(${f.conv.length})`}@${f.t}`)
+        .join(" ")}; ${stopped.trace
+        .slice(0, 12)
+        .map((e) => `${e.what}@${e.t}`)
+        .join(", ")}`,
+    );
     check(!issues.length, issues.join("\n    "));
     click(await el("conv-back"));
     await until("the list without it", () => !row("Advance 3"));

@@ -21,6 +21,8 @@ export interface Recording {
   frames: Frame[];
   /** Wall-clock start (ms), to line the recording up with the app log's `[trace]` lines. */
   wall0: number;
+  /** The longest the page went without running the recorder's 8 ms timer (a busy main thread), and when it ended. */
+  stall: { ms: number; at: number };
   /** What the list did meanwhile (store.ts listTrace), times relative to the start. */
   trace: { t: number; what: string; ids?: string[] }[];
   /** Rows added to or removed from the DOM, by thread id, in order. */
@@ -48,7 +50,8 @@ function snapshot(t0: number): Frame {
 export function recordFrames() {
   const t0 = performance.now();
   traceList(true);
-  const rec: Recording = { frames: [], changes: [], trace: [], wall0: Date.now() };
+  const rec: Recording = { frames: [], changes: [], trace: [], wall0: Date.now(), stall: { ms: 0, at: 0 } };
+  let tick = performance.now();
   let on = true;
   const take = () => {
     const f = snapshot(t0);
@@ -61,7 +64,12 @@ export function recordFrames() {
     requestAnimationFrame(raf);
   };
   requestAnimationFrame(raf);
-  const timer = setInterval(take, 8);
+  const timer = setInterval(() => {
+    const now = performance.now();
+    if (now - tick > rec.stall.ms) rec.stall = { ms: Math.round(now - tick), at: Math.round(now - t0) };
+    tick = now;
+    take();
+  }, 8);
   const mo = new MutationObserver((records) => {
     const added: string[] = [];
     const removed: string[] = [];
