@@ -853,7 +853,7 @@ impl Engine {
     }
 
     pub fn starred_in_primary(&self) -> bool {
-        self.db.kv_get("includeStarredInPrimary").ok().flatten().and_then(|v| v.as_bool()).unwrap_or(false)
+        self.db.kv_get("includeStarredInPrimary").ok().flatten().and_then(|v| v.as_bool()).unwrap_or(true)
     }
 
     /// A view as a Gmail API listing, with Settings ▸ Inbox ▸ Include starred in Primary applied.

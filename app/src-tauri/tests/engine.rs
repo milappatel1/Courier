@@ -516,6 +516,7 @@ async fn the_inbox_count_is_conversations_with_unread_inbox_mail_in_primary_star
     w.gmail.deliver(&mail("Starred unread promotion"), &["INBOX", "UNREAD", "CATEGORY_PROMOTIONS", "STARRED"]);
     w.engine.sync_account("g1").await.unwrap();
     let inbox = || w.engine.labels_for_nav("g1").unwrap().into_iter().find(|l| l.id == "INBOX").map(|l| l.threads_unread).unwrap_or(-1);
+    w.engine.db.kv_set("includeStarredInPrimary", &json!(false)).unwrap();
     assert_eq!(inbox(), 1);
     // Settings ▸ Inbox ▸ Include starred in Primary: the starred promotion is in Primary, so it counts.
     w.engine.db.kv_set("includeStarredInPrimary", &json!(true)).unwrap();
@@ -553,9 +554,10 @@ async fn starred_in_primary_and_the_auto_contacts_setting() {
     let mut server = primary.clone();
     server.mode = Some("server".into());
     let subjects = |r: courier_lib::engine::ViewResult| r.threads.into_iter().map(|t| t.subject).collect::<Vec<_>>();
+    // Settings ▸ Inbox ▸ Include starred in Primary, on by default as in the web client; off first.
+    w.engine.db.kv_set("includeStarredInPrimary", &json!(false)).unwrap();
     assert_eq!(subjects(w.engine.list(&primary).await.unwrap()), vec!["Plain note"]);
     assert_eq!(subjects(w.engine.list(&server).await.unwrap()), vec!["Plain note"]);
-    // Settings ▸ Inbox ▸ Include starred in Primary.
     w.engine.db.kv_set("includeStarredInPrimary", &json!(true)).unwrap();
     assert!(subjects(w.engine.list(&primary).await.unwrap()).contains(&"Starred deal".to_string()));
     assert!(subjects(w.engine.list(&server).await.unwrap()).contains(&"Starred deal".to_string()));

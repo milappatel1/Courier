@@ -128,7 +128,7 @@ export const DEFAULTS: Settings = {
   notifications: { mode: "all", accounts: {}, labels: {} },
   inboxType: "default",
   categories: { social: true, promotions: true, updates: true, forums: false },
-  includeStarredInPrimary: false,
+  includeStarredInPrimary: true,
   readingPane: "none",
   readingPaneSize: 520,
   importanceMarkers: false,

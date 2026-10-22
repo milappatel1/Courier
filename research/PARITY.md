@@ -31,7 +31,7 @@ and features the mail API doesn't expose).
 | ID | Area | Item | Status | Evidence | Test |
 | --- | --- | --- | --- | --- | --- |
 | V-01 | Inbox | Default inbox with Primary/Promotions/Social/Updates(/Forums) tabs | unverified | | |
-| V-02 | Inbox | Primary tab = Inbox minus the enabled tabs' categories (Forums mail in Primary while its tab is off; starred ones when set) | differs | Courier's server listing asks for `category:primary`; its cache treats Primary as Inbox minus enabled tabs (recon query probe pending) | e2e flash step (rows vanish on reload) |
+| V-02 | Inbox | Primary tab = Inbox minus the enabled tabs' categories (Forums mail in Primary while its tab is off; starred ones when set) | matches | Recon query probe (2026-10-22): `category:primary` 38 = the web client's Primary; Courier asks for the Inbox minus its enabled tabs (+ starred), the same rule as its cache | Rust `starred_in_primary_and_the_auto_contacts_setting`; e2e flash step under the user's conditions |
 | V-03 | Inbox | Inbox type: Important first | unverified | | |
 | V-04 | Inbox | Inbox type: Unread first | unverified | | |
 | V-05 | Inbox | Inbox type: Starred first | unverified | | |
@@ -157,7 +157,7 @@ The web client's tabs and settings as harvested from the recon profile on 2026-1
 | ST-28 | Labels | Labels table: conversation counts, show/hide/show if unread, show in message list, remove, edit | unverified | | |
 | ST-29 | Inbox | Inbox type | unverified | | |
 | ST-30 | Inbox | Categories (which tabs) | unverified | | |
-| ST-31 | Inbox | Include starred in Primary (the web client's default: on) | differs | Recon #settings/inbox: checked; Courier defaults to off | |
+| ST-31 | Inbox | Include starred in Primary (the web client's default: on) | matches | Recon #settings/inbox: checked by default; Courier's default now on (UI and engine) | Rust `starred_in_primary_and_the_auto_contacts_setting` |
 | ST-32 | Inbox | Enable bundling of top promo emails in Promotions | ✗ Google-only | Promotional bundling is the web client's own ranking | — |
 | ST-33 | Inbox | Reading pane (no split, right, below) | unverified | | |
 | ST-34 | Inbox | Importance markers; use past actions to predict importance | unverified | | |
