@@ -120,10 +120,10 @@ async fn gmail_search_pages_threads_and_modify() {
     fake.deliver(&sample_mail("Bo <bo@x.io>", "pat@example.com", "Hello", "nothing here", ""), &["INBOX"]);
     let (g, _) = signed_in(&fake, "acc").await;
     let db = Db::open_in_memory().unwrap();
-    let (ids, next, est) = gmail::list_page(&g, &db, "acc", &[], Some("from:ana quarterly"), None, 5, false).await.unwrap();
+    let (ids, next, est) = gmail::list_page(&g, &db.begin_read("acc"), &[], Some("from:ana quarterly"), None, 5, false).await.unwrap();
     assert_eq!(ids.len(), 5);
     assert_eq!(est, 7);
-    let (more, next2, _) = gmail::list_page(&g, &db, "acc", &[], Some("from:ana quarterly"), next.as_deref(), 5, false).await.unwrap();
+    let (more, next2, _) = gmail::list_page(&g, &db.begin_read("acc"), &[], Some("from:ana quarterly"), next.as_deref(), 5, false).await.unwrap();
     assert_eq!(more.len(), 2);
     assert!(next2.is_none());
     // Metadata was cached for the list.
@@ -136,7 +136,7 @@ async fn gmail_search_pages_threads_and_modify() {
     g.batch_modify(std::slice::from_ref(&mid), &[], &["INBOX".into()]).await.unwrap();
     assert!(!fake.message(&mid).unwrap().labels.contains(&"INBOX".into()));
     g.thread_trash(&ids[1]).await.unwrap();
-    let (trash, _, _) = gmail::list_page(&g, &db, "acc", &["TRASH".into()], None, None, 50, true).await.unwrap();
+    let (trash, _, _) = gmail::list_page(&g, &db.begin_read("acc"), &["TRASH".into()], None, None, 50, true).await.unwrap();
     assert_eq!(trash, vec![ids[1].clone()]);
 }
 

@@ -1,7 +1,7 @@
 //! IMAP for every other provider: TLS / STARTTLS / plain (tests) connections, folders shown as labels,
 //! UID-based sync with flag and expunge reconciliation, moves/copies for label actions, APPEND, IDLE.
 
-use crate::db::{Db, LabelRow, MessageRow};
+use crate::db::{Db, LabelRow, MessageRow, Read};
 use crate::error::{io_error, Error, Result};
 use crate::mailmeta;
 use futures::TryStreamExt;
@@ -393,7 +393,8 @@ pub async fn sync_folder_list(s: &mut Session, db: &Db, account: &str) -> Result
 
 const FETCH_FULL: &str = "(UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[])";
 
-fn ingest_fetch(db: &Db, account: &str, path: &str, label_id: &str, uv: u32, f: &async_imap::types::Fetch) -> Result<Option<MessageRow>> {
+fn ingest_fetch(read: &Read<'_>, path: &str, label_id: &str, uv: u32, f: &async_imap::types::Fetch) -> Result<Option<MessageRow>> {
+    let (db, account) = (read.db(), read.account());
     let Some(uid) = f.uid else { return Ok(None) };
     let Some(body) = f.body() else { return Ok(None) };
     let parsed = mailmeta::parse_raw(body);
@@ -414,12 +415,13 @@ fn ingest_fetch(db: &Db, account: &str, path: &str, label_id: &str, uv: u32, f: 
     row.imap_uid = Some(uid as i64);
     row.thread_id = assign_thread(db, account, &row, parsed.is_reply)?;
     row.has_raw = true;
-    db.upsert_message(&row, Some(body))?;
+    read.upsert_message(&row, Some(body))?;
     Ok(Some(row))
 }
 
 /// Sync one folder: new messages (initial window, then by UIDNEXT), flag changes and expunges.
 pub async fn sync_folder(s: &mut Session, db: &Db, account: &str, info: &FolderInfo, initial_window: u32) -> Result<FolderSync> {
+    let read = db.begin_read(account);
     let path = info.folder.path.clone();
     let mb = s.select(&path).await?;
     let uv = mb.uid_validity.unwrap_or(0);
@@ -444,7 +446,7 @@ pub async fn sync_folder(s: &mut Session, db: &Db, account: &str, info: &FolderI
             if known.contains_key(&(uid as i64)) || stored_next.map(|n| (uid as i64) < n).unwrap_or(false) {
                 continue;
             }
-            if let Some(row) = ingest_fetch(db, account, &path, &info.label_id, uv, f)? {
+            if let Some(row) = ingest_fetch(&read, &path, &info.label_id, uv, f)? {
                 out.new_messages.push(row);
                 out.changed = true;
             }
@@ -463,7 +465,7 @@ pub async fn sync_folder(s: &mut Session, db: &Db, account: &str, info: &FolderI
         for (uid, id) in &known {
             match flags.get(uid) {
                 None => {
-                    db.delete_message(account, id)?;
+                    read.forget(id)?;
                     out.changed = true;
                 }
                 Some(fl) => {
@@ -477,7 +479,7 @@ pub async fn sync_folder(s: &mut Session, db: &Db, account: &str, info: &FolderI
                         let mut b = labels.clone();
                         b.sort();
                         if a != b {
-                            db.set_labels(account, id, &labels)?;
+                            read.set_labels(id, &labels)?;
                             out.changed = true;
                         }
                     }

@@ -204,6 +204,48 @@ pub struct Db {
     /// A message's queued change (`change_queue`, token `QUEUED`) comes first.
     pending: Mutex<HashMap<(String, String), Vec<PendingChange>>>,
     next_change: std::sync::atomic::AtomicU64,
+    /// Courier's clock for server reads and acknowledgements (see `Read`). The launch's generation is in the high
+    /// bits, so a stamp kept from an earlier launch is older than any taken now.
+    clock: std::sync::atomic::AtomicU64,
+}
+
+/// A server read in progress, opened before its request goes out (the mail API client's read methods take one).
+/// Its stamp is the latest moment its answer can describe. The cache keeps each message's labels as the server
+/// last said them (`server_labels`) with the stamp of the read they came from, and the newest wins; an
+/// acknowledgement of a change made here counts as a read of the result at the moment it arrived. So an answer
+/// read before a change landed can never undo it. Server data reaches the cache only through a `Read`.
+pub struct Read<'a> {
+    db: &'a Db,
+    account: String,
+    stamp: i64,
+}
+
+impl Read<'_> {
+    pub fn stamp(&self) -> i64 {
+        self.stamp
+    }
+    pub fn account(&self) -> &str {
+        &self.account
+    }
+    pub fn db(&self) -> &Db {
+        self.db
+    }
+    #[track_caller]
+    pub fn set_labels(&self, id: &str, labels: &[String]) -> Result<()> {
+        self.db.server_labels(&self.account, id, labels, self.stamp)
+    }
+    #[track_caller]
+    pub fn upsert_message(&self, m: &MessageRow, raw: Option<&[u8]>) -> Result<()> {
+        self.db.upsert_from_server(m, raw, self.stamp)
+    }
+    /// The server's answer didn't have this message: it's gone, unless a newer answer put it here.
+    pub fn forget(&self, id: &str) -> Result<()> {
+        let held: Option<i64> = self.db.with(|c| c.query_row("SELECT server_stamp FROM messages WHERE account_id=? AND id=?", [&self.account, id], |r| r.get(0)).optional())?;
+        if held.is_some_and(|h| h <= self.stamp) {
+            self.db.delete_message(&self.account, id)?;
+        }
+        Ok(())
+    }
 }
 
 struct PendingChange {
@@ -254,6 +296,7 @@ CREATE TABLE IF NOT EXISTS messages (
   message_id TEXT NOT NULL DEFAULT '', in_reply_to TEXT NOT NULL DEFAULT '', references_json TEXT NOT NULL DEFAULT '[]',
   list_unsubscribe TEXT NOT NULL DEFAULT '', list_unsubscribe_post TEXT NOT NULL DEFAULT '', list_id TEXT NOT NULL DEFAULT '',
   labels TEXT NOT NULL DEFAULT ' ', raw BLOB, imap_folder TEXT, imap_uid INTEGER,
+  server_labels TEXT NOT NULL DEFAULT ' ', server_stamp INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (account_id, id)
 );
 CREATE INDEX IF NOT EXISTS msg_thread ON messages(account_id, thread_id);
@@ -285,6 +328,14 @@ CREATE TABLE IF NOT EXISTS change_queue (
   PRIMARY KEY (account_id, message_id)
 );
 "#;
+
+/// A message's labels with the changes made here that the server doesn't have yet, in order, on top.
+fn fold_pending(p: &HashMap<(String, String), Vec<PendingChange>>, account: &str, id: &str, labels: Vec<String>) -> Vec<String> {
+    match p.get(&(account.to_string(), id.to_string())) {
+        Some(list) => list.iter().fold(labels, |l, c| apply_change(l, &c.add, &c.remove)),
+        None => labels,
+    }
+}
 
 fn apply_change(labels: Vec<String>, add: &[String], remove: &[String]) -> Vec<String> {
     let mut out: Vec<String> = labels.into_iter().filter(|l| !remove.contains(l)).collect();
@@ -447,6 +498,39 @@ pub struct ListFilter {
     pub exclude_snoozed: bool,
 }
 
+/// Caches from before 1.1 keep only the labels shown: those become the server's labels, except where a change
+/// waits in the queue (it is in `labels` already), where the labels before it are the server's.
+fn migrate(c: &Connection) -> rusqlite::Result<()> {
+    if c.prepare("SELECT 1 FROM pragma_table_info('messages') WHERE name='server_labels'")?.exists([])? {
+        return Ok(());
+    }
+    c.execute_batch(
+        "ALTER TABLE messages ADD COLUMN server_labels TEXT NOT NULL DEFAULT ' ';
+         ALTER TABLE messages ADD COLUMN server_stamp INTEGER NOT NULL DEFAULT 0;
+         UPDATE messages SET server_labels = labels;",
+    )?;
+    let queued: Vec<(String, String, Option<String>, String, String)> = c
+        .prepare("SELECT account_id, message_id, before, add_labels, remove_labels FROM change_queue")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (account, id, before, add, remove) in queued {
+        let base = match before {
+            Some(b) => pj::<Vec<String>>(&b),
+            None => {
+                let shown: Option<String> = c.query_row("SELECT labels FROM messages WHERE account_id=? AND id=?", [&account, &id], |r| r.get(0)).optional()?;
+                let Some(shown) = shown else { continue };
+                apply_change(labels_from(&shown), &pj::<Vec<String>>(&remove), &pj::<Vec<String>>(&add))
+            }
+        };
+        c.execute("UPDATE messages SET server_labels=? WHERE account_id=? AND id=?", params![labels_text(&base), account, id])?;
+    }
+    Ok(())
+}
+
+fn labels_from(text: &str) -> Vec<String> {
+    text.split_whitespace().map(String::from).collect()
+}
+
 impl Db {
     pub fn open(path: &Path) -> Result<Db> {
         if let Some(dir) = path.parent() {
@@ -465,7 +549,22 @@ impl Db {
     }
 
     fn with_connection(conn: Connection) -> Db {
-        let db = Db { conn: Mutex::new(conn), pending: Mutex::new(HashMap::new()), next_change: std::sync::atomic::AtomicU64::new(1) };
+        let _ = migrate(&conn);
+        let generation: i64 = conn
+            .query_row("SELECT value FROM kv WHERE key='stampGeneration'", [], |r| r.get::<_, String>(0))
+            .optional()
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+            + 1;
+        let _ = conn.execute("INSERT OR REPLACE INTO kv (key, value) VALUES ('stampGeneration', ?)", [generation.to_string()]);
+        let db = Db {
+            conn: Mutex::new(conn),
+            pending: Mutex::new(HashMap::new()),
+            next_change: std::sync::atomic::AtomicU64::new(1),
+            clock: std::sync::atomic::AtomicU64::new((generation as u64) << 32),
+        };
         // Changes queued before a quit still hold over whatever the server says until they've gone out.
         if let Ok(rows) = db.with(|c| c.prepare("SELECT account_id, message_id, add_labels, remove_labels FROM change_queue")?.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()) {
             let mut p = db.pending.lock();
@@ -743,32 +842,62 @@ impl Db {
     // ---- messages ----
 
     #[track_caller]
-    fn trace_inbox(&self, account: &str, id: &str, labels: &[String]) {
+    fn trace_inbox(&self, c: &Connection, account: &str, id: &str, labels: &[String]) {
         if !TRACE_INBOX.load(std::sync::atomic::Ordering::Relaxed) {
             return;
         }
-        let was = self.message(account, id).ok().flatten().map(|m| m.has("INBOX"));
+        let was: Option<String> = c.query_row("SELECT labels FROM messages WHERE account_id=? AND id=?", [account, id], |r| r.get(0)).optional().ok().flatten();
+        let was = was.map(|l| l.contains(" INBOX "));
         let now = labels.iter().any(|l| l == "INBOX");
         if was != Some(now) {
             eprintln!("[trace] {} cache {account} {id} inbox {was:?} -> {now} at {}", crate::error::now_ms(), std::panic::Location::caller());
         }
     }
 
+    pub fn begin_read(&self, account: &str) -> Read<'_> {
+        Read { db: self, account: account.to_string(), stamp: self.tick() }
+    }
+
+    fn tick(&self) -> i64 {
+        (self.clock.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1) as i64
+    }
+
+    /// A message read from the server at `stamp`: its content always; its labels unless the cache already holds
+    /// newer ones; shown with the changes still on their way on top.
     #[track_caller]
+    fn upsert_from_server(&self, m: &MessageRow, raw: Option<&[u8]>, stamp: i64) -> Result<()> {
+        let p = self.pending.lock();
+        let c = self.conn.lock();
+        let held: Option<(String, i64)> = c.query_row("SELECT server_labels, server_stamp FROM messages WHERE account_id=? AND id=?", [&m.account_id, &m.id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+        let (base, base_stamp) = match held {
+            Some((b, s)) if s > stamp => (labels_from(&b), s),
+            _ => (m.labels.clone(), stamp),
+        };
+        let shown = fold_pending(&p, &m.account_id, &m.id, base.clone());
+        self.trace_inbox(&c, &m.account_id, &m.id, &shown);
+        Self::put_message(&c, m, raw, &shown, &base, base_stamp)?;
+        Ok(())
+    }
+
+    /// A message this Mac made itself (a draft saved, a message sent through IMAP): there's no server answer to
+    /// order it against yet, so it counts as read now.
     pub fn upsert_message(&self, m: &MessageRow, raw: Option<&[u8]>) -> Result<()> {
-        let labels = self.with_pending(&m.account_id, &m.id, m.labels.clone());
-        self.trace_inbox(&m.account_id, &m.id, &labels);
-        self.with(|c| {
+        let stamp = self.tick();
+        self.upsert_from_server(m, raw, stamp)
+    }
+
+    fn put_message(c: &Connection, m: &MessageRow, raw: Option<&[u8]>, labels: &[String], base: &[String], base_stamp: i64) -> rusqlite::Result<()> {
+        {
             c.execute(
-                "INSERT INTO messages (account_id, id, thread_id, internal_date, from_name, from_email, to_json, cc_json, bcc_json, reply_to_json, delivered_to, subject, norm_subject, snippet, size, has_attachments, attachments_json, message_id, in_reply_to, references_json, list_unsubscribe, list_unsubscribe_post, list_id, labels, raw, imap_folder, imap_uid)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27)
+                "INSERT INTO messages (account_id, id, thread_id, internal_date, from_name, from_email, to_json, cc_json, bcc_json, reply_to_json, delivered_to, subject, norm_subject, snippet, size, has_attachments, attachments_json, message_id, in_reply_to, references_json, list_unsubscribe, list_unsubscribe_post, list_id, labels, raw, imap_folder, imap_uid, server_labels, server_stamp)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29)
                  ON CONFLICT(account_id, id) DO UPDATE SET thread_id=excluded.thread_id, internal_date=excluded.internal_date, from_name=excluded.from_name,
                    from_email=excluded.from_email, to_json=excluded.to_json, cc_json=excluded.cc_json, bcc_json=excluded.bcc_json, reply_to_json=excluded.reply_to_json,
                    delivered_to=excluded.delivered_to, subject=excluded.subject, norm_subject=excluded.norm_subject, snippet=excluded.snippet, size=excluded.size,
                    has_attachments=excluded.has_attachments, attachments_json=excluded.attachments_json, message_id=excluded.message_id, in_reply_to=excluded.in_reply_to,
                    references_json=excluded.references_json, list_unsubscribe=excluded.list_unsubscribe, list_unsubscribe_post=excluded.list_unsubscribe_post,
                    list_id=excluded.list_id, labels=excluded.labels, raw=COALESCE(excluded.raw, raw), imap_folder=COALESCE(excluded.imap_folder, imap_folder),
-                   imap_uid=COALESCE(excluded.imap_uid, imap_uid)",
+                   imap_uid=COALESCE(excluded.imap_uid, imap_uid), server_labels=excluded.server_labels, server_stamp=excluded.server_stamp",
                 params![
                     m.account_id,
                     m.id,
@@ -793,10 +922,12 @@ impl Db {
                     m.list_unsubscribe,
                     m.list_unsubscribe_post,
                     m.list_id,
-                    labels_text(&labels),
+                    labels_text(labels),
                     raw,
                     m.imap_folder,
-                    m.imap_uid
+                    m.imap_uid,
+                    labels_text(base),
+                    base_stamp
                 ],
             )?;
             let rowid: i64 = c.query_row("SELECT rowid FROM messages WHERE account_id=? AND id=?", [&m.account_id, &m.id], |r| r.get(0))?;
@@ -813,7 +944,7 @@ impl Db {
                 params![rowid, m.subject, format!("{} {}", m.from_name, m.from_email), recipients, if body.is_empty() { m.snippet.clone() } else { body }, m.attachments.iter().map(|a| a.name.clone()).collect::<Vec<_>>().join(" ")],
             )?;
             Ok(())
-        })
+        }
     }
 
     pub fn message(&self, account: &str, id: &str) -> Result<Option<MessageRow>> {
@@ -829,72 +960,94 @@ impl Db {
         Ok(())
     }
 
-    /// A message's labels as the server reports them (sync, history, a fetched thread), with the changes made
-    /// here that are still on their way to the server applied on top.
+    /// Labels read from the server at `stamp`: kept unless the cache holds newer ones, and shown with the changes
+    /// still on their way on top.
     #[track_caller]
-    pub fn set_labels(&self, account: &str, id: &str, labels: &[String]) -> Result<()> {
-        let labels = self.with_pending(account, id, labels.to_vec());
-        self.write_labels(account, id, &labels)
-    }
-
-    #[track_caller]
-    fn write_labels(&self, account: &str, id: &str, labels: &[String]) -> Result<()> {
-        self.trace_inbox(account, id, labels);
-        self.with(|c| c.execute("UPDATE messages SET labels=? WHERE account_id=? AND id=?", params![labels_text(labels), account, id]))?;
+    fn server_labels(&self, account: &str, id: &str, labels: &[String], stamp: i64) -> Result<()> {
+        let p = self.pending.lock();
+        let c = self.conn.lock();
+        let held: Option<i64> = c.query_row("SELECT server_stamp FROM messages WHERE account_id=? AND id=?", [account, id], |r| r.get(0)).optional()?;
+        if held.is_none_or(|h| h > stamp) {
+            return Ok(());
+        }
+        let shown = fold_pending(&p, account, id, labels.to_vec());
+        self.trace_inbox(&c, account, id, &shown);
+        c.execute(
+            "UPDATE messages SET server_labels=?, server_stamp=?, labels=? WHERE account_id=? AND id=?",
+            params![labels_text(labels), stamp, labels_text(&shown), account, id],
+        )?;
         Ok(())
     }
 
-    /// Add/remove labels on cached messages (optimistic UI updates and API echoes).
-    pub fn modify_labels(&self, account: &str, ids: &[String], add: &[String], remove: &[String]) -> Result<()> {
+    /// Shown labels again from the server's, with the changes still on their way on top (the only other writer
+    /// of `labels`).
+    #[track_caller]
+    fn rederive(&self, p: &HashMap<(String, String), Vec<PendingChange>>, account: &str, id: &str) -> Result<()> {
+        let c = self.conn.lock();
+        let base: Option<String> = c.query_row("SELECT server_labels FROM messages WHERE account_id=? AND id=?", [account, id], |r| r.get(0)).optional()?;
+        let Some(base) = base else { return Ok(()) };
+        let shown = fold_pending(p, account, id, labels_from(&base));
+        self.trace_inbox(&c, account, id, &shown);
+        c.execute("UPDATE messages SET labels=? WHERE account_id=? AND id=?", params![labels_text(&shown), account, id])?;
+        Ok(())
+    }
+
+    /// The server acknowledged `add`/`remove` on these messages: that is what it holds now, as of this moment, so
+    /// the change becomes part of the server's labels with a fresh stamp, newer than any answer still on its way.
+    fn landed(&self, c: &Connection, account: &str, ids: &[String], add: &[String], remove: &[String]) -> Result<i64> {
+        let stamp = self.tick();
         for id in ids {
-            if let Some(m) = self.message(account, id)? {
-                self.write_labels(account, id, &apply_change(m.labels, add, remove))?;
+            let base: Option<String> = c.query_row("SELECT server_labels FROM messages WHERE account_id=? AND id=?", [account, id], |r| r.get(0)).optional()?;
+            if let Some(base) = base {
+                let after = apply_change(labels_from(&base), add, remove);
+                c.execute(
+                    "UPDATE messages SET server_labels=?, server_stamp=MAX(server_stamp, ?) WHERE account_id=? AND id=?",
+                    params![labels_text(&after), stamp, account, id],
+                )?;
             }
         }
-        Ok(())
+        Ok(stamp)
     }
 
     /// Change labels here first (the UI shows it at once) and remember the change until `end_change`, so that
     /// labels read from the server in between don't undo it. Returns the change's token.
     pub fn begin_change(&self, account: &str, ids: &[String], add: &[String], remove: &[String]) -> Result<u64> {
         let token = self.next_change.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        {
-            let mut p = self.pending.lock();
-            for id in ids {
-                p.entry((account.to_string(), id.clone())).or_default().push(PendingChange { token, add: add.to_vec(), remove: remove.to_vec() });
-            }
+        let mut p = self.pending.lock();
+        for id in ids {
+            p.entry((account.to_string(), id.clone())).or_default().push(PendingChange { token, add: add.to_vec(), remove: remove.to_vec() });
         }
-        self.modify_labels(account, ids, add, remove)?;
+        for id in ids {
+            self.rederive(&p, account, id)?;
+        }
         Ok(token)
     }
 
-    /// The server has the change (`ok`), or refused it: then only what this change itself did is undone, so a
-    /// label the message already had stays, and changes made meanwhile elsewhere are kept.
-    pub fn end_change(&self, account: &str, ids: &[String], token: u64, ok: bool, before: &HashMap<String, Vec<String>>) -> Result<()> {
-        let mut undo: Vec<(String, PendingChange)> = Vec::new();
-        {
-            let mut p = self.pending.lock();
-            for id in ids {
-                let key = (account.to_string(), id.clone());
-                if let Some(list) = p.get_mut(&key) {
-                    if let Some(i) = list.iter().position(|c| c.token == token) {
-                        undo.push((id.clone(), list.remove(i)));
-                    }
-                    if list.is_empty() {
-                        p.remove(&key);
-                    }
+    /// The server has the change (`ok`): it joins the server's labels. Or it refused: the change is simply no
+    /// longer shown, so the labels are the server's with any other change still on its way, exactly.
+    pub fn end_change(&self, account: &str, ids: &[String], token: u64, ok: bool) -> Result<()> {
+        let mut p = self.pending.lock();
+        let mut sent: Option<(Vec<String>, Vec<String>)> = None;
+        for id in ids {
+            let key = (account.to_string(), id.clone());
+            if let Some(list) = p.get_mut(&key) {
+                if let Some(i) = list.iter().position(|c| c.token == token) {
+                    let ch = list.remove(i);
+                    sent.get_or_insert((ch.add, ch.remove));
+                }
+                if list.is_empty() {
+                    p.remove(&key);
                 }
             }
         }
         if ok {
-            return Ok(());
+            if let Some((add, remove)) = &sent {
+                let c = self.conn.lock();
+                self.landed(&c, account, ids, add, remove)?;
+            }
         }
-        for (id, c) in undo {
-            let Some(had) = before.get(&id) else { continue };
-            let Some(m) = self.message(account, &id)? else { continue };
-            let added: Vec<String> = c.add.iter().filter(|l| !had.contains(l)).cloned().collect();
-            let removed: Vec<String> = c.remove.iter().filter(|l| had.contains(l)).cloned().collect();
-            self.write_labels(account, &id, &apply_change(m.labels, &removed, &added))?;
+        for id in ids {
+            self.rederive(&p, account, id)?;
         }
         Ok(())
     }
@@ -916,14 +1069,6 @@ impl Db {
             }
         }
         out
-    }
-
-    fn with_pending(&self, account: &str, id: &str, labels: Vec<String>) -> Vec<String> {
-        let p = self.pending.lock();
-        match p.get(&(account.to_string(), id.to_string())) {
-            Some(list) => list.iter().fold(labels, |l, c| apply_change(l, &c.add, &c.remove)),
-            None => labels,
-        }
     }
 
     // ---- label changes waiting for the connection ----
@@ -949,6 +1094,7 @@ impl Db {
                     self.set_queued(&mut p, account, id, seq, had, a, r)?;
                 }
             }
+            self.rederive(&p, account, id)?;
         }
         Ok(())
     }
@@ -975,6 +1121,10 @@ impl Db {
     /// was folded in meanwhile, what's left of it stays.
     pub fn change_sent(&self, account: &str, ids: &[String], add: &[String], remove: &[String]) -> Result<()> {
         let mut p = self.pending.lock();
+        {
+            let c = self.conn.lock();
+            self.landed(&c, account, ids, add, remove)?;
+        }
         for id in ids {
             let Some((seq, had, a, r)) = self.queued(account, id)? else { continue };
             if a == add && r == remove {
@@ -984,6 +1134,7 @@ impl Db {
                 let (a, r) = diff(&sent, &apply_change(had, &a, &r));
                 self.set_queued(&mut p, account, id, seq, Some(&sent), a, r)?;
             }
+            self.rederive(&p, account, id)?;
         }
         Ok(())
     }
@@ -992,11 +1143,9 @@ impl Db {
     pub fn change_refused(&self, account: &str, ids: &[String]) -> Result<()> {
         let mut p = self.pending.lock();
         for id in ids {
-            let Some((seq, _, add, remove)) = self.queued(account, id)? else { continue };
+            let Some((seq, _, _, _)) = self.queued(account, id)? else { continue };
             self.set_queued(&mut p, account, id, seq, None, vec![], vec![])?;
-            if let Some(m) = self.message(account, id)? {
-                self.write_labels(account, id, &apply_change(m.labels, &remove, &add))?;
-            }
+            self.rederive(&p, account, id)?;
         }
         Ok(())
     }
@@ -1675,7 +1824,7 @@ mod tests {
         let (ids, _) = db.list_thread_ids("a", &ListFilter { clause: "m.rowid IN (SELECT rowid FROM fts WHERE fts MATCH ?)".into(), params: vec!["\"plan\"*".to_string().into()], ..Default::default() }, 0, 50).unwrap();
         assert_eq!(ids.len(), 3); // every body mentions "planning"
         // label-only update keeps body text in the index
-        db.set_labels("a", "3", &["INBOX".into(), "STARRED".into()]).unwrap();
+        db.begin_read("a").set_labels("3", &["INBOX".into(), "STARRED".into()]).unwrap();
         let m = db.message("a", "3").unwrap().unwrap();
         assert!(m.has("STARRED"));
         assert!(m.has_raw);

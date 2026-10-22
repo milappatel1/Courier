@@ -248,11 +248,12 @@ pub async fn seed(engine: &Arc<Engine>, account: &str) -> Result<usize> {
         }
     };
     let mut made = 0;
+    let read = engine.db.begin_read(account);
     for thread in plan(&counts_label) {
         let mut thread_id: Option<String> = None;
         for (n, m) in thread.iter().enumerate() {
             let q = format!("rfc822msgid:{} in:anywhere", message_id(&m.key).trim_matches(|c| c == '<' || c == '>'));
-            let found = g.messages_list(Some(&q), &[], None, 1).await?;
+            let found = g.messages_list(&read, Some(&q), &[], None, 1).await?;
             if let Some(existing) = found["messages"][0].as_object() {
                 thread_id = existing.get("threadId").and_then(|t| t.as_str()).map(String::from);
                 continue;
@@ -312,11 +313,12 @@ pub async fn count_queries(engine: &Arc<Engine>, account: &str, queries: &str) -
     let a = engine.db.account(account)?;
     check_account(&a.email)?;
     let g = engine.gmail(account)?;
+    let read = engine.db.begin_read(account);
     for q in queries.split('|').map(str::trim).filter(|q| !q.is_empty()) {
         let mut n = 0;
         let mut token: Option<String> = None;
         loop {
-            let v = g.threads_list(&[], Some(q), token.as_deref(), 500, false).await?;
+            let v = g.threads_list(&read, &[], Some(q), token.as_deref(), 500, false).await?;
             n += v["threads"].as_array().map(|a| a.len()).unwrap_or(0);
             token = v["nextPageToken"].as_str().map(String::from);
             if token.is_none() {
@@ -335,9 +337,10 @@ pub async fn probe(engine: &Arc<Engine>, account: &str, rounds: usize) -> Result
     let a = engine.db.account(account)?;
     check_account(&a.email)?;
     let g = engine.gmail(account)?;
+    let read = engine.db.begin_read(account);
     for (key, category) in [("p10", "primary"), ("p20", "updates")] {
         let q = format!("rfc822msgid:{} in:anywhere", message_id(key).trim_matches(|c| c == '<' || c == '>'));
-        let found = g.messages_list(Some(&q), &[], None, 1).await?;
+        let found = g.messages_list(&read, Some(&q), &[], None, 1).await?;
         let (Some(mid), Some(tid)) = (found["messages"][0]["id"].as_str().map(String::from), found["messages"][0]["threadId"].as_str().map(String::from))
         else {
             crate::applog::warn(&format!("{account}: probe conversation {key} isn't there; seed first"));
@@ -365,7 +368,7 @@ pub async fn probe(engine: &Arc<Engine>, account: &str, rounds: usize) -> Result
                         if settled[i].is_some() {
                             continue;
                         }
-                        let v = g.threads_list(ids, Some(q), None, 100, false).await?;
+                        let v = g.threads_list(&read, ids, Some(q), None, 100, false).await?;
                         let listed = v["threads"].as_array().map(|a| a.iter().any(|t| t["id"] == json!(tid))).unwrap_or(false);
                         if listed == want {
                             settled[i] = Some(t0.elapsed().as_millis());

@@ -852,7 +852,8 @@ impl Engine {
         let label = v.label.clone().unwrap_or_default();
         let (label_ids, q) = self.gmail_view_query_for(v);
         let include_spam_trash = label == "TRASH" || label == "SPAM";
-        let (ids, next, estimate) = gmail::list_page(&g, &self.db, account, &label_ids, Some(&q), v.page_token.as_deref(), limit as u32, include_spam_trash).await?;
+        let read = self.db.begin_read(account);
+        let (ids, next, estimate) = gmail::list_page(&g, &read, &label_ids, Some(&q), v.page_token.as_deref(), limit as u32, include_spam_trash).await?;
         if v.page_token.is_none() && !label.is_empty() {
             self.correct_cached_page(&g, account, v, &ids, next.is_none(), limit).await;
         }
@@ -883,8 +884,10 @@ impl Engine {
             return;
         }
         use futures::stream::{self, StreamExt};
+        let read = self.db.begin_read(account);
+        let read = &read;
         let got: Vec<(String, Result<Value>)> = stream::iter(stale.into_iter().map(|t| async move {
-            let r = g.thread_minimal(&t).await;
+            let r = g.thread_minimal(read, &t).await;
             (t, r)
         }))
         .buffer_unordered(8)
@@ -897,16 +900,16 @@ impl Engine {
                     let msgs = v["messages"].as_array().cloned().unwrap_or_default();
                     for m in &msgs {
                         if let Some(id) = m["id"].as_str() {
-                            let _ = self.db.set_labels(account, id, &gmail::str_labels(m));
+                            let _ = read.set_labels(id, &gmail::str_labels(m));
                         }
                     }
                     for m in cached.iter().filter(|c| !msgs.iter().any(|x| x["id"].as_str() == Some(c.id.as_str()))) {
-                        let _ = self.db.delete_message(account, &m.id);
+                        let _ = read.forget(&m.id);
                     }
                 }
                 Err(Error::NotFound(_)) => {
                     for m in cached {
-                        let _ = self.db.delete_message(account, &m.id);
+                        let _ = read.forget(&m.id);
                     }
                 }
                 Err(_) => {}
@@ -1043,7 +1046,7 @@ impl Engine {
                 return Ok(Changed::Queued);
             }
         }
-        self.db.end_change(account, ids, change, result.is_ok(), &had)?;
+        self.db.end_change(account, ids, change, result.is_ok())?;
         match result {
             Ok(()) => {
                 if gmail {
@@ -1180,8 +1183,9 @@ impl Engine {
             let g = self.gmail(account)?;
             let (label_ids, q) = self.gmail_view_query_for(v);
             let mut page: Option<String> = None;
+            let read = self.db.begin_read(account);
             loop {
-                let r = g.messages_list(Some(&q), &label_ids, page.as_deref(), 500).await?;
+                let r = g.messages_list(&read, Some(&q), &label_ids, page.as_deref(), 500).await?;
                 for m in r["messages"].as_array().cloned().unwrap_or_default() {
                     let (Some(id), Some(t)) = (m["id"].as_str(), m["threadId"].as_str()) else { continue };
                     if keep.contains(t) {
@@ -1518,14 +1522,10 @@ impl Engine {
             self.db.snooze(account, t, until)?;
         }
         if self.kind(account)? == "gmail" {
-            // The server copy leaves the inbox; the local record brings it back at `until`.
+            // The server copy leaves the inbox (as a label change like any other: shown at once, kept over older
+            // answers, waiting when offline); the local record brings it back at `until`.
             let ids = self.thread_message_ids(account, thread_ids)?;
-            self.db.modify_labels(account, &ids, &[], &["INBOX".into()])?;
-            if let Err(e) = self.gmail(account)?.batch_modify(&ids, &[], &["INBOX".into()]).await {
-                if !e.is_offline() {
-                    return Err(e);
-                }
-            }
+            self.modify_messages(account, &ids, &[], &["INBOX".into()]).await?;
         }
         self.changed(account, "snooze");
         Ok(())
@@ -1539,8 +1539,7 @@ impl Engine {
         if self.kind(account)? == "gmail" {
             let ids: Vec<String> = self.thread_message_ids(account, thread_ids)?.into_iter().filter(|id| self.db.message(account, id).ok().flatten().map(|m| !m.has("TRASH") && !m.has("SPAM") && !m.has("SENT") || m.has("INBOX")).unwrap_or(false)).collect();
             let ids = if ids.is_empty() { self.thread_message_ids(account, thread_ids)? } else { ids };
-            self.db.modify_labels(account, &ids, &["INBOX".into()], &[])?;
-            self.gmail(account)?.batch_modify(&ids, &["INBOX".into()], &[]).await?;
+            self.modify_messages(account, &ids, &["INBOX".into()], &[]).await?;
         }
         self.changed(account, "unsnooze");
         Ok(())

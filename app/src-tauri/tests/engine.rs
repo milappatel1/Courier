@@ -799,7 +799,7 @@ async fn a_delete_made_offline_stays_survives_a_restart_and_goes_out_once_online
     assert!(e2.db.message("g1", &gone).unwrap().unwrap().labels.contains(&"TRASH".to_string()));
     assert!(e2.sync_account("g1").await.unwrap_err().is_offline());
     // What the server said before the delete doesn't undo it while it waits.
-    e2.db.set_labels("g1", &gone, &["INBOX".into(), "UNREAD".into()]).unwrap();
+    e2.db.begin_read("g1").set_labels(&gone, &["INBOX".into(), "UNREAD".into()]).unwrap();
     let labels = e2.db.message("g1", &gone).unwrap().unwrap().labels;
     assert!(labels.contains(&"TRASH".to_string()) && !labels.contains(&"INBOX".to_string()), "a server read undid the queued delete: {labels:?}");
     assert_eq!(w.gmail.message(&gone).unwrap().labels, vec!["INBOX".to_string(), "UNREAD".to_string()], "the server changed while offline");

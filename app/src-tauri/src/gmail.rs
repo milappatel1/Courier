@@ -1,7 +1,7 @@
 //! Mail API client (REST over HTTPS) and its sync into the local cache: an initial window, then
 //! incremental changes by history ID, plus on-demand pages and threads.
 
-use crate::db::{AttachmentMeta, Db, LabelRow, MessageRow};
+use crate::db::{AttachmentMeta, Db, LabelRow, MessageRow, Read};
 use crate::error::{Error, Result};
 use crate::mailmeta;
 use crate::oauth::TokenManager;
@@ -130,20 +130,21 @@ impl Gmail {
     pub async fn label(&self, id: &str) -> Result<Value> {
         self.get(&format!("/labels/{}", enc(id)), &[]).await
     }
-    pub async fn message_raw(&self, id: &str) -> Result<Value> {
+    // Reads take the `Read` opened before them: its stamp must come before the request goes out.
+    pub async fn message_raw(&self, _read: &Read<'_>, id: &str) -> Result<Value> {
         self.get(&format!("/messages/{}", enc(id)), &[("format", "raw".into())]).await
     }
-    pub async fn thread_minimal(&self, id: &str) -> Result<Value> {
+    pub async fn thread_minimal(&self, _read: &Read<'_>, id: &str) -> Result<Value> {
         self.get(&format!("/threads/{}", enc(id)), &[("format", "minimal".into())]).await
     }
-    pub async fn thread_metadata(&self, id: &str) -> Result<Value> {
+    pub async fn thread_metadata(&self, _read: &Read<'_>, id: &str) -> Result<Value> {
         let mut q: Vec<(&str, String)> = vec![("format", "metadata".into())];
         for h in METADATA_HEADERS {
             q.push(("metadataHeaders", h.to_string()));
         }
         self.get(&format!("/threads/{}", enc(id)), &q).await
     }
-    pub async fn threads_list(&self, label_ids: &[String], q: Option<&str>, page_token: Option<&str>, max: u32, include_spam_trash: bool) -> Result<Value> {
+    pub async fn threads_list(&self, _read: &Read<'_>, label_ids: &[String], q: Option<&str>, page_token: Option<&str>, max: u32, include_spam_trash: bool) -> Result<Value> {
         let mut query: Vec<(&str, String)> = vec![("maxResults", max.to_string())];
         for l in label_ids {
             query.push(("labelIds", l.clone()));
@@ -159,7 +160,7 @@ impl Gmail {
         }
         self.get("/threads", &query).await
     }
-    pub async fn messages_list(&self, q: Option<&str>, label_ids: &[String], page_token: Option<&str>, max: u32) -> Result<Value> {
+    pub async fn messages_list(&self, _read: &Read<'_>, q: Option<&str>, label_ids: &[String], page_token: Option<&str>, max: u32) -> Result<Value> {
         let mut query: Vec<(&str, String)> = vec![("maxResults", max.to_string())];
         for l in label_ids {
             query.push(("labelIds", l.clone()));
@@ -172,7 +173,7 @@ impl Gmail {
         }
         self.get("/messages", &query).await
     }
-    pub async fn history(&self, start: &str, page_token: Option<&str>) -> Result<Value> {
+    pub async fn history(&self, _read: &Read<'_>, start: &str, page_token: Option<&str>) -> Result<Value> {
         let mut q: Vec<(&str, String)> = vec![("startHistoryId", start.to_string()), ("maxResults", "500".into())];
         if let Some(p) = page_token {
             q.push(("pageToken", p.to_string()));
@@ -300,7 +301,8 @@ fn internal_date(v: &Value) -> i64 {
 }
 
 /// Cache a message fetched with format=raw (full content, indexed).
-pub fn ingest_raw(db: &Db, account: &str, v: &Value) -> Result<MessageRow> {
+pub fn ingest_raw(read: &Read<'_>, v: &Value) -> Result<MessageRow> {
+    let account = read.account();
     let raw = decode_raw(v["raw"].as_str().unwrap_or(""))?;
     let mut row = mailmeta::parse_raw(&raw).row;
     row.account_id = account.into();
@@ -320,7 +322,7 @@ pub fn ingest_raw(db: &Db, account: &str, v: &Value) -> Result<MessageRow> {
         row.size = n;
     }
     row.has_raw = true;
-    db.upsert_message(&row, Some(&raw))?;
+    read.upsert_message(&row, Some(&raw))?;
     Ok(row)
 }
 
@@ -345,12 +347,13 @@ fn walk_parts(p: &Value, out: &mut Vec<AttachmentMeta>) {
 }
 
 /// Cache a message from format=metadata/full (headers, labels, snippet; no body text). Keeps any raw.
-pub fn ingest_metadata(db: &Db, account: &str, v: &Value) -> Result<MessageRow> {
+pub fn ingest_metadata(read: &Read<'_>, v: &Value) -> Result<MessageRow> {
+    let account = read.account();
     let id = v["id"].as_str().unwrap_or("").to_string();
-    if let Some(existing) = db.message(account, &id)? {
+    if let Some(existing) = read.db().message(account, &id)? {
         if existing.has_raw {
             // We already have the full message; just refresh labels.
-            db.set_labels(account, &id, &str_labels(v))?;
+            read.set_labels(&id, &str_labels(v))?;
             return Ok(MessageRow { labels: str_labels(v), ..existing });
         }
     }
@@ -378,7 +381,7 @@ pub fn ingest_metadata(db: &Db, account: &str, v: &Value) -> Result<MessageRow> 
     walk_parts(&v["payload"], &mut atts);
     row.attachments = atts;
     row.body_text = String::new();
-    db.upsert_message(&row, None)?;
+    read.upsert_message(&row, None)?;
     Ok(row)
 }
 
@@ -463,12 +466,13 @@ pub async fn refresh_labels(g: &Gmail, db: &Db, account: &str) -> Result<()> {
 /// Fetch full messages we don't have yet, a few at a time.
 /// Fetch and cache messages in full. A message that keeps failing is skipped (it's fetched again when opened),
 /// so one bad message can't hold up a whole sync; no connection or a needed sign-in still stops it.
-pub async fn fetch_raw_many(g: &Gmail, db: &Db, account: &str, ids: Vec<String>) -> Result<Vec<MessageRow>> {
+pub async fn fetch_raw_many(g: &Gmail, read: &Read<'_>, ids: Vec<String>) -> Result<Vec<MessageRow>> {
+    let account = read.account();
     use futures::stream::{self, StreamExt};
     // A few at a time: Gmail rate-limits bursts per user.
     let results: Vec<Result<MessageRow>> = stream::iter(ids.into_iter().map(|id| async move {
-        let v = g.message_raw(&id).await?;
-        ingest_raw(db, account, &v)
+        let v = g.message_raw(read, &id).await?;
+        ingest_raw(read, &v)
     }))
     .buffer_unordered(4)
     .collect()
@@ -498,6 +502,8 @@ pub async fn fetch_raw_many(g: &Gmail, db: &Db, account: &str, ids: Vec<String>)
 /// One list request per sync; only missing conversations are fetched (as metadata). Returns how many were added.
 pub async fn backfill_unread_inbox(g: &Gmail, db: &Db, account: &str, skip_categories: &[&str]) -> Result<usize> {
     use futures::stream::{self, StreamExt};
+    let read = db.begin_read(account);
+    let read = &read;
     let mut q = String::from("in:inbox is:unread -in:chats");
     for c in skip_categories {
         q.push_str(&format!(" -category:{}", c.trim_start_matches("CATEGORY_").to_lowercase()));
@@ -506,7 +512,7 @@ pub async fn backfill_unread_inbox(g: &Gmail, db: &Db, account: &str, skip_categ
     let mut page: Option<String> = None;
     let mut seen = 0usize;
     loop {
-        let r = g.messages_list(Some(&q), &[], page.as_deref(), 500).await?;
+        let r = g.messages_list(read, Some(&q), &[], page.as_deref(), 500).await?;
         for m in r["messages"].as_array().cloned().unwrap_or_default() {
             seen += 1;
             let (Some(id), Some(tid)) = (m["id"].as_str(), m["threadId"].as_str()) else { continue };
@@ -520,12 +526,12 @@ pub async fn backfill_unread_inbox(g: &Gmail, db: &Db, account: &str, skip_categ
         }
     }
     let n = missing.len();
-    let fetched: Vec<Result<Value>> = stream::iter(missing.into_iter().map(|id| async move { g.thread_metadata(&id).await })).buffer_unordered(8).collect().await;
+    let fetched: Vec<Result<Value>> = stream::iter(missing.into_iter().map(|id| async move { g.thread_metadata(read, &id).await })).buffer_unordered(8).collect().await;
     for t in fetched {
         match t {
             Ok(t) => {
                 for m in t["messages"].as_array().cloned().unwrap_or_default() {
-                    ingest_metadata(db, account, &m)?;
+                    ingest_metadata(read, &m)?;
                 }
             }
             Err(Error::NotFound(_)) => {}
@@ -537,6 +543,7 @@ pub async fn backfill_unread_inbox(g: &Gmail, db: &Db, account: &str, skip_categ
 
 /// First sync: labels, then the offline window (newest first, capped).
 pub async fn initial_sync(g: &Gmail, db: &Db, account: &str, window_days: u32, max_messages: usize) -> Result<SyncReport> {
+    let read = db.begin_read(account);
     let profile = g.profile().await?;
     let history_id = profile["historyId"].as_str().map(str::to_string).or_else(|| profile["historyId"].as_i64().map(|n| n.to_string()));
     refresh_labels(g, db, account).await?;
@@ -544,7 +551,7 @@ pub async fn initial_sync(g: &Gmail, db: &Db, account: &str, window_days: u32, m
     let mut ids = Vec::new();
     let mut page: Option<String> = None;
     loop {
-        let r = g.messages_list(Some(&q), &[], page.as_deref(), 500).await?;
+        let r = g.messages_list(&read, Some(&q), &[], page.as_deref(), 500).await?;
         for m in r["messages"].as_array().cloned().unwrap_or_default() {
             if let Some(id) = m["id"].as_str() {
                 ids.push(id.to_string());
@@ -557,7 +564,7 @@ pub async fn initial_sync(g: &Gmail, db: &Db, account: &str, window_days: u32, m
     }
     ids.truncate(max_messages);
     let missing: Vec<String> = ids.into_iter().filter(|id| !db.has_message(account, id).unwrap_or(false)).collect();
-    let fetched = fetch_raw_many(g, db, account, missing).await?;
+    let fetched = fetch_raw_many(g, &read, missing).await?;
     sync_drafts(g, db, account).await.ok();
     if let Some(h) = &history_id {
         db.set_account_state(account, "historyId", json!(h))?;
@@ -572,6 +579,7 @@ pub async fn initial_sync(g: &Gmail, db: &Db, account: &str, window_days: u32, m
 pub async fn reconcile_cache(g: &Gmail, db: &Db, account: &str, limit: i64) -> Result<usize> {
     use futures::stream::{self, StreamExt};
     let ids = db.message_ids(account, limit)?;
+    let read = db.begin_read(account);
     let got: Vec<(String, Result<Value>)> = stream::iter(ids.into_iter().map(|id| async move {
         let r = g.get(&format!("/messages/{}", enc(&id)), &[("format", "minimal".into())]).await;
         (id, r)
@@ -585,12 +593,12 @@ pub async fn reconcile_cache(g: &Gmail, db: &Db, account: &str, limit: i64) -> R
             Ok(v) => {
                 let labels = str_labels(&v);
                 if db.message(account, &id)?.map(|m| m.labels != labels).unwrap_or(false) {
-                    db.set_labels(account, &id, &labels)?;
+                    read.set_labels(&id, &labels)?;
                     changed += 1;
                 }
             }
             Err(Error::NotFound(_)) => {
-                db.delete_message(account, &id)?;
+                read.forget(&id)?;
                 changed += 1;
             }
             Err(e) if e.is_offline() || e.is_auth() || e.is_rate_limited() => return Err(e),
@@ -616,8 +624,9 @@ pub async fn incremental_sync(g: &Gmail, db: &Db, account: &str) -> Result<SyncR
     // Labels whose counts may have moved, cached mail or not.
     let mut touched: Vec<String> = Vec::new();
     let mut latest = start.clone();
+    let read = db.begin_read(account);
     loop {
-        let r = g.history(&start, page.as_deref()).await?;
+        let r = g.history(&read, &start, page.as_deref()).await?;
         if let Some(h) = r["historyId"].as_str() {
             latest = h.to_string();
         }
@@ -666,7 +675,7 @@ pub async fn incremental_sync(g: &Gmail, db: &Db, account: &str) -> Result<SyncR
     added.dedup();
     let (cached, fresh): (Vec<String>, Vec<String>) = added.iter().cloned().partition(|id| db.has_message(account, id).unwrap_or(false));
     if !fresh.is_empty() {
-        report.new_messages = fetch_raw_many(g, db, account, fresh).await?;
+        report.new_messages = fetch_raw_many(g, &read, fresh).await?;
         report.changed = true;
     }
     // New since the last check even if already cached (the unread backfill or a list page may have fetched it
@@ -681,7 +690,7 @@ pub async fn incremental_sync(g: &Gmail, db: &Db, account: &str) -> Result<SyncR
             continue;
         }
         if db.has_message(account, &id)? {
-            db.set_labels(account, &id, &labels)?;
+            read.set_labels(&id, &labels)?;
             report.changed = true;
         }
     }
@@ -702,7 +711,8 @@ pub async fn incremental_sync(g: &Gmail, db: &Db, account: &str) -> Result<SyncR
 
 /// Make sure every message of a thread is cached in full (opening a conversation).
 pub async fn ensure_thread(g: &Gmail, db: &Db, account: &str, thread_id: &str) -> Result<()> {
-    let t = g.thread_minimal(thread_id).await?;
+    let read = db.begin_read(account);
+    let t = g.thread_minimal(&read, thread_id).await?;
     let mut missing = Vec::new();
     let mut ids = Vec::new();
     for m in t["messages"].as_array().cloned().unwrap_or_default() {
@@ -710,7 +720,7 @@ pub async fn ensure_thread(g: &Gmail, db: &Db, account: &str, thread_id: &str) -
         ids.push(id.to_string());
         match db.message(account, id)? {
             Some(row) if row.has_raw => {
-                db.set_labels(account, id, &str_labels(&m))?;
+                read.set_labels(id, &str_labels(&m))?;
             }
             _ => missing.push(id.to_string()),
         }
@@ -718,10 +728,10 @@ pub async fn ensure_thread(g: &Gmail, db: &Db, account: &str, thread_id: &str) -
     // Messages no longer in the thread (deleted elsewhere).
     for old in db.thread_messages(account, thread_id)? {
         if !ids.contains(&old.id) {
-            db.delete_message(account, &old.id)?;
+            read.forget(&old.id)?;
         }
     }
-    fetch_raw_many(g, db, account, missing).await?;
+    fetch_raw_many(g, &read, missing).await?;
     Ok(())
 }
 
@@ -729,14 +739,16 @@ pub async fn ensure_raw(g: &Gmail, db: &Db, account: &str, id: &str) -> Result<V
     if let Some(r) = db.raw(account, id)? {
         return Ok(r);
     }
-    let v = g.message_raw(id).await?;
-    ingest_raw(db, account, &v)?;
+    let read = db.begin_read(account);
+    let v = g.message_raw(&read, id).await?;
+    ingest_raw(&read, &v)?;
     db.raw(account, id)?.ok_or_else(|| Error::NotFound(id.into()))
 }
 
 /// One page of a server-side listing (label view or search). Caches what's missing; returns ids in order.
-pub async fn list_page(g: &Gmail, db: &Db, account: &str, label_ids: &[String], q: Option<&str>, page_token: Option<&str>, max: u32, include_spam_trash: bool) -> Result<(Vec<String>, Option<String>, i64)> {
-    let r = g.threads_list(label_ids, q, page_token, max, include_spam_trash).await?;
+pub async fn list_page(g: &Gmail, read: &Read<'_>, label_ids: &[String], q: Option<&str>, page_token: Option<&str>, max: u32, include_spam_trash: bool) -> Result<(Vec<String>, Option<String>, i64)> {
+    let (db, account) = (read.db(), read.account());
+    let r = g.threads_list(read, label_ids, q, page_token, max, include_spam_trash).await?;
     let mut ids = Vec::new();
     let mut need = Vec::new();
     for t in r["threads"].as_array().cloned().unwrap_or_default() {
@@ -748,11 +760,11 @@ pub async fn list_page(g: &Gmail, db: &Db, account: &str, label_ids: &[String], 
         }
     }
     use futures::stream::{self, StreamExt};
-    let fetched: Vec<Result<Value>> = stream::iter(need.into_iter().map(|id| async move { g.thread_metadata(&id).await })).buffer_unordered(8).collect().await;
+    let fetched: Vec<Result<Value>> = stream::iter(need.into_iter().map(|id| async move { g.thread_metadata(read, &id).await })).buffer_unordered(8).collect().await;
     for t in fetched {
         let t = t?;
         for m in t["messages"].as_array().cloned().unwrap_or_default() {
-            ingest_metadata(db, account, &m)?;
+            ingest_metadata(read, &m)?;
         }
     }
     Ok((ids, r["nextPageToken"].as_str().map(str::to_string), r["resultSizeEstimate"].as_i64().unwrap_or(0)))
@@ -760,6 +772,7 @@ pub async fn list_page(g: &Gmail, db: &Db, account: &str, label_ids: &[String], 
 
 /// Keep the draft-id ↔ message-id map current.
 pub async fn sync_drafts(g: &Gmail, db: &Db, account: &str) -> Result<()> {
+    let read = db.begin_read(account);
     let mut page: Option<String> = None;
     let mut seen = Vec::new();
     loop {
@@ -769,8 +782,8 @@ pub async fn sync_drafts(g: &Gmail, db: &Db, account: &str) -> Result<()> {
             db.set_draft(account, did, mid, d["message"]["threadId"].as_str())?;
             seen.push(did.to_string());
             if !db.has_message(account, mid)? {
-                if let Ok(v) = g.message_raw(mid).await {
-                    ingest_raw(db, account, &v)?;
+                if let Ok(v) = g.message_raw(&read, mid).await {
+                    ingest_raw(&read, &v)?;
                 }
             }
         }
