@@ -789,6 +789,25 @@ async fn a_conversation_deleted_offline_covers_its_older_messages_when_it_goes_o
 }
 
 #[tokio::test]
+async fn a_count_read_before_a_change_landed_never_puts_the_old_number_back() {
+    let w = world().await;
+    w.gmail.state.lock().user_labels.push(json!({"id": "Label_1", "name": "Receipts", "type": "user"}));
+    let a = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Receipt", "x", ""), &["INBOX", "UNREAD", "Label_1"]);
+    w.engine.sync_account("g1").await.unwrap();
+    let unread = || w.engine.db.label("g1", "Label_1").unwrap().map(|l| l.threads_unread).unwrap_or(-1);
+    assert_eq!(unread(), 1);
+    // A count read now, answered after the mail is marked read here.
+    w.gmail.state.lock().tail_latency.insert("labels".into(), 600);
+    let g = w.engine.gmail("g1").unwrap();
+    let db = w.engine.db.clone();
+    let late = tokio::spawn(async move { courier_lib::gmail::refresh_label_counts(&g, &db, "g1", &["Label_1".into()]).await });
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    w.engine.modify_messages("g1", std::slice::from_ref(&a), &[], &["UNREAD".into()]).await.unwrap();
+    late.await.unwrap().unwrap();
+    assert_eq!(unread(), 0, "a count read before the change put the old number back");
+}
+
+#[tokio::test]
 async fn a_full_resync_drops_mail_deleted_on_the_server_and_refreshes_what_moved() {
     let w = world().await;
     let gone = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Deleted elsewhere", "x", ""), &["INBOX"]);

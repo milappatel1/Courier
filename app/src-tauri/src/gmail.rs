@@ -403,13 +403,14 @@ pub async fn refresh_label_counts(g: &Gmail, db: &Db, account: &str, ids: &[Stri
     let mut want: Vec<String> = ids.iter().filter(|i| known.contains(*i) && !pending.contains(*i)).cloned().collect();
     want.sort();
     want.dedup();
+    let read = db.begin_read(account);
     let got: Vec<Result<Value>> = stream::iter(want.into_iter().map(|id| async move { g.label(&id).await })).buffer_unordered(4).collect().await;
     for v in got {
         match v {
             Ok(v) => {
                 let n = |k: &str| v[k].as_i64().unwrap_or(0);
                 if let Some(id) = v["id"].as_str() {
-                    db.set_label_counts(account, id, (n("threadsTotal"), n("threadsUnread"), n("messagesTotal"), n("messagesUnread")))?;
+                    read.set_label_counts(id, (n("threadsTotal"), n("threadsUnread"), n("messagesTotal"), n("messagesUnread")))?;
                 }
             }
             Err(e) if e.is_offline() || e.is_auth() || e.is_rate_limited() => return Err(e),
@@ -425,6 +426,7 @@ pub const LABELS_REFRESH_MS: i64 = 10 * 60 * 1000;
 
 pub async fn refresh_labels(g: &Gmail, db: &Db, account: &str) -> Result<()> {
     use futures::stream::{self, StreamExt};
+    let read = db.begin_read(account);
     let labels = g.labels().await?;
     // labels.list omits counts; each label's own request has them.
     let got: Vec<(Value, Result<Value>)> = stream::iter(labels.iter().cloned().map(|l| async move {
@@ -440,7 +442,7 @@ pub async fn refresh_labels(g: &Gmail, db: &Db, account: &str) -> Result<()> {
     for (l, full) in got {
         let id = l["id"].as_str().unwrap_or("").to_string();
         match full {
-            Ok(full) if !pending.contains(&id) => db.upsert_label(&label_row(account, &full))?,
+            Ok(full) if !pending.contains(&id) => read.upsert_label(&label_row(account, &full))?,
             Err(e) if e.is_offline() || e.is_auth() => return Err(e),
             // Couldn't read the counts this time (rate limit, a hiccup), or a pending change is about to move
             // them: keep the ones we have, not zeros.

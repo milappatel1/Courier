@@ -122,6 +122,8 @@ export interface ViewQuery {
 }
 
 export interface ViewResult {
+  /** The newest change made here that this listing reflects (a change id from changeThreads). */
+  ledger: number;
   threads: ThreadSummary[];
   total: number;
   estimate: boolean;

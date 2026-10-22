@@ -258,6 +258,25 @@ impl Read<'_> {
     pub fn upsert_message(&self, m: &MessageRow, raw: Option<&[u8]>) -> Result<()> {
         self.db.upsert_from_server(m, raw, self.stamp)
     }
+    pub fn set_label_counts(&self, id: &str, counts: (i64, i64, i64, i64)) -> Result<()> {
+        self.db.label_counts_from_server(&self.account, id, counts, self.stamp)
+    }
+    /// A label as the server lists it: name, colour and visibility always; its counts unless newer ones are held.
+    pub fn upsert_label(&self, l: &LabelRow) -> Result<()> {
+        let held: Option<(i64, i64, i64, i64, i64)> = self.db.with(|c| {
+            c.query_row("SELECT threads_total, threads_unread, messages_total, messages_unread, counts_stamp FROM labels WHERE account_id=? AND id=?", [&l.account_id, &l.id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })
+            .optional()
+        })?;
+        match held {
+            Some((tt, tu, mt, mu, s)) if s > self.stamp => self.db.upsert_label(&LabelRow { threads_total: tt, threads_unread: tu, messages_total: mt, messages_unread: mu, ..l.clone() }),
+            _ => {
+                self.db.upsert_label(l)?;
+                self.db.label_counts_from_server(&l.account_id, &l.id, (l.threads_total, l.threads_unread, l.messages_total, l.messages_unread), self.stamp)
+            }
+        }
+    }
     /// The server's answer didn't have this message: it's gone, unless a newer answer put it here.
     pub fn forget(&self, id: &str) -> Result<()> {
         let held: Option<i64> = self.db.with(|c| c.query_row("SELECT server_stamp FROM messages WHERE account_id=? AND id=?", [&self.account, id], |r| r.get(0)).optional())?;
@@ -305,6 +324,7 @@ CREATE TABLE IF NOT EXISTS labels (
   threads_total INTEGER NOT NULL DEFAULT 0, threads_unread INTEGER NOT NULL DEFAULT 0,
   messages_total INTEGER NOT NULL DEFAULT 0, messages_unread INTEGER NOT NULL DEFAULT 0,
   imap_path TEXT, imap_delimiter TEXT, imap_uidvalidity INTEGER, imap_uidnext INTEGER, imap_modseq INTEGER, special TEXT,
+  counts_stamp INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (account_id, id)
 );
 CREATE TABLE IF NOT EXISTS messages (
@@ -529,6 +549,9 @@ pub struct ListFilter {
 /// Caches from before 1.1 keep only the labels shown: those become the server's labels, except where a change
 /// waits in the queue (it is in `labels` already), where the labels before it are the server's.
 fn migrate(c: &Connection) -> rusqlite::Result<()> {
+    if !c.prepare("SELECT 1 FROM pragma_table_info('labels') WHERE name='counts_stamp'")?.exists([])? {
+        c.execute_batch("ALTER TABLE labels ADD COLUMN counts_stamp INTEGER NOT NULL DEFAULT 0;")?;
+    }
     if c.prepare("SELECT 1 FROM pragma_table_info('messages') WHERE name='server_labels'")?.exists([])? {
         return Ok(());
     }
@@ -810,11 +833,28 @@ impl Db {
         })
     }
 
-    pub fn set_label_counts(&self, account: &str, id: &str, counts: (i64, i64, i64, i64)) -> Result<()> {
+    /// A label's counts read from the server at `stamp`: kept unless the cache holds counts from a later read or
+    /// acknowledgement (a count read before a change landed would put the old number back).
+    fn label_counts_from_server(&self, account: &str, id: &str, counts: (i64, i64, i64, i64), stamp: i64) -> Result<()> {
         self.with(|c| {
-            c.execute("UPDATE labels SET threads_total=?3, threads_unread=?4, messages_total=?5, messages_unread=?6 WHERE account_id=?1 AND id=?2", params![account, id, counts.0, counts.1, counts.2, counts.3])?;
+            c.execute(
+                "UPDATE labels SET threads_total=?3, threads_unread=?4, messages_total=?5, messages_unread=?6, counts_stamp=?7 WHERE account_id=?1 AND id=?2 AND counts_stamp <= ?7",
+                params![account, id, counts.0, counts.1, counts.2, counts.3, stamp],
+            )?;
             Ok(())
         })
+    }
+
+    /// These labels' counts now include a change the server just acknowledged (they were adjusted when it was made):
+    /// counts read before now are older.
+    pub fn counts_landed(&self, account: &str, labels: &[String]) {
+        let stamp = self.tick();
+        let _ = self.with(|c| {
+            for l in labels {
+                c.execute("UPDATE labels SET counts_stamp=MAX(counts_stamp, ?3) WHERE account_id=?1 AND id=?2", params![account, l, stamp])?;
+            }
+            Ok(())
+        });
     }
 
     pub fn sender_lists(&self, account: &str, email: &str) -> Result<Vec<SenderList>> {
@@ -1430,6 +1470,42 @@ impl Db {
             let mut s = c.prepare(&sql)?;
             let rows = s.query_map(params_from_iter(q), |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
             Ok((rows, total))
+        })
+    }
+
+    /// Which of `threads` the view `f` holds, as the cache sees them.
+    pub fn threads_in_view(&self, account: &str, f: &ListFilter, threads: &[String]) -> Result<HashSet<String>> {
+        if threads.is_empty() {
+            return Ok(HashSet::new());
+        }
+        let mut cond = format!("m.account_id = ? AND ({})", if f.clause.is_empty() { "1" } else { &f.clause });
+        if f.exclude_trash_spam {
+            cond.push_str(" AND m.labels NOT LIKE '% TRASH %' AND m.labels NOT LIKE '% SPAM %'");
+        }
+        if f.exclude_snoozed {
+            cond.push_str(" AND m.thread_id NOT IN (SELECT thread_id FROM snoozes s WHERE s.account_id = m.account_id)");
+        }
+        cond.push_str(&format!(" AND m.thread_id IN ({})", vec!["?"; threads.len()].join(",")));
+        self.with(|c| {
+            let mut p: Vec<rusqlite::types::Value> = vec![account.to_string().into()];
+            p.extend(f.params.clone());
+            p.extend(threads.iter().map(|t| t.clone().into()));
+            c.prepare(&format!("SELECT DISTINCT m.thread_id FROM messages m WHERE {cond}"))?.query_map(params_from_iter(p), |r| r.get(0))?.collect()
+        })
+    }
+
+    /// Conversations this Mac knows something newer about than a read stamped `stamp`: a message's labels came
+    /// from a later read or acknowledgement, or a change made here is still on its way.
+    pub fn threads_known_after(&self, account: &str, stamp: i64) -> Result<HashSet<String>> {
+        let pending: Vec<String> = self.pending.lock().keys().filter(|(a, _)| a == account).map(|(_, id)| id.clone()).collect();
+        self.with(|c| {
+            let mut out: HashSet<String> = c.prepare("SELECT DISTINCT thread_id FROM messages WHERE account_id=? AND server_stamp > ?")?.query_map(params![account, stamp], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+            for id in pending {
+                if let Some(t) = c.query_row("SELECT thread_id FROM messages WHERE account_id=? AND id=?", [account, &id], |r| r.get::<_, String>(0)).optional()? {
+                    out.insert(t);
+                }
+            }
+            Ok(out)
         })
     }
 

@@ -158,6 +158,8 @@ pub struct ViewResult {
     pub has_more: bool,
     pub next_page_token: Option<String>,
     pub source: String,
+    /// The newest change made here that this listing reflects (change ids from `change`).
+    pub ledger: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -810,6 +812,13 @@ impl Engine {
     }
 
     pub async fn list(&self, v: &ViewQuery) -> Result<ViewResult> {
+        let ledger = self.next_made.load(Ordering::SeqCst) - 1;
+        let mut r = self.list_view(v).await?;
+        r.ledger = ledger;
+        Ok(r)
+    }
+
+    async fn list_view(&self, v: &ViewQuery) -> Result<ViewResult> {
         let limit = v.page_size.clamp(1, 200);
         let offset = v.page.max(0) * limit;
         if v.account_id == "all" {
@@ -848,12 +857,22 @@ impl Engine {
     }
 
     /// A view as a Gmail API listing, with Settings ▸ Inbox ▸ Include starred in Primary applied.
+    /// The Primary tab is the Inbox minus the enabled tabs' categories (Forums mail is in Primary while its tab is
+    /// off), as the cache lists it; the search operator `category:primary` would leave out mail of disabled tabs.
     fn gmail_view_query_for(&self, v: &ViewQuery) -> (Vec<String>, String) {
         let (ids, q) = Self::gmail_view_query(v);
-        if v.category.as_deref() == Some("primary") && self.starred_in_primary() {
-            return (ids, q.replacen("category:primary", "{category:primary is:starred}", 1));
+        if v.category.as_deref() != Some("primary") {
+            return (ids, q);
         }
-        (ids, q)
+        let others: Vec<String> = self.tab_categories().iter().map(|c| format!("category:{}", c.trim_start_matches("CATEGORY_").to_lowercase())).collect();
+        let primary = if others.is_empty() {
+            String::new()
+        } else if self.starred_in_primary() {
+            format!("{{is:starred -{{{}}}}}", others.join(" "))
+        } else {
+            others.iter().map(|c| format!("-{c}")).collect::<Vec<_>>().join(" ")
+        };
+        (ids, q.replacen("category:primary", &primary, 1).trim().to_string())
     }
 
     /// A view as a Gmail API listing: label ids and a search query.
@@ -884,16 +903,44 @@ impl Engine {
         if v.page_token.is_none() && !label.is_empty() {
             self.correct_cached_page(&g, account, v, &ids, next.is_none(), limit).await;
         }
+        // Conversations this Mac knows newer things about than this listing's read (a change made here, still on its
+        // way or landed meanwhile, or a newer answer) follow the cache: out of the page if the cache says they left
+        // the view, into the first page if it says they came in.
+        let (filter, _) = self.filter_for(account, v)?;
+        let known = self.db.threads_known_after(account, read.stamp())?;
+        let listed_known: Vec<String> = ids.iter().filter(|t| known.contains(*t)).cloned().collect();
+        let stays = self.db.threads_in_view(account, &filter, &listed_known)?;
+        let listed_n = ids.len() as i64;
+        let mut ids: Vec<String> = ids.into_iter().filter(|t| !known.contains(t) || stays.contains(t)).collect();
+        let dropped = listed_n - ids.len() as i64;
+        let mut came: Vec<String> = Vec::new();
+        if v.page_token.is_none() && !known.is_empty() {
+            let missing: Vec<String> = known.iter().filter(|t| !ids.contains(t)).cloned().collect();
+            came = self.db.threads_in_view(account, &filter, &missing)?.into_iter().collect();
+        }
+        drop(read);
         // Locally snoozed threads stay hidden from the inbox.
         let snoozed: HashSet<String> = if label == "INBOX" { self.db.snoozed_thread_ids(account)?.into_iter().map(|x| x.0).collect() } else { HashSet::new() };
-        let ids: Vec<(String, i64)> = ids.into_iter().filter(|i| !snoozed.contains(i)).map(|i| (i, 0)).collect();
-        let threads = self.db.thread_summaries(account, &ids, include_spam_trash || search::parse(&q).map(|n| search::mentions_spam_trash(&n)).unwrap_or(false))?;
+        let in_bin = include_spam_trash || search::parse(&q).map(|n| search::mentions_spam_trash(&n)).unwrap_or(false);
+        let listed: Vec<(String, i64)> = ids.drain(..).filter(|i| !snoozed.contains(i)).map(|i| (i, 0)).collect();
+        let mut threads = self.db.thread_summaries(account, &listed, in_bin)?;
+        let mut added = 0i64;
+        if !came.is_empty() {
+            // Only within the span this page covers (newer than its oldest row, or all when it's the last page).
+            let oldest = if next.is_none() { i64::MIN } else { threads.iter().map(|t| t.last_date).min().unwrap_or(i64::MIN) };
+            let extra: Vec<(String, i64)> = came.into_iter().filter(|t| !snoozed.contains(t)).map(|t| (t, 0)).collect();
+            let extra: Vec<ThreadSummary> = self.db.thread_summaries(account, &extra, in_bin)?.into_iter().filter(|t| t.last_date >= oldest).collect();
+            added = extra.len() as i64;
+            threads.extend(extra);
+            threads.sort_by(|a, b| b.last_date.cmp(&a.last_date));
+        }
         let (total, est) = if v.category.is_none() && v.query.as_deref().map(|q| q.trim().is_empty()).unwrap_or(true) && !label.is_empty() && label != "ALL" {
             (self.db.label(account, &label)?.map(|l| l.threads_total).unwrap_or(estimate), false)
         } else {
-            (estimate, true)
+            // The server's estimate counted what the page listed; the cache's verdict took some out or put some in.
+            ((estimate - dropped + added).max(threads.len() as i64), true)
         };
-        Ok(ViewResult { has_more: next.is_some(), next_page_token: next, total, estimate: est, threads, source: "server".into() })
+        Ok(ViewResult { has_more: next.is_some(), next_page_token: next, total, estimate: est, threads, source: "server".into(), ledger: 0 })
     }
 
     /// The cached first page of a view lists conversations the server's first page doesn't (changed on another
@@ -1093,9 +1140,8 @@ impl Engine {
     /// A label change, exactly as given: here at once on the cached messages `ids`, then on the server; with
     /// `threads`, on every message of those conversations the server has (read when it goes out).
     async fn change(&self, account: &str, ids: &[String], add: &[String], remove: &[String], threads: &[String]) -> Result<Receipt> {
-        let id = self.next_made.fetch_add(1, Ordering::SeqCst);
         if ids.is_empty() && threads.is_empty() {
-            return Ok(Receipt { result: Changed::Done, change: id });
+            return Ok(Receipt { result: Changed::Done, change: self.next_made.fetch_add(1, Ordering::SeqCst) });
         }
         let (add, remove) = (add.to_vec(), remove.to_vec());
         let bin = add.iter().chain(&remove).any(|l| l == "TRASH" || l == "SPAM");
@@ -1110,6 +1156,8 @@ impl Engine {
         let before = self.db.label_thread_stats(account, &cached_threads)?;
         let had: HashMap<String, Vec<String>> = ids.iter().filter_map(|id| self.db.message(account, id).ok().flatten().map(|m| (id.clone(), m.labels))).collect();
         let change = self.db.begin_change(account, ids, &add, &remove)?;
+        // Numbered once it shows here: a listing stamped with this number or later has it.
+        let id = self.next_made.fetch_add(1, Ordering::SeqCst);
         let after = self.db.label_thread_stats(account, &cached_threads)?;
         if gmail {
             self.db.apply_label_deltas(account, &before, &after)?;
@@ -1165,6 +1213,10 @@ impl Engine {
         match result {
             Ok(uncached) => {
                 self.db.mark_landed(account, &uncached, &add, &remove);
+                if gmail {
+                    let touched: Vec<String> = before.keys().chain(after.keys()).chain(&add).chain(&remove).cloned().collect();
+                    self.db.counts_landed(account, &touched);
+                }
                 self.remember(Made { id, account: account.into(), add: add.clone(), remove: remove.clone(), prior, queued_threads: vec![] });
                 if gmail {
                     // The server's own counts for every label involved.

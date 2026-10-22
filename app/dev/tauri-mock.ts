@@ -560,6 +560,7 @@ function list(v: ViewQuery) {
     hasMore: start + v.pageSize < total,
     nextPageToken: null,
     source: "cache" as const,
+    ledger: nextMade - 1,
   };
 }
 

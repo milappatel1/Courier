@@ -451,32 +451,36 @@ const trace = (what: string, ids?: string[]) => {
 };
 
 /**
- * Conversations an action took out of the view, until a listing fetched after the action finished: by id, the
- * listing number from which on the server and the cache show the change (Infinity while it is still running).
- * Earlier listings still have the old state, so they must not put the row back.
+ * Conversations an action took out of the view, by id, until a listing that reflects the action arrives: one
+ * stamped with the action's change number or later (`ledger`), or, for actions without one, a listing started
+ * after the action finished. Infinity while the action hasn't been numbered yet. Earlier listings may still have
+ * the old state, so they must not put the row back.
  */
-const leaving = new Map<string, number>();
+const leaving = new Map<string, { change: number } | { seq: number }>();
 
 /** An action is taking these conversations out of the current view (hidden at once). */
 export function hideThreads(threadIds: string[]) {
   trace("hide", threadIds);
-  for (const id of threadIds) leaving.set(id, Infinity);
+  for (const id of threadIds) leaving.set(id, { change: Infinity });
   set((s) => ({ hiddenThreads: [...new Set([...s.hiddenThreads, ...threadIds])], selected: s.selected.filter((x) => !threadIds.includes(x)) }));
 }
 
-/** The action is done: listings from now on show it. When it failed, the conversations come back at once. */
-export function settleThreads(threadIds: string[], ok: boolean) {
-  trace(`settle${ok ? "" : " (failed)"} from list#${listSeq + 1}`, threadIds);
-  for (const id of threadIds) leaving.set(id, listSeq + 1);
+/**
+ * The action is done: listings that reflect `change` (or, without a change number, listings started from now on)
+ * show it. When it failed, the conversations come back at once.
+ */
+export function settleThreads(threadIds: string[], ok: boolean, change?: number) {
+  trace(`settle${ok ? "" : " (failed)"} ${change !== undefined ? `at change ${change}` : `from list#${listSeq + 1}`}`, threadIds);
+  for (const id of threadIds) leaving.set(id, change !== undefined ? { change } : { seq: listSeq + 1 });
   if (!ok) {
     for (const id of threadIds) leaving.delete(id);
     set((s) => ({ hiddenThreads: s.hiddenThreads.filter((x) => !threadIds.includes(x)) }));
   }
 }
 
-/** The rows still hidden once listing number `seq` arrives. */
-function stillHidden(seq: number): string[] {
-  for (const [id, from] of leaving) if (seq >= from) leaving.delete(id);
+/** The rows still hidden once listing number `seq`, reflecting changes up to `ledger`, arrives. */
+function stillHidden(seq: number, ledger: number): string[] {
+  for (const [id, until] of leaving) if ("seq" in until ? seq >= until.seq : ledger >= until.change) leaving.delete(id);
   return get().hiddenThreads.filter((id) => leaving.has(id));
 }
 
@@ -489,19 +493,27 @@ export async function loadList(opts: { quiet?: boolean } = {}) {
   trace(`list#${seq} start`);
   if (!opts.quiet || s.list.key !== key) set((st) => ({ list: { ...st.list, key, loading: true, error: null } }));
   try {
-    // Fast: the cache. Then the server page for mail-API accounts (authoritative when online).
-    const cached = await api.list({ ...view, mode: "cache" });
-    if (seq !== listSeq) return trace(`list#${seq} cache dropped`);
-    trace(
-      `list#${seq} cache`,
-      cached.threads.map((t) => t.threadId),
-    );
     const acct = accountById(view.accountId);
     const asking = acct?.kind === "gmail" && get().online;
-    // This Mac keeps only recent mail: a short cached page may be missing older mail the server has, so it
-    // isn't called empty (or complete) until the server has answered.
-    const short = asking && cached.threads.length < view.pageSize && (view.page === 0 || get().list.tokens[view.page] !== undefined);
-    set((st) => ({ list: { ...st.list, key, result: cached, loading: short && st.list.loading, settling: short }, hiddenThreads: stillHidden(seq) }));
+    // Fast: the cache. Then the server page for mail-API accounts (authoritative when online). A quiet refresh of
+    // a view already showing the server's page goes straight to the server: showing the cache's page first would
+    // swap rows and totals back and forth on every refresh.
+    const fromServer = !!opts.quiet && asking && s.list.key === key && s.list.result?.source === "server";
+    if (!fromServer) {
+      const cached = await api.list({ ...view, mode: "cache" });
+      if (seq !== listSeq) return trace(`list#${seq} cache dropped`);
+      trace(
+        `list#${seq} cache`,
+        cached.threads.map((t) => t.threadId),
+      );
+      // This Mac keeps only recent mail: a short cached page may be missing older mail the server has, so it
+      // isn't called empty (or complete) until the server has answered.
+      const short = asking && cached.threads.length < view.pageSize && (view.page === 0 || get().list.tokens[view.page] !== undefined);
+      set((st) => ({
+        list: { ...st.list, key, result: cached, loading: short && st.list.loading, settling: short },
+        hiddenThreads: stillHidden(seq, cached.ledger),
+      }));
+    }
     if (asking) {
       const token = view.page === 0 ? null : (get().list.tokens[view.page] ?? undefined);
       if (token === undefined && view.page > 0) return; // no token for a page we skipped to: keep the cache
@@ -514,7 +526,7 @@ export async function loadList(opts: { quiet?: boolean } = {}) {
       set((st) => {
         const tokens = [...st.list.tokens];
         tokens[view.page + 1] = server.nextPageToken;
-        return { list: { ...st.list, key, result: server, loading: false, settling: false, tokens }, hiddenThreads: stillHidden(seq) };
+        return { list: { ...st.list, key, result: server, loading: false, settling: false, tokens }, hiddenThreads: stillHidden(seq, server.ledger) };
       });
     }
   } catch (e) {
@@ -622,6 +634,7 @@ export function openThread(t: ThreadSummary) {
     return;
   }
   const ref = { accountId: t.accountId, threadId: t.threadId };
+  trace(`open ${t.threadId}`);
   set((s) => ({
     route: { ...s.route, thread: ref },
     cursor: Math.max(
@@ -645,6 +658,7 @@ export function stepThread(dir: 1 | -1): boolean {
   // From the open conversation's place in the list, even when an action has just hidden it (auto-advance).
   const all = s.list.result?.threads ?? [];
   const open = s.route.thread ? all.findIndex((t) => t.threadId === s.route.thread!.threadId) : -1;
+  trace(`step ${dir} from ${s.route.thread?.threadId ?? "-"} at ${open} of ${all.length}`);
   if (open >= 0) {
     for (let i = open + dir; i >= 0 && i < all.length; i += dir)
       if (!s.hiddenThreads.includes(all[i].threadId)) {
@@ -765,21 +779,33 @@ export async function init() {
   await loadList();
   if (route.thread) void loadThread(route.thread);
 
-  let refreshTimer: number | null = null;
+  // One timer per account: another account's event never drops this one's pending refresh.
+  const refreshTimers = new Map<string, number>();
   const refreshSoon = (accountId?: string) => {
-    if (refreshTimer) clearTimeout(refreshTimer);
-    refreshTimer = window.setTimeout(() => {
-      refreshTimer = null;
-      const s = get();
-      if (!accountId || accountId === s.accountId || s.accountId === "all") void loadList({ quiet: true });
-      void loadLabels(accountId);
-      const t = s.route.thread;
-      if (t && (!accountId || t.accountId === accountId) && !get().thread.loading)
-        void api
-          .thread(t.accountId, t.threadId)
-          .then((detail) => set({ thread: { detail, loading: false, error: null } }))
-          .catch(() => {});
-    }, 250);
+    const k = accountId ?? "";
+    const pending = refreshTimers.get(k);
+    if (pending) clearTimeout(pending);
+    refreshTimers.set(
+      k,
+      window.setTimeout(() => {
+        refreshTimers.delete(k);
+        const s = get();
+        if (!accountId || accountId === s.accountId || s.accountId === "all") void loadList({ quiet: true });
+        void loadLabels(accountId);
+        const t = s.route.thread;
+        if (t && (!accountId || t.accountId === accountId) && !get().thread.loading) {
+          const at = threadSeq;
+          void api
+            .thread(t.accountId, t.threadId)
+            .then((detail) => {
+              // Only while that conversation is still the one open (an auto-advance may have moved on meanwhile).
+              const now = get().route.thread;
+              if (at === threadSeq && now?.accountId === t.accountId && now.threadId === t.threadId) set({ thread: { detail, loading: false, error: null } });
+            })
+            .catch(() => {});
+        }
+      }, 250),
+    );
   };
   void on<{ accountId: string; reason?: string }>("mail-changed", (p) => {
     trace(`mail-changed ${p.accountId} ${p.reason ?? ""}`);

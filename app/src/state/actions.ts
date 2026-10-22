@@ -247,7 +247,7 @@ export async function act(kind: ActionKind, targets: Target[] = currentTargets()
   } catch (e) {
     toast(failureText(doing(kind, count), e), { action: { label: "Try again", run: () => void act(kind, targets) } });
   } finally {
-    settleThreads(moved, ok);
+    settleThreads(moved, ok, changes.length ? Math.max(...changes.map((c) => c.change)) : undefined);
     void loadList({ quiet: true });
     setState({ selected: [], selectAllMatching: false, keepThreads: [] });
   }
@@ -283,9 +283,9 @@ export async function applyLabels(add: string[], remove: string[], opts: { move?
   const moved = leaving ? targets.flatMap((t) => t.threadIds) : [];
   hideThreads(moved);
   let ok = false;
+  const changes: { accountId: string; change: number }[] = [];
   try {
     let queued = false;
-    const changes: { accountId: string; change: number }[] = [];
     for (const t of targets) {
       const r = await api.changeThreads(t.accountId, t.threadIds, add, removeAll);
       if (r.result === "queued") queued = true;
@@ -307,7 +307,7 @@ export async function applyLabels(add: string[], remove: string[], opts: { move?
       action: { label: "Try again", run: () => void applyLabels(add, remove, { ...opts, targets }) },
     });
   }
-  settleThreads(moved, ok);
+  settleThreads(moved, ok, changes.length ? Math.max(...changes.map((c) => c.change)) : undefined);
   void loadList({ quiet: true });
 }
 
