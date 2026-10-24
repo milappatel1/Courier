@@ -96,7 +96,8 @@ struct Made {
     /// Each changed message's labels before the change (messages this Mac didn't have included, as the server had
     /// them when the change went out).
     prior: HashMap<String, Vec<String>>,
-    /// Conversations whose change still waits for the connection when it was made.
+    /// It waited for the connection when it was made, and these conversations' change with it.
+    queued: bool,
     queued_threads: Vec<String>,
 }
 
@@ -1109,11 +1110,13 @@ impl Engine {
     pub async fn undo_change(&self, account: &str, change: u64) -> Result<Changed> {
         let made = self.made.lock().iter().find(|m| m.id == change && m.account == account).cloned().ok_or_else(|| Error::NotFound("that change".into()))?;
         for t in &made.queued_threads {
-            self.db.queue_thread(account, t, &made.remove, &made.add)?;
+            self.db.cancel_queued_thread(account, t, &made.add, &made.remove)?;
         }
+        let ids: Vec<String> = made.prior.keys().cloned().collect();
+        let cancelled = if made.queued { self.db.cancel_queued(account, &ids, &made.add, &made.remove)? } else { vec![] };
         let touched: Vec<String> = made.add.iter().chain(&made.remove).cloned().collect();
         let mut groups: Vec<(Vec<String>, Vec<String>, Vec<String>)> = Vec::new();
-        for (id, before) in &made.prior {
+        for (id, before) in made.prior.iter().filter(|(id, _)| !cancelled.contains(id)) {
             let add: Vec<String> = touched.iter().filter(|l| before.contains(l)).cloned().collect();
             let remove: Vec<String> = touched.iter().filter(|l| !before.contains(l)).cloned().collect();
             match groups.iter_mut().find(|g| g.0 == add && g.1 == remove) {
@@ -1121,7 +1124,7 @@ impl Engine {
                 None => groups.push((add, remove, vec![id.clone()])),
             }
         }
-        let mut out = Changed::Done;
+        let mut out = if cancelled.is_empty() { Changed::Done } else { Changed::Queued };
         for (add, remove, ids) in groups {
             if self.change(account, &ids, &add, &remove, &[]).await?.result == Changed::Queued {
                 out = Changed::Queued;
@@ -1156,6 +1159,9 @@ impl Engine {
         let before = self.db.label_thread_stats(account, &cached_threads)?;
         let had: HashMap<String, Vec<String>> = ids.iter().filter_map(|id| self.db.message(account, id).ok().flatten().map(|m| (id.clone(), m.labels))).collect();
         let change = self.db.begin_change(account, ids, &add, &remove)?;
+        if gmail && !threads.is_empty() {
+            self.db.begin_thread_change(account, threads, &add, &remove, change)?;
+        }
         // Numbered once it shows here: a listing stamped with this number or later has it.
         let id = self.next_made.fetch_add(1, Ordering::SeqCst);
         let after = self.db.label_thread_stats(account, &cached_threads)?;
@@ -1172,18 +1178,18 @@ impl Engine {
         } else if gmail {
             let g = self.gmail(account)?;
             let mut all = ids.to_vec();
-            let mut uncached = Vec::new();
+            let mut beyond = Vec::new();
             let resolved = if threads.is_empty() { Ok(vec![]) } else { self.resolve_threads(&g, account, threads, bin).await };
             match resolved {
                 Ok(found) => {
                     for (m, labels) in found {
                         if !all.contains(&m) {
                             all.push(m.clone());
-                            uncached.push(m.clone());
+                            beyond.push(m.clone());
                             prior.insert(m, labels);
                         }
                     }
-                    g.batch_modify(&all, &add, &remove).await.map(|_| uncached)
+                    g.batch_modify(&all, &add, &remove).await.map(|_| beyond)
                 }
                 Err(e) => Err(e),
             }
@@ -1205,19 +1211,20 @@ impl Engine {
                 for t in threads {
                     self.db.queue_thread(account, t, &add, &remove)?;
                 }
-                self.remember(Made { id, account: account.into(), add: add.clone(), remove: remove.clone(), prior, queued_threads: threads.to_vec() });
+                self.db.thread_change_queued(account, change);
+                self.remember(Made { id, account: account.into(), add: add.clone(), remove: remove.clone(), prior, queued: true, queued_threads: threads.to_vec() });
                 return Ok(Receipt { result: Changed::Queued, change: id });
             }
         }
         self.db.end_change(account, ids, change, result.is_ok())?;
         match result {
-            Ok(uncached) => {
-                self.db.mark_landed(account, &uncached, &add, &remove);
+            Ok(beyond) => {
+                self.db.mark_landed(account, &beyond, &add, &remove);
                 if gmail {
                     let touched: Vec<String> = before.keys().chain(after.keys()).chain(&add).chain(&remove).cloned().collect();
                     self.db.counts_landed(account, &touched);
                 }
-                self.remember(Made { id, account: account.into(), add: add.clone(), remove: remove.clone(), prior, queued_threads: vec![] });
+                self.remember(Made { id, account: account.into(), add: add.clone(), remove: remove.clone(), prior, queued: false, queued_threads: vec![] });
                 if gmail {
                     // The server's own counts for every label involved.
                     let touched: Vec<String> = before.keys().chain(after.keys()).cloned().collect();
@@ -1295,13 +1302,13 @@ impl Engine {
                 };
                 match r {
                     Ok(ids) => {
-                        let uncached: Vec<String> = ids.iter().filter(|m| !self.db.has_message(account, m).unwrap_or(false)).cloned().collect();
+                        let beyond: Vec<String> = ids.iter().filter(|m| !cached.contains(m)).cloned().collect();
                         for c in &cached {
                             if let Some(q) = queued.iter().find(|q| q.message_id == *c) {
                                 self.db.change_sent(account, std::slice::from_ref(c), &q.add, &q.remove)?;
                             }
                         }
-                        self.db.mark_landed(account, &uncached, add, remove);
+                        self.db.mark_landed(account, &beyond, add, remove);
                         self.db.thread_done(account, t)?;
                         covered.extend(cached);
                         threads.push(t.clone());

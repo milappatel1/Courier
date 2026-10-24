@@ -212,6 +212,8 @@ pub struct Db {
     /// of those messages gets the change on top; a mark goes once no read older than it is out.
     reads_out: Mutex<BTreeMap<i64, usize>>,
     marks: Mutex<HashMap<(String, String), (i64, Vec<String>, Vec<String>)>>,
+    /// Conversation changes still on their way or waiting, by (account, conversation).
+    thread_pending: Mutex<HashMap<(String, String), Vec<ThreadChange>>>,
 }
 
 /// A server read in progress, opened before its request goes out (the mail API client's read methods take one).
@@ -291,6 +293,16 @@ struct PendingChange {
     token: u64,
     add: Vec<String>,
     remove: Vec<String>,
+}
+
+/// A change to a whole conversation still on its way (or waiting offline): it also holds over messages of the
+/// conversation that reach this Mac later (`known` were here when it was made and have their own entries), except,
+/// for changes that aren't about Trash or Spam, messages in Trash or Spam.
+struct ThreadChange {
+    token: u64,
+    add: Vec<String>,
+    remove: Vec<String>,
+    known: HashSet<String>,
 }
 
 /// The token of a message's queued change in `pending` (changes on their way count from 1).
@@ -377,12 +389,23 @@ fn same_set(a: &[String], b: &[String]) -> bool {
     a.len() == b.len() && a.iter().all(|x| b.contains(x))
 }
 
-/// A message's labels with the changes made here that the server doesn't have yet, in order, on top.
-fn fold_pending(p: &HashMap<(String, String), Vec<PendingChange>>, account: &str, id: &str, labels: Vec<String>) -> Vec<String> {
-    match p.get(&(account.to_string(), id.to_string())) {
-        Some(list) => list.iter().fold(labels, |l, c| apply_change(l, &c.add, &c.remove)),
-        None => labels,
-    }
+/// A message's labels with the changes made here that the server doesn't have yet, in order, on top: its own,
+/// then its conversation's (for a message that wasn't here when the conversation was changed).
+fn fold_pending(p: &HashMap<(String, String), Vec<PendingChange>>, tp: &HashMap<(String, String), Vec<ThreadChange>>, account: &str, id: &str, thread: &str, labels: Vec<String>) -> Vec<String> {
+    // Oldest first, whichever kind (the waiting change, QUEUED, is older than any on its way): a newer change to the
+    // message itself wins over an older one to its conversation.
+    let own = p.get(&(account.to_string(), id.to_string())).into_iter().flatten().map(|c| (c.token, &c.add, &c.remove, false));
+    let conv = tp.get(&(account.to_string(), thread.to_string())).into_iter().flatten().filter(|c| !c.known.contains(id)).map(|c| (c.token, &c.add, &c.remove, true));
+    let mut all: Vec<_> = own.chain(conv).collect();
+    all.sort_by_key(|c| c.0);
+    all.into_iter().fold(labels, |l, (_, add, remove, conv)| {
+        let bin = add.iter().chain(remove).any(|x| x == "TRASH" || x == "SPAM");
+        if !conv || bin || !l.iter().any(|x| x == "TRASH" || x == "SPAM") {
+            apply_change(l, add, remove)
+        } else {
+            l
+        }
+    })
 }
 
 fn apply_change(labels: Vec<String>, add: &[String], remove: &[String]) -> Vec<String> {
@@ -395,17 +418,10 @@ fn apply_change(labels: Vec<String>, add: &[String], remove: &[String]) -> Vec<S
     out
 }
 
-/// What changed from `before` to `after`, as labels to add and labels to remove.
-fn diff(before: &[String], after: &[String]) -> (Vec<String>, Vec<String>) {
-    (after.iter().filter(|l| !before.contains(l)).cloned().collect(), before.iter().filter(|l| !after.contains(l)).cloned().collect())
-}
-
-/// Two label changes, one after the other, as one. Measured against the labels the message had before both,
-/// only the difference is left (a change and its undo leave nothing); without them, the two combined.
-fn compose(before: Option<&[String]>, first: (&[String], &[String]), then: (&[String], &[String])) -> (Vec<String>, Vec<String>) {
-    if let Some(b) = before {
-        return diff(b, &apply_change(apply_change(b.to_vec(), first.0, first.1), then.0, then.1));
-    }
+/// Two label changes, one after the other, as one, whatever the labels were before. (Measuring against what this
+/// Mac last heard the labels were would drop a change that looks like no change, though the server may have moved
+/// since: another device's change, or one of ours still on its way.)
+fn compose(first: (&[String], &[String]), then: (&[String], &[String])) -> (Vec<String>, Vec<String>) {
     let add = apply_change(first.0.to_vec(), then.0, then.1);
     let remove = apply_change(first.1.to_vec(), then.1, then.0).into_iter().filter(|l| !add.contains(l)).collect();
     (add, remove)
@@ -617,7 +633,13 @@ impl Db {
             clock: std::sync::atomic::AtomicU64::new((generation as u64) << 32),
             reads_out: Mutex::new(BTreeMap::new()),
             marks: Mutex::new(HashMap::new()),
+            thread_pending: Mutex::new(HashMap::new()),
         };
+        if let Ok(rows) = db.with(|c| c.prepare("SELECT account_id, thread_id FROM thread_queue")?.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()) {
+            for (account, thread) in rows {
+                let _ = db.sync_thread_queue(&account, &thread);
+            }
+        }
         // Changes queued before a quit still hold over whatever the server says until they've gone out.
         if let Ok(rows) = db.with(|c| c.prepare("SELECT account_id, message_id, add_labels, remove_labels FROM change_queue")?.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()) {
             let mut p = db.pending.lock();
@@ -932,14 +954,26 @@ impl Db {
 
     /// A change the server confirmed on messages this Mac doesn't have: answers read before now that bring them
     /// get it on top (see `marks`).
+    /// The server confirmed a conversation change on messages beyond the cached ones it was made on: those cached by
+    /// now take it into the server's labels at once; the rest get a mark for answers read before now.
     pub fn mark_landed(&self, account: &str, ids: &[String], add: &[String], remove: &[String]) {
         if ids.is_empty() {
             return;
         }
+        let p = self.pending.lock();
+        let (cached, uncached): (Vec<String>, Vec<String>) = ids.iter().cloned().partition(|id| self.has_message(account, id).unwrap_or(false));
+        if !cached.is_empty() {
+            let c = self.conn.lock();
+            let _ = self.landed(&c, account, &cached, add, remove);
+            drop(c);
+            for id in &cached {
+                let _ = self.rederive(&p, account, id);
+            }
+        }
         let at = self.tick();
         let mut m = self.marks.lock();
-        for id in ids {
-            m.insert((account.to_string(), id.clone()), (at, add.to_vec(), remove.to_vec()));
+        for id in uncached {
+            m.insert((account.to_string(), id), (at, add.to_vec(), remove.to_vec()));
         }
     }
 
@@ -966,7 +1000,7 @@ impl Db {
             Some((b, s)) if s > stamp => (labels_from(&b), s),
             _ => self.with_mark(&m.account_id, &m.id, m.labels.clone(), stamp),
         };
-        let shown = fold_pending(&p, &m.account_id, &m.id, base.clone());
+        let shown = fold_pending(&p, &self.thread_pending.lock(), &m.account_id, &m.id, &m.thread_id, base.clone());
         self.trace_inbox(&c, &m.account_id, &m.id, &shown);
         Self::put_message(&c, m, raw, &shown, &base, base_stamp)?;
         Ok(())
@@ -1059,11 +1093,10 @@ impl Db {
     fn server_labels(&self, account: &str, id: &str, labels: &[String], stamp: i64) -> Result<()> {
         let p = self.pending.lock();
         let c = self.conn.lock();
-        let held: Option<i64> = c.query_row("SELECT server_stamp FROM messages WHERE account_id=? AND id=?", [account, id], |r| r.get(0)).optional()?;
-        if held.is_none_or(|h| h > stamp) {
-            return Ok(());
-        }
-        let shown = fold_pending(&p, account, id, labels.to_vec());
+        let held: Option<(i64, String)> = c.query_row("SELECT server_stamp, thread_id FROM messages WHERE account_id=? AND id=?", [account, id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+        let Some((held, thread)) = held.filter(|(h, _)| *h <= stamp) else { return Ok(()) };
+        let _ = held;
+        let shown = fold_pending(&p, &self.thread_pending.lock(), account, id, &thread, labels.to_vec());
         self.trace_inbox(&c, account, id, &shown);
         c.execute(
             "UPDATE messages SET server_labels=?, server_stamp=?, labels=? WHERE account_id=? AND id=?",
@@ -1077,9 +1110,9 @@ impl Db {
     #[track_caller]
     fn rederive(&self, p: &HashMap<(String, String), Vec<PendingChange>>, account: &str, id: &str) -> Result<()> {
         let c = self.conn.lock();
-        let base: Option<String> = c.query_row("SELECT server_labels FROM messages WHERE account_id=? AND id=?", [account, id], |r| r.get(0)).optional()?;
-        let Some(base) = base else { return Ok(()) };
-        let shown = fold_pending(p, account, id, labels_from(&base));
+        let base: Option<(String, String)> = c.query_row("SELECT server_labels, thread_id FROM messages WHERE account_id=? AND id=?", [account, id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+        let Some((base, thread)) = base else { return Ok(()) };
+        let shown = fold_pending(p, &self.thread_pending.lock(), account, id, &thread, labels_from(&base));
         self.trace_inbox(&c, account, id, &shown);
         c.execute("UPDATE messages SET labels=? WHERE account_id=? AND id=?", params![labels_text(&shown), account, id])?;
         Ok(())
@@ -1116,10 +1149,58 @@ impl Db {
         Ok(token)
     }
 
+    /// A change to whole conversations: besides the cached messages (`begin_change`), it holds over messages of these
+    /// conversations that arrive later, until `end_change` (or, waiting offline, until the conversation goes out).
+    pub fn begin_thread_change(&self, account: &str, threads: &[String], add: &[String], remove: &[String], token: u64) -> Result<()> {
+        let known: Vec<(String, HashSet<String>)> = threads.iter().map(|t| Ok((t.clone(), self.thread_messages(account, t)?.into_iter().map(|m| m.id).collect()))).collect::<Result<_>>()?;
+        let mut tp = self.thread_pending.lock();
+        for (t, known) in known {
+            tp.entry((account.to_string(), t)).or_default().push(ThreadChange { token, add: add.to_vec(), remove: remove.to_vec(), known });
+        }
+        Ok(())
+    }
+
+    fn drop_thread_change(&self, account: &str, token: u64) {
+        let mut tp = self.thread_pending.lock();
+        for ((a, _), list) in tp.iter_mut() {
+            if a == account {
+                list.retain(|c| c.token != token);
+            }
+        }
+        tp.retain(|_, list| !list.is_empty());
+    }
+
+    /// The conversation's waiting change in memory follows its `thread_queue` row (made, changed, cancelled, sent).
+    fn sync_thread_queue(&self, account: &str, thread: &str) -> Result<()> {
+        let row: Option<(String, String)> = self.with(|c| c.query_row("SELECT add_labels, remove_labels FROM thread_queue WHERE account_id=? AND thread_id=?", [account, thread], |r| Ok((r.get(0)?, r.get(1)?))).optional())?;
+        let members: Vec<String> = self.thread_messages(account, thread)?.into_iter().map(|m| m.id).collect();
+        let p = self.pending.lock();
+        // Messages with a waiting change of their own carry the conversation's change in it; it holds over the rest,
+        // including those that arrived after the change was made.
+        let known: HashSet<String> = members.iter().filter(|id| p.get(&(account.to_string(), id.to_string())).is_some_and(|l| l.iter().any(|c| c.token == QUEUED))).cloned().collect();
+        {
+            let mut tp = self.thread_pending.lock();
+            let key = (account.to_string(), thread.to_string());
+            let list = tp.entry(key.clone()).or_default();
+            list.retain(|c| c.token != QUEUED);
+            if let Some((a, r)) = row {
+                list.insert(0, ThreadChange { token: QUEUED, add: pj(&a), remove: pj(&r), known: known.clone() });
+            }
+            if list.is_empty() {
+                tp.remove(&key);
+            }
+        }
+        for id in members {
+            self.rederive(&p, account, &id)?;
+        }
+        Ok(())
+    }
+
     /// The server has the change (`ok`): it joins the server's labels. Or it refused: the change is simply no
     /// longer shown, so the labels are the server's with any other change still on its way, exactly.
     pub fn end_change(&self, account: &str, ids: &[String], token: u64, ok: bool) -> Result<()> {
         let mut p = self.pending.lock();
+        self.drop_thread_change(account, token);
         let mut sent: Option<(Vec<String>, Vec<String>)> = None;
         for id in ids {
             let key = (account.to_string(), id.clone());
@@ -1177,12 +1258,12 @@ impl Db {
             }
             match self.queued(account, id)? {
                 Some((seq, had, a, r)) => {
-                    let (a, r) = compose(had.as_deref(), (&a, &r), (add, remove));
+                    let (a, r) = compose((&a, &r), (add, remove));
                     self.set_queued(&mut p, account, id, seq, had.as_ref(), a, r)?;
                 }
                 None => {
                     let had = before.get(id);
-                    let (a, r) = compose(had.map(|h| h.as_slice()), (&[], &[]), (add, remove));
+                    let (a, r) = (add.to_vec(), remove.to_vec());
                     let seq: i64 = self.with(|c| c.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM change_queue", [], |r| r.get(0)))?;
                     self.set_queued(&mut p, account, id, seq, had, a, r)?;
                 }
@@ -1193,9 +1274,20 @@ impl Db {
     }
 
     /// A conversation change that waits for the connection (mail-API accounts): when it goes out, the conversation
-    /// is read again and every message it applies to is changed, the ones this Mac doesn't have included. The
-    /// exact opposite of a waiting change cancels it; another change to the same conversation joins it.
+    /// is read again and every message it applies to is changed, the ones this Mac doesn't have included. Another
+    /// change to the same conversation joins it (`cancel_queued_thread` takes one back).
     pub fn queue_thread(&self, account: &str, thread: &str, add: &[String], remove: &[String]) -> Result<()> {
+        self.join_thread_queue(account, thread, add, remove, false)
+    }
+
+    /// Undo of a conversation change that waits: when it's all that waits for the conversation, nothing goes out;
+    /// otherwise its opposite joins what waits. (A later opposite change isn't an Undo: archiving a conversation
+    /// after moving it to the Inbox still archives the messages that were never out of the Inbox.)
+    pub fn cancel_queued_thread(&self, account: &str, thread: &str, add: &[String], remove: &[String]) -> Result<()> {
+        self.join_thread_queue(account, thread, remove, add, true)
+    }
+
+    fn join_thread_queue(&self, account: &str, thread: &str, add: &[String], remove: &[String], undo: bool) -> Result<()> {
         self.with(|c| {
             let held: Option<(String, String)> = c
                 .query_row("SELECT add_labels, remove_labels FROM thread_queue WHERE account_id=? AND thread_id=?", [account, thread], |r| Ok((r.get(0)?, r.get(1)?)))
@@ -1203,11 +1295,11 @@ impl Db {
             match held {
                 Some((a, r)) => {
                     let (a, r): (Vec<String>, Vec<String>) = (pj(&a), pj(&r));
-                    let cancels = same_set(&a, remove) && same_set(&r, add);
+                    let cancels = undo && same_set(&a, remove) && same_set(&r, add);
                     if cancels {
                         c.execute("DELETE FROM thread_queue WHERE account_id=? AND thread_id=?", [account, thread])?;
                     } else {
-                        let (a, r) = compose(None, (&a, &r), (add, remove));
+                        let (a, r) = compose((&a, &r), (add, remove));
                         c.execute("UPDATE thread_queue SET add_labels=?, remove_labels=? WHERE account_id=? AND thread_id=?", params![j(&a), j(&r), account, thread])?;
                     }
                 }
@@ -1219,7 +1311,13 @@ impl Db {
                 }
             }
             Ok(())
-        })
+        })?;
+        self.sync_thread_queue(account, thread)
+    }
+
+    /// A conversation change that was on its way waits offline instead: it holds as the conversation's waiting change.
+    pub fn thread_change_queued(&self, account: &str, token: u64) {
+        self.drop_thread_change(account, token);
     }
 
     /// An account's conversation changes waiting for the connection, oldest first: (conversation, add, remove).
@@ -1234,7 +1332,7 @@ impl Db {
     /// The conversation's waiting change went out (or was refused): it no longer waits.
     pub fn thread_done(&self, account: &str, thread: &str) -> Result<()> {
         self.with(|c| c.execute("DELETE FROM thread_queue WHERE account_id=? AND thread_id=?", [account, thread]))?;
-        Ok(())
+        self.sync_thread_queue(account, thread)
     }
 
     /// An account's queued changes, oldest first.
@@ -1265,16 +1363,30 @@ impl Db {
         }
         for id in ids {
             let Some((seq, had, a, r)) = self.queued(account, id)? else { continue };
-            if a == add && r == remove {
-                self.set_queued(&mut p, account, id, seq, None, vec![], vec![])?;
-            } else if let Some(had) = had {
-                let sent = apply_change(had.clone(), add, remove);
-                let (a, r) = diff(&sent, &apply_change(had, &a, &r));
-                self.set_queued(&mut p, account, id, seq, Some(&sent), a, r)?;
-            }
+            // What waits is the sent change with later ones folded in (it names every label the sent one did), so
+            // what's left is where it differs from what went out.
+            let a: Vec<String> = a.into_iter().filter(|l| !add.contains(l)).collect();
+            let r: Vec<String> = r.into_iter().filter(|l| !remove.contains(l)).collect();
+            self.set_queued(&mut p, account, id, seq, had.as_ref(), a, r)?;
             self.rederive(&p, account, id)?;
         }
         Ok(())
+    }
+
+    /// Undo of a change that waits: messages whose waiting change is just that one wait for nothing any more (the
+    /// ids returned); the rest keep theirs, and Undo goes after it.
+    pub fn cancel_queued(&self, account: &str, ids: &[String], add: &[String], remove: &[String]) -> Result<Vec<String>> {
+        let mut p = self.pending.lock();
+        let mut out = Vec::new();
+        for id in ids {
+            let Some((seq, _, a, r)) = self.queued(account, id)? else { continue };
+            if same_set(&a, add) && same_set(&r, remove) {
+                self.set_queued(&mut p, account, id, seq, None, vec![], vec![])?;
+                self.rederive(&p, account, id)?;
+                out.push(id.clone());
+            }
+        }
+        Ok(out)
     }
 
     /// The server refused these messages' queued changes: undo them here (only what they did) and drop them.

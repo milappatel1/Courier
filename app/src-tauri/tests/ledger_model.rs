@@ -19,7 +19,7 @@ const MSGS: [&str; 3] = ["m0", "m1", "m2"]; // m0 and m2 are one conversation (t
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Target {
-    /// The whole conversation t0: m0 here, m0 and m2 on the server.
+    /// The whole conversation t0: m0 and m2 on the server, of which this Mac keeps m0 at first.
     Thread0,
     /// The single message m1.
     Msg1,
@@ -79,6 +79,8 @@ struct Change {
     op: Op,
     token: u64,
     state: State,
+    /// The cached messages it changed here when it was made (the engine's `thread_message_ids`).
+    ids: Vec<String>,
     /// Each cached message's labels before the change, as the engine records them for the queue.
     had: HashMap<String, Vec<String>>,
 }
@@ -97,11 +99,11 @@ fn row(id: &str, thread: &str, labels: &[String]) -> MessageRow {
     MessageRow { account_id: A.into(), id: id.into(), thread_id: thread.into(), labels: labels.to_vec(), ..Default::default() }
 }
 
-fn covers(t: Target) -> (Vec<&'static str>, Vec<&'static str>) {
-    // (cached ids it changes here, ids the server changes)
+/// The messages a change covers on the server.
+fn covers(t: Target) -> Vec<&'static str> {
     match t {
-        Target::Thread0 => (vec!["m0"], vec!["m0", "m2"]),
-        Target::Msg1 => (vec!["m1"], vec!["m1"]),
+        Target::Thread0 => vec!["m0", "m2"],
+        Target::Msg1 => vec!["m1"],
     }
 }
 
@@ -139,12 +141,15 @@ impl<'a> World<'a> {
     fn step(&mut self, ev: Ev) {
         match ev {
             Ev::Local(t, op) => {
-                let (here, server) = covers(t);
+                let server = covers(t);
                 let (add, remove) = op.add_remove();
-                let ids = self.cached(&here);
+                let ids = self.cached(&server);
                 let had = ids.iter().map(|id| (id.clone(), shown(self.db, id).unwrap())).collect();
                 let token = self.db.begin_change(A, &ids, &add, &remove).unwrap();
-                self.changes.push(Change { target: t, op, token, state: State::InFlight, had });
+                if t == Target::Thread0 {
+                    self.db.begin_thread_change(A, &["t0".to_string()], &add, &remove, token).unwrap();
+                }
+                self.changes.push(Change { target: t, op, token, state: State::InFlight, ids, had });
                 for m in server {
                     self.expect.insert(m, Some(op.inbox()));
                 }
@@ -153,7 +158,7 @@ impl<'a> World<'a> {
                 let c = &mut self.changes[i];
                 c.state = State::Sent;
                 let (op, t) = (c.op, c.target);
-                for m in covers(t).1 {
+                for m in covers(t) {
                     let l = apply(&self.server[m], op);
                     self.server.insert(m, l);
                 }
@@ -161,21 +166,20 @@ impl<'a> World<'a> {
             Ev::Ack(i) => {
                 let (t, op, token) = (self.changes[i].target, self.changes[i].op, self.changes[i].token);
                 self.changes[i].state = State::Done;
-                let (here, server) = covers(t);
                 let (add, remove) = op.add_remove();
-                let ids = self.cached(&here);
+                let ids = self.changes[i].ids.clone();
                 self.db.end_change(A, &ids, token, true).unwrap();
-                let uncached: Vec<String> = server.iter().filter(|m| !here.contains(m) && shown(self.db, m).is_none()).map(|s| s.to_string()).collect();
-                self.db.mark_landed(A, &uncached, &add, &remove);
+                let beyond: Vec<String> = covers(t).iter().filter(|m| !ids.iter().any(|x| x == *m)).map(|s| s.to_string()).collect();
+                self.db.mark_landed(A, &beyond, &add, &remove);
             }
             Ev::Refuse(i) => {
                 let (t, op, token) = (self.changes[i].target, self.changes[i].op, self.changes[i].token);
                 self.changes[i].state = State::Refused;
-                let ids = self.cached(&covers(t).0);
+                let ids = self.changes[i].ids.clone();
                 self.db.end_change(A, &ids, token, false).unwrap();
                 // The user's wish didn't happen: nothing to hold any more for messages whose latest change this was.
-                if !self.changes[i + 1..].iter().any(|c| covers(c.target).1.iter().any(|m| covers(t).1.contains(m))) {
-                    for m in covers(t).1 {
+                if !self.changes[i + 1..].iter().any(|c| covers(c.target).iter().any(|m| covers(t).contains(m))) {
+                    for m in covers(t) {
                         self.expect.insert(m, None);
                     }
                 }
@@ -185,9 +189,13 @@ impl<'a> World<'a> {
                 let (t, op, token) = (self.changes[i].target, self.changes[i].op, self.changes[i].token);
                 self.changes[i].state = State::Queued;
                 let (add, remove) = op.add_remove();
-                let ids = self.cached(&covers(t).0);
+                let ids = self.changes[i].ids.clone();
                 let had = self.changes[i].had.clone();
                 self.db.queue_change(A, &ids, &add, &remove, &had, token).unwrap();
+                if t == Target::Thread0 {
+                    self.db.queue_thread(A, "t0", &add, &remove).unwrap();
+                }
+                self.db.thread_change_queued(A, token);
             }
             Ev::Flush => {
                 for i in 0..self.changes.len() {
@@ -196,19 +204,22 @@ impl<'a> World<'a> {
                     }
                     let (t, op) = (self.changes[i].target, self.changes[i].op);
                     self.changes[i].state = State::Done;
-                    let (here, server) = covers(t);
+                    let server = covers(t);
                     for m in &server {
                         let l = apply(&self.server[m], op);
                         self.server.insert(m, l);
                     }
                     let (add, remove) = op.add_remove();
-                    let ids = self.cached(&here);
+                    let ids = self.changes[i].ids.clone();
                     let queued: Vec<_> = self.db.queued_changes(A).unwrap();
                     for q in queued.iter().filter(|q| ids.contains(&q.message_id)) {
                         self.db.change_sent(A, std::slice::from_ref(&q.message_id), &q.add, &q.remove).unwrap();
                     }
-                    let uncached: Vec<String> = server.iter().filter(|m| !here.contains(m) && shown(self.db, m).is_none()).map(|s| s.to_string()).collect();
-                    self.db.mark_landed(A, &uncached, &add, &remove);
+                    if t == Target::Thread0 {
+                        let beyond: Vec<String> = server.iter().filter(|m| !ids.iter().any(|x| x == *m)).map(|s| s.to_string()).collect();
+                        self.db.mark_landed(A, &beyond, &add, &remove);
+                        self.db.thread_done(A, "t0").unwrap();
+                    }
                 }
             }
             Ev::Issue => {
