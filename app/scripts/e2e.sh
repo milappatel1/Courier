@@ -10,6 +10,7 @@
 #   COURIER_E2E_ONLY=a,b       only the steps whose names contain a or b (after the account setup)
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/e2e-lib.sh
 
 OUT="${COURIER_E2E_DIR:-$(mktemp -d -t courier-e2e)}"
 mkdir -p "$OUT"
@@ -17,66 +18,10 @@ rm -rf "$OUT/data" "$OUT/report.json"
 REPORT="$OUT/report.json"
 LIMIT=720
 
-if [ -z "${COURIER_E2E_SKIP_BUILD:-}" ]; then
-  echo "building the debug app…"
-  if ! npx tauri build --debug --bundles app >"$OUT/build.log" 2>&1; then
-    tail -40 "$OUT/build.log"
-    exit 1
-  fi
-fi
-# Cargo's build directory (it can be moved with CARGO_TARGET_DIR or a .cargo/config.toml).
-TARGET=$(cd src-tauri && cargo metadata --format-version 1 --no-deps | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).target_directory))')
-BUNDLE="$TARGET/debug/bundle/macos/Courier.app"
-BIN="$BUNDLE/Contents/MacOS/Courier"
-[ -x "$BIN" ] || { echo "no debug build at $BUNDLE"; exit 1; }
-
-# Process ID of the frontmost app (by PID, so a Courier you have open yourself doesn't count).
-front_pid() { lsappinfo info "$(lsappinfo front)" 2>/dev/null | sed -nE 's/.*pid = ([0-9]+).*/\1/p' | head -1; }
+[ -n "${COURIER_E2E_SKIP_BUILD:-}" ] || e2e_build "$OUT/build.log"
+e2e_find_build
 
 echo "running in the background (report: $REPORT)"
-: >"$OUT/app.log"
-# -g: LaunchServices must not bring it forward; -n: a fresh instance next to any Courier you have open.
-open -g -n --env COURIER_E2E="$REPORT" --env COURIER_E2E_ONLY="${COURIER_E2E_ONLY:-}" --env COURIER_NO_PRINT=1 --stdout "$OUT/app.log" --stderr "$OUT/app.log" "$BUNDLE"
-PID=""
-for _ in $(seq 1 50); do
-  PID=$(pgrep -n -f "^$BIN" || true)
-  [ -n "$PID" ] && break
-  sleep 0.2
-done
-[ -n "$PID" ] || { echo "the app didn't start"; exit 1; }
-STOLE=0
-SHOWN=0
-for _ in $(seq 1 "$LIMIT"); do
-  sleep 1
-  # Stream the runner's progress lines.
-  N=$(grep -c '^\[e2e\]' "$OUT/app.log" || true)
-  if [ "$N" -gt "$SHOWN" ]; then
-    grep '^\[e2e\]' "$OUT/app.log" | sed -n "$((SHOWN + 1)),${N}p"
-    SHOWN=$N
-  fi
-  [ "$(front_pid)" = "$PID" ] && STOLE=1
-  kill -0 "$PID" 2>/dev/null || break
-done
-if kill -0 "$PID" 2>/dev/null; then
-  echo "timed out after ${LIMIT}s"
-  kill "$PID" || true
-fi
-wait "$PID" 2>/dev/null || true
-grep '^\[e2e\]' "$OUT/app.log" | tail -n +"$((SHOWN + 1))" || true
-
-if [ ! -f "$REPORT" ]; then
-  echo "no report written; last log lines:"
-  tail -30 "$OUT/app.log"
-  exit 1
-fi
-STOLE=$STOLE node -e '
-const r = require(process.argv[1]);
-for (const s of r.steps) {
-  console.log(`${s.ok ? "✓" : "✗"} ${s.name} (${s.ms} ms)${s.tookFocus ? " [Courier was frontmost]" : ""}${s.error ? "\n    " + s.error : ""}`);
-  if (s.snapshot) console.log("    UI: " + JSON.stringify(s.snapshot));
-}
-const stole = process.env.STOLE === "1";
-console.log(`\n${r.passed} passed, ${r.failed} failed in ${Math.round(r.durationMs / 1000)} s`);
-console.log(`focus: app reported ${r.focusTaken ? "ACTIVE during a step" : "never active"}; frontmost-app watch ${stole ? "SAW THE TEST APP IN FRONT" : "never saw the test app in front"}`);
-process.exit(r.failed || r.focusTaken || stole ? 1 : 0);
-' "$REPORT"
+e2e_launch "$OUT" "${COURIER_E2E_ONLY:-}"
+e2e_follow "$OUT" "$LIMIT"
+e2e_summary "$OUT"

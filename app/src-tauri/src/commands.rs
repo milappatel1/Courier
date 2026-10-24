@@ -978,6 +978,7 @@ pub async fn e2e_control(app: AppHandle, st: S<'_>, action: String, args: Value)
     match action.as_str() {
         #[cfg(debug_assertions)]
         "big-accounts" => e.big_accounts(&st.engine, &args).await,
+        "perf-info" => e.perf_info(&app).await,
         // Files saved by Download (end-to-end runs use their own Downloads folder).
         "downloads" => {
             let dir = st.data_dir.join("Downloads");
