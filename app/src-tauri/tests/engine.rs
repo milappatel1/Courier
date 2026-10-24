@@ -258,6 +258,69 @@ async fn drafts_on_both_kinds() {
     assert!(w.imap.folder("Drafts").unwrap().msgs.is_empty());
 }
 
+async fn trash_subjects(e: &Engine) -> Vec<String> {
+    e.list(&view("g1", "TRASH")).await.unwrap().threads.iter().map(|x| x.subject.clone()).collect()
+}
+
+#[tokio::test]
+async fn delete_forever_offline_is_made_at_once_survives_a_restart_and_goes_out_once_online() {
+    let dir = std::env::temp_dir().join(format!("courier-delq-{}", courier_lib::error::random_token(6)));
+    let path = dir.join("courier.db");
+    let w = world_on(Db::open(&path).unwrap()).await;
+    let id = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Binned", "x", ""), &["TRASH"]);
+    let kept = w.gmail.deliver(&sample_mail("Bo <bo@x.io>", "pat@example.com", "Also binned", "y", ""), &["TRASH"]);
+    w.engine.sync_account("g1").await.unwrap();
+    w.engine.list(&ViewQuery { mode: Some("server".into()), ..view("g1", "TRASH") }).await.unwrap();
+    let t = w.engine.db.message("g1", &id).unwrap().unwrap().thread_id;
+    w.gmail.state.lock().offline = true;
+    assert_eq!(w.engine.delete_forever("g1", std::slice::from_ref(&t)).await.unwrap(), Changed::Queued);
+    assert_eq!(trash_subjects(&w.engine).await, vec!["Also binned".to_string()]);
+    assert!(w.gmail.message(&id).is_some(), "the server still has it while offline");
+    // Quit and open again, still offline: still gone here, and what the server said earlier doesn't bring it back.
+    let e2 = relaunch(&w, &path);
+    assert_eq!(trash_subjects(&e2).await, vec!["Also binned".to_string()]);
+    let row = courier_lib::db::MessageRow { account_id: "g1".into(), id: id.clone(), thread_id: t.clone(), labels: vec!["TRASH".into()], subject: "Binned".into(), ..Default::default() };
+    e2.db.begin_read("g1").upsert_message(&row, None).unwrap();
+    assert_eq!(trash_subjects(&e2).await, vec!["Also binned".to_string()]);
+    assert!(e2.db.has_queued("g1").unwrap());
+    let n = w.gmail.state.lock().log.len();
+    w.gmail.state.lock().offline = false;
+    e2.sync_account("g1").await.unwrap();
+    assert!(w.gmail.message(&id).is_none(), "deleted on the server once online");
+    assert!(w.gmail.message(&kept).is_some());
+    assert!(!e2.db.has_queued("g1").unwrap());
+    assert_eq!(trash_subjects(&e2).await, vec!["Also binned".to_string()]);
+    assert_eq!(w.gmail.state.lock().log[n..].iter().filter(|l| l.contains("batchDelete")).count(), 1, "sent once");
+}
+
+#[tokio::test]
+async fn snoozing_and_unsnoozing_offline_wait_and_reach_the_server_once_back() {
+    let w = world().await;
+    let id = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Later", "x", ""), &["INBOX", "UNREAD"]);
+    w.engine.sync_account("g1").await.unwrap();
+    let t = w.engine.db.message("g1", &id).unwrap().unwrap().thread_id;
+    let in_inbox = |w: &World| w.gmail.message(&id).unwrap().labels.contains(&"INBOX".into());
+    w.gmail.state.lock().offline = true;
+    // Snoozed here at once; the server keeps it in the Inbox until the connection is back.
+    w.engine.snooze("g1", std::slice::from_ref(&t), courier_lib::error::now_ms() + 3_600_000).await.unwrap();
+    assert!(w.engine.list(&view("g1", "INBOX")).await.unwrap().threads.is_empty());
+    assert_eq!(w.engine.list(&view("g1", "SNOOZED")).await.unwrap().threads.len(), 1);
+    assert!(in_inbox(&w));
+    w.gmail.state.lock().offline = false;
+    w.engine.sync_account("g1").await.unwrap();
+    assert!(!in_inbox(&w), "the snooze reached the server");
+    assert!(w.engine.list(&view("g1", "INBOX")).await.unwrap().threads.is_empty(), "the sync didn't bring it back");
+    // Unsnoozed offline: back here at once, on the server once online.
+    w.gmail.state.lock().offline = true;
+    w.engine.unsnooze("g1", std::slice::from_ref(&t)).await.unwrap();
+    assert_eq!(w.engine.list(&view("g1", "INBOX")).await.unwrap().threads.len(), 1);
+    assert!(w.engine.list(&view("g1", "SNOOZED")).await.unwrap().threads.is_empty());
+    w.gmail.state.lock().offline = false;
+    w.engine.sync_account("g1").await.unwrap();
+    assert!(in_inbox(&w), "the unsnooze reached the server");
+    assert!(!w.engine.db.has_queued("g1").unwrap());
+}
+
 #[tokio::test]
 async fn snooze_mute_block_filters_and_notifications() {
     let w = world().await;

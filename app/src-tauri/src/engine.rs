@@ -1688,11 +1688,12 @@ impl Engine {
         res
     }
 
-    pub async fn delete_forever(&self, account: &str, thread_ids: &[String]) -> Result<()> {
+    /// Delete forever: here at once; offline, it waits and goes out when the connection is back.
+    pub async fn delete_forever(&self, account: &str, thread_ids: &[String]) -> Result<Changed> {
         let ids = self.thread_message_ids(account, thread_ids)?;
         let ids: Vec<String> = ids.into_iter().filter(|id| self.db.message(account, id).ok().flatten().map(|m| m.has("TRASH") || m.has("SPAM") || m.has("DRAFT")).unwrap_or(false)).collect();
         if ids.is_empty() {
-            return Ok(());
+            return Ok(Changed::Done);
         }
         let gmail = self.kind(account)? == "gmail";
         let threads = self.thread_ids_of(account, &ids);
@@ -1741,7 +1742,7 @@ impl Engine {
             self.db.recount_labels(account).ok();
         }
         self.changed(account, "delete");
-        Ok(())
+        Ok(Changed::Done)
     }
 
     pub async fn empty_label(&self, account: &str, label: &str) -> Result<usize> {

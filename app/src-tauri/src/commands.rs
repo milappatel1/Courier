@@ -438,7 +438,7 @@ pub async fn bulk_delete_forever(st: S<'_>, view: ViewQuery, keep: Vec<String>) 
 }
 
 #[tauri::command]
-pub async fn delete_forever(st: S<'_>, account_id: String, thread_ids: Vec<String>) -> Result<()> {
+pub async fn delete_forever(st: S<'_>, account_id: String, thread_ids: Vec<String>) -> Result<crate::engine::Changed> {
     let r = st.engine.delete_forever(&account_id, &thread_ids).await;
     log_action(&account_id, &format!("deleted forever {} conversation(s)", thread_ids.len()), &r);
     r
