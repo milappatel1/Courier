@@ -569,6 +569,10 @@ export function noteUnsubscribed(accountId: string, email: string) {
   set((s) => ({ unsubscribed: { ...s.unsubscribed, [accountId]: [...(s.unsubscribed[accountId] ?? []), email.toLowerCase()] } }));
 }
 
+export function forgetUnsubscribed(accountId: string, email: string) {
+  set((s) => ({ unsubscribed: { ...s.unsubscribed, [accountId]: (s.unsubscribed[accountId] ?? []).filter((e) => e !== email.toLowerCase()) } }));
+}
+
 export async function loadAccounts() {
   const accounts = await api.accounts();
   set({ accounts });

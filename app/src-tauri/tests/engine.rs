@@ -447,6 +447,45 @@ async fn unsubscribing_from_a_sender_covers_each_of_their_mailing_lists() {
     assert_eq!(got, vec![("Offers <offers.news.example>".into(), "<mailto:leave-offers@news.example>".into()), ("Weekly <weekly.news.example>".into(), "<https://news.example/u?l=weekly>".into())]);
 }
 
+/// A message from `from` sent `mins_ago` minutes ago, with `extra` headers.
+fn mail_ago(from: &str, subject: &str, extra: &str, mins_ago: i64) -> Vec<u8> {
+    let date = (chrono::Utc::now() - chrono::Duration::minutes(mins_ago)).to_rfc2822();
+    let id = courier_lib::error::random_token(6);
+    format!("From: {from}\r\nTo: pat@example.com\r\nSubject: {subject}\r\nDate: {date}\r\nMessage-ID: <{id}@test.example>\r\n{extra}MIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nx\r\n").into_bytes()
+}
+
+#[tokio::test]
+async fn one_unsubscribe_reaches_a_sender_whose_every_message_has_its_own_link() {
+    // A sender with no List-Id and a link of its own in each message: Courier used to post to all 25 links
+    // (about ten seconds before the page reacted), so it looked as if a second try was needed.
+    let w = world().await;
+    for i in 0..25 {
+        let h = format!("List-Unsubscribe: <https://shop.example/u/{i}>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n");
+        w.gmail.deliver(&mail_ago("Shop <deals@shop.example>", &format!("Deal {i}"), &h, 100 - i), &["INBOX", "CATEGORY_PROMOTIONS"]);
+    }
+    w.engine.sync_account("g1").await.unwrap();
+    let lists = w.engine.sender_lists("g1", "deals@shop.example").unwrap();
+    assert_eq!(lists.iter().map(|l| l.list_unsubscribe.as_str()).collect::<Vec<_>>(), vec!["<https://shop.example/u/24>"], "one request, with the newest message's link");
+}
+
+#[tokio::test]
+async fn manage_subscriptions_counts_only_recent_mail_outside_spam_and_trash() {
+    let w = world().await;
+    let unsub = |s: &str| format!("List-Unsubscribe: <https://{s}.example/u>\r\n");
+    w.gmail.deliver(&mail_ago("Now <a@now.example>", "fresh", &unsub("now"), 60), &["INBOX", "CATEGORY_PROMOTIONS"]);
+    w.gmail.deliver(&mail_ago("Now <a@now.example>", "binned", &unsub("now"), 30), &["TRASH", "CATEGORY_PROMOTIONS"]);
+    w.gmail.deliver(&mail_ago("Junk <j@junk.example>", "spam", &unsub("junk"), 60), &["SPAM"]);
+    w.gmail.deliver(&mail_ago("Binned <b@bin.example>", "old news", &unsub("bin"), 60), &["TRASH", "CATEGORY_UPDATES"]);
+    // Quiet for six weeks: the web client no longer lists it.
+    let quiet = w.gmail.deliver(&mail_ago("Quiet <q@quiet.example>", "long ago", &unsub("quiet"), 6 * 7 * 24 * 60), &["CATEGORY_UPDATES"]);
+    w.engine.sync_account("g1").await.unwrap();
+    // Mail that was cached while it was recent, or reached by search, stays in the cache.
+    w.engine.list(&ViewQuery { label: None, query: Some("from:q@quiet.example".into()), mode: Some("server".into()), ..view("g1", "INBOX") }).await.unwrap();
+    assert!(w.engine.db.has_message("g1", &quiet).unwrap());
+    let subs = w.engine.subscriptions("g1").unwrap();
+    assert_eq!(subs.iter().map(|s| (s.email.as_str(), s.recent)).collect::<Vec<_>>(), vec![("a@now.example", 1)]);
+}
+
 #[tokio::test]
 async fn old_unread_primary_mail_counts_toward_the_inbox() {
     let w = world().await;
@@ -627,6 +666,11 @@ async fn manage_subscriptions_lists_senders_with_an_unsubscribe_option() {
     w.engine.mark_unsubscribed("g1", "Hello@News.example").unwrap();
     assert!(w.engine.subscriptions("g1").unwrap()[0].unsubscribed.is_some());
     assert_eq!(w.engine.subscriptions("all").unwrap().len(), 2);
+    // Their mail cleared ("Delete all"): still listed as unsubscribed.
+    let ids: Vec<String> = w.gmail.state.lock().messages.values().filter(|m| m.labels.iter().any(|l| l == "CATEGORY_PROMOTIONS")).map(|m| m.id.clone()).collect();
+    w.engine.modify_messages("g1", &ids, &["TRASH".into()], &[]).await.unwrap();
+    let subs = w.engine.subscriptions("g1").unwrap();
+    assert!(subs.iter().any(|s| s.email == "hello@news.example" && s.unsubscribed.is_some()), "{:?}", subs.iter().map(|s| &s.email).collect::<Vec<_>>());
 }
 
 #[tokio::test]

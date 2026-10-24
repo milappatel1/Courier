@@ -386,7 +386,9 @@ impl E2e {
             let s = |k: &str| args[k].as_str().unwrap_or("").to_string();
             match action {
                 "deliver-gmail" => {
-                    let raw = mail(&s("from"), GMAIL_ADDR, &s("subject"), &chrono::Local::now().to_rfc2822(), &s("body"), &s("headers"));
+                    // "minutesAgo" dates it in the past (the newest of a sender's messages decides some things).
+                    let when = chrono::Local::now() - chrono::Duration::minutes(args["minutesAgo"].as_i64().unwrap_or(0));
+                    let raw = mail(&s("from"), GMAIL_ADDR, &s("subject"), &when.to_rfc2822(), &s("body"), &s("headers"));
                     let labels: Vec<String> = args["labels"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_else(|| vec!["INBOX".into(), "UNREAD".into(), "CATEGORY_PERSONAL".into()]);
                     let refs: Vec<&str> = labels.iter().map(|x| x.as_str()).collect();
                     let id = self.gmail.deliver(&raw, &refs);

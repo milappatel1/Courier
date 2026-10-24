@@ -9,6 +9,7 @@ import {
   getState,
   go,
   noteUnsubscribed,
+  forgetUnsubscribed,
   hideThreads,
   labelName,
   loadList,
@@ -401,6 +402,9 @@ export async function blockSender(accountId: string, email: string, name: string
   });
 }
 
+/** Senders whose unsubscribe requests are still going out ("account:address"): a second click waits for them. */
+const unsubscribing = new Set<string>();
+
 /**
  * Unsubscribe the way the web client does. From a message (scope "list") it's that mailing list; from Manage
  * subscriptions (scope "sender") every list the sender uses in the cached mail. Each list goes by one-click in
@@ -414,7 +418,10 @@ export async function unsubscribe(o: {
   header?: string;
   post?: string;
   sendMail: (to: string, subject: string, body: string) => Promise<void>;
+  /** Called as soon as the user confirms (the page shows the sender as unsubscribed at once). */
   onDone?: () => void;
+  /** Called if no request got through after all. */
+  onFailed?: () => void;
 }) {
   const local = !!getState().info?.e2e;
   const lists =
@@ -439,21 +446,24 @@ export async function unsubscribe(o: {
       ok: d.ok,
       run: () => {
         if (!direct.length) return void api.openExternal((shown as { url: string }).url).catch((e) => toast(failureText("open the sender's page", e)));
-        void (async () => {
-          try {
-            for (const m of direct) {
-              if (m.kind === "one-click") await api.unsubscribeOneClick(m.url);
-              else if (m.kind === "mailto") await o.sendMail(m.to, m.subject || "unsubscribe", m.body);
-            }
+        const key = `${o.accountId}:${o.sender.email.toLowerCase()}`;
+        if (unsubscribing.has(key)) return;
+        unsubscribing.add(key);
+        // Shown as done at once; the requests (one per mailing list) go out together in the background.
+        noteUnsubscribed(o.accountId, o.sender.email);
+        o.onDone?.();
+        void Promise.all(direct.map((m) => (m.kind === "one-click" ? api.unsubscribeOneClick(m.url) : o.sendMail(m.to, m.subject || "unsubscribe", m.body))))
+          .then(async () => {
             await api.markUnsubscribed(o.accountId, o.sender.email).catch(() => {});
-            noteUnsubscribed(o.accountId, o.sender.email);
             toast(o.scope === "list" ? "Unsubscribed from this mailing list." : `Unsubscribed from ${name}.`);
-            o.onDone?.();
-          } catch (e) {
+          })
+          .catch((e) => {
+            forgetUnsubscribed(o.accountId, o.sender.email);
+            o.onFailed?.();
             const page = methods.find((m) => m.kind !== "mailto") as { url: string } | undefined;
             toast(failureText(`unsubscribe from ${name}`, e), page ? { action: { label: "Go to website", run: () => void api.openExternal(page.url) } } : {});
-          }
-        })();
+          })
+          .finally(() => unsubscribing.delete(key));
       },
     },
   });

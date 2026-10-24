@@ -1372,8 +1372,35 @@ step(
   "manage subscriptions: senders listed, unsubscribe, clear their mail",
   async () => {
     await backToInbox();
+    // A sender that puts a link of its own in every message: one request, with the newest message's link.
+    const drop = (i: number) => `List-Unsubscribe: <${info.fakeBase}/unsubscribe/bigshop-${i}>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n`;
+    for (const i of [0, 1, 2])
+      await api.e2eControl("deliver-gmail", {
+        from: "Big Shop <promo@bigshop.example>",
+        subject: `Drop ${i}`,
+        body: "x",
+        headers: drop(i),
+        minutesAgo: 30 - i * 10,
+      });
+    await until("Big Shop's mail synced", () => row("Drop 2"), 20_000);
     await openNav("SUBSCRIPTIONS");
     await el("subscriptions");
+    const shop = () => qa("sub-row").find((x) => x.textContent?.includes("promo@bigshop.example"));
+    await until("Big Shop listed", shop);
+    // The sender's server takes 3 s to answer: the page says it's done at once all the same.
+    await api.e2eControl("gmail-behaviour", { latency: { "bigshop-2": 3000 } });
+    try {
+      click(await el("sub-unsubscribe", shop()!));
+      click(await el("confirm-ok"));
+      const t0 = performance.now();
+      await until("shown as unsubscribed at once", () => shop()?.querySelector('[data-testid="sub-done"]'), 1500);
+      check(performance.now() - t0 < 1000, `the page took ${Math.round(performance.now() - t0)} ms to react`);
+      await until("Unsubscribed toast", () => toastWith(/Unsubscribed from Big Shop/), 10_000);
+      const reqs = (await server()).unsubscribeRequests.filter((r) => r.path.startsWith("bigshop-"));
+      check(reqs.length === 1 && reqs[0].path === "bigshop-2", `requests: ${reqs.map((r) => r.path).join(", ")}`);
+    } finally {
+      await api.e2eControl("gmail-behaviour", { latency: {} });
+    }
     const deals = () => qa("sub-row").find((x) => x.textContent?.includes("news@deals.example"));
     await until("Daily Deals listed", deals);
     const posted = async () => (await server()).unsubscribeRequests.filter((r) => r.path === "deals" && r.method === "POST").length;

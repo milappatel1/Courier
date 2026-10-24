@@ -1405,7 +1405,8 @@ impl Engine {
         let mut out = Vec::new();
         for a in accounts {
             let done = self.db.kv_get(&format!("unsubscribed:{a}"))?.unwrap_or(json!({}));
-            for mut s in self.db.subscriptions(&a, since)? {
+            let emails: Vec<String> = done.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+            for mut s in self.db.subscriptions(&a, since, &emails)? {
                 s.unsubscribed = done[&s.email].as_i64();
                 out.push(s);
             }
@@ -2273,8 +2274,9 @@ impl Engine {
         }
     }
 
-    /// Each mailing list a sender has used in the cached mail (by List-Id, else by its unsubscribe header),
-    /// newest first: Manage subscriptions unsubscribes from all of them.
+    /// Each mailing list a sender has used in the cached mail, by List-Id (mail without one counts as one list),
+    /// with the newest message's unsubscribe headers, newest first: Manage subscriptions unsubscribes from each
+    /// once. Senders often put a link of its own in every message; the web client uses the newest.
     pub fn sender_lists(&self, account: &str, email: &str) -> Result<Vec<crate::db::SenderList>> {
         self.db.sender_lists(account, email)
     }

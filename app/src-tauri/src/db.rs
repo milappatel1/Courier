@@ -888,7 +888,7 @@ impl Db {
             let mut st = c.prepare(
                 "SELECT list_id, list_unsubscribe, list_unsubscribe_post FROM (
                    SELECT list_id, list_unsubscribe, list_unsubscribe_post, internal_date,
-                          ROW_NUMBER() OVER (PARTITION BY CASE WHEN list_id != '' THEN list_id ELSE list_unsubscribe END ORDER BY internal_date DESC) AS rn
+                          ROW_NUMBER() OVER (PARTITION BY list_id ORDER BY internal_date DESC) AS rn
                    FROM messages WHERE account_id = ?1 AND lower(from_email) = lower(?2) AND list_unsubscribe != '')
                  WHERE rn = 1 ORDER BY internal_date DESC",
             )?;
@@ -899,9 +899,11 @@ impl Db {
         })
     }
 
-    /// Senders whose mail offers a way to unsubscribe (List-Unsubscribe), busiest first: how many messages in
-    /// all and since `since_ms`, and the newest message's unsubscribe headers.
-    pub fn subscriptions(&self, account: &str, since_ms: i64) -> Result<Vec<Subscription>> {
+    /// Senders whose recent mail offers a way to unsubscribe (List-Unsubscribe), busiest first, as the web client
+    /// lists them: one per From address, from mail since `since_ms` that isn't in Spam or Trash, with how many
+    /// messages and the newest one's unsubscribe headers. Senders in `done` (unsubscribed from here) stay listed
+    /// while any of their mail is cached, cleared or old.
+    pub fn subscriptions(&self, account: &str, since_ms: i64, done: &[String]) -> Result<Vec<Subscription>> {
         self.with(|c| {
             let mut st = c.prepare(
                 "WITH s AS (
@@ -911,12 +913,14 @@ impl Db {
                           SUM(CASE WHEN internal_date >= ?2 THEN 1 ELSE 0 END) OVER (PARTITION BY lower(from_email)) AS recent
                    FROM messages
                    WHERE account_id = ?1 AND list_unsubscribe != '' AND from_email != ''
-                     AND labels NOT LIKE '% SENT %' AND labels NOT LIKE '% DRAFT %')
+                     AND labels NOT LIKE '% SENT %' AND labels NOT LIKE '% DRAFT %'
+                     AND (lower(from_email) IN (SELECT value FROM json_each(?3))
+                          OR (internal_date >= ?2 AND labels NOT LIKE '% SPAM %' AND labels NOT LIKE '% TRASH %')))
                  SELECT e, from_name, internal_date, list_unsubscribe, list_unsubscribe_post, list_id, total, recent
                  FROM s WHERE rn = 1 ORDER BY recent DESC, internal_date DESC",
             )?;
             let rows = st
-                .query_map(params![account, since_ms], |r| {
+                .query_map(params![account, since_ms, j(&done)], |r| {
                     Ok(Subscription {
                         account_id: account.to_string(),
                         email: r.get(0)?,

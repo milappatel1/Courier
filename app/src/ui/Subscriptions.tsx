@@ -38,10 +38,8 @@ export function Subscriptions() {
   }, [rows, sort]);
   const active = sorted.filter((r) => !r.unsubscribed);
   const done = sorted.filter((r) => r.unsubscribed);
-  const markDone = (r: Subscription) => {
-    void api.markUnsubscribed(r.accountId, r.email).catch(() => {});
-    setRows((rs) => (rs ?? []).map((x) => (x.email === r.email && x.accountId === r.accountId ? { ...x, unsubscribed: Date.now() } : x)));
-  };
+  const mark = (r: Subscription, when: number | null) =>
+    setRows((rs) => (rs ?? []).map((x) => (x.email === r.email && x.accountId === r.accountId ? { ...x, unsubscribed: when } : x)));
   return (
     <div className="subs" data-testid="subscriptions">
       <h1 className="subs-title">Subscriptions</h1>
@@ -65,13 +63,13 @@ export function Subscriptions() {
           </div>
         )}
         {active.map((r) => (
-          <SubRow key={`${r.accountId}:${r.email}`} r={r} onDone={() => markDone(r)} />
+          <SubRow key={`${r.accountId}:${r.email}`} r={r} onDone={() => mark(r, Date.now())} onFailed={() => mark(r, null)} />
         ))}
         {done.length > 0 && (
           <>
             <div className="subs-section">Unsubscribed</div>
             {done.map((r) => (
-              <SubRow key={`${r.accountId}:${r.email}`} r={r} onDone={() => {}} />
+              <SubRow key={`${r.accountId}:${r.email}`} r={r} onDone={() => {}} onFailed={() => {}} />
             ))}
           </>
         )}
@@ -80,7 +78,7 @@ export function Subscriptions() {
   );
 }
 
-function SubRow({ r, onDone }: { r: Subscription; onDone: () => void }) {
+function SubRow({ r, onDone, onFailed }: { r: Subscription; onDone: () => void; onFailed: () => void }) {
   const multi = useMail((s) => s.accountId === "all");
   const how = parseListUnsubscribe(r.listUnsubscribe || null, r.listUnsubscribePost || null);
   const name = r.name || r.email;
@@ -116,6 +114,7 @@ function SubRow({ r, onDone }: { r: Subscription; onDone: () => void }) {
                 scope: "sender",
                 sendMail: (to, s, b) => sendSimple(r.accountId, to, s, b),
                 onDone,
+                onFailed,
               })
             }
             testId="sub-unsubscribe"
