@@ -82,6 +82,15 @@ pub struct GState {
     pub label_log: Vec<(i64, String, Option<Vec<String>>)>,
     /// Messages parsed for search, by id and size (see `searchable`).
     pub parsed: Mutex<HashMap<(String, usize), search::Searchable>>,
+    /// Time spent answering, by route (not counting `latency`/`tail` waits): how much of a run was the fake's own work.
+    pub served: HashMap<String, Served>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Served {
+    pub count: u64,
+    pub total_ms: f64,
+    pub max_ms: f64,
 }
 
 #[derive(Clone)]
@@ -126,8 +135,19 @@ impl FakeGmail {
                 if wait > 0 {
                     tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
                 }
+                let t0 = std::time::Instant::now();
                 let resp = f.handle(req);
-                let tail = f.state.lock().tail_latency.get(&route).copied().unwrap_or(0);
+                let ms = t0.elapsed().as_secs_f64() * 1000.0;
+                let tail = {
+                    let mut st = f.state.lock();
+                    // A message fetch's route is its id.
+                    let key = if route.len() == 16 && route.bytes().all(|b| b.is_ascii_hexdigit()) { "messages.get".to_string() } else { route.clone() };
+                    let served = st.served.entry(key).or_default();
+                    served.count += 1;
+                    served.total_ms += ms;
+                    served.max_ms = served.max_ms.max(ms);
+                    st.tail_latency.get(&route).copied().unwrap_or(0)
+                };
                 if tail > 0 {
                     tokio::time::sleep(std::time::Duration::from_millis(tail)).await;
                 }
@@ -427,16 +447,17 @@ impl FakeGmail {
             }
             ("GET", ["threads"]) => {
                 let msgs = list_messages(&s, req);
-                let mut seen = Vec::new();
-                for m in &msgs {
-                    if !seen.contains(&m.thread_id) {
-                        seen.push(m.thread_id.clone());
-                    }
-                }
-                // Like the real API: a conversation sorts by its newest message (a sent reply moves it up).
+                let mut listed = std::collections::HashSet::new();
+                let mut seen: Vec<String> = msgs.iter().filter(|m| listed.insert(&m.thread_id)).map(|m| m.thread_id.clone()).collect();
+                // Like the real API: a conversation sorts by its newest message (a sent reply moves it up). One pass
+                // over the mailbox, so listing a 20,000-conversation mailbox stays fast enough not to be what a perf run measures.
                 let include = req.q("includeSpamTrash") == Some("true") || req.q_all("labelIds").iter().any(|l| l == "SPAM" || l == "TRASH");
-                let newest = |t: &String| s.messages.values().filter(|m| &m.thread_id == t && (include || !m.labels.iter().any(|l| l == "SPAM" || l == "TRASH"))).map(|m| m.internal_date).max().unwrap_or(0);
-                seen.sort_by_key(|t| std::cmp::Reverse(newest(t)));
+                let mut newest: HashMap<&String, i64> = HashMap::new();
+                for m in s.messages.values().filter(|m| listed.contains(&m.thread_id) && (include || !m.labels.iter().any(|l| l == "SPAM" || l == "TRASH"))) {
+                    let n = newest.entry(&m.thread_id).or_insert(0);
+                    *n = (*n).max(m.internal_date);
+                }
+                seen.sort_by_key(|t| std::cmp::Reverse(newest.get(t).copied().unwrap_or(0)));
                 let max: usize = req.q("maxResults").and_then(|x| x.parse().ok()).unwrap_or(100);
                 let start: usize = req.q("pageToken").and_then(|x| x.parse().ok()).unwrap_or(0);
                 let page: Vec<Value> = seen.iter().skip(start).take(max).map(|t| json!({"id": t, "snippet": "", "historyId": s.history_id.to_string()})).collect();

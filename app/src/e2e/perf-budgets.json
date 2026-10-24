@@ -1,0 +1,4 @@
+{
+  "mailbox": { "conversations": 20000, "seed": 11, "pageSize": 100 },
+  "budgets": {}
+}

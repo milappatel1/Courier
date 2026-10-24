@@ -22,6 +22,26 @@ pub fn report_path() -> Option<String> {
     }
 }
 
+/// When the kernel started this process (ms since the epoch, to the microsecond): `sysctl` KERN_PROC_PID gives a
+/// `kinfo_proc`, whose first field (`kp_proc.p_un`) holds `p_starttime`, a timeval.
+#[cfg(target_os = "macos")]
+fn process_start_ms() -> f64 {
+    unsafe extern "C" {
+        fn sysctl(name: *mut i32, namelen: u32, oldp: *mut std::ffi::c_void, oldlenp: *mut usize, newp: *mut std::ffi::c_void, newlen: usize) -> i32;
+    }
+    let mut mib = [1, 14, 1, std::process::id() as i32];
+    let mut buf = [0u8; 1024];
+    let mut len = buf.len();
+    // SAFETY: `buf` is larger than a kinfo_proc (648 bytes on arm64) and `len` says how large it is.
+    let r = unsafe { sysctl(mib.as_mut_ptr(), 4, buf.as_mut_ptr().cast(), &mut len, std::ptr::null_mut(), 0) };
+    if r != 0 || len < 16 {
+        return 0.0;
+    }
+    let sec = i64::from_ne_bytes(buf[0..8].try_into().unwrap_or_default());
+    let usec = i32::from_ne_bytes(buf[8..12].try_into().unwrap_or_default());
+    sec as f64 * 1000.0 + usec as f64 / 1000.0
+}
+
 pub struct E2e {
     pub report_path: String,
     #[cfg(debug_assertions)]
@@ -39,7 +59,51 @@ pub struct E2e {
     pub extra: Mutex<Vec<FakeGmail>>,
     /// Background mail arriving in the extra accounts (`traffic`): bumped to stop the current stream.
     pub traffic: Arc<std::sync::atomic::AtomicU64>,
+    /// When `start` began and finished (ms since the epoch): the fakes' share of a launch, for the perf run.
+    pub boot_ms: (i64, i64),
 }
+
+/// An end-to-end run of the perf steps (scripts/perf.sh): COURIER_E2E_ONLY names "perf:" steps.
+pub fn perf_run() -> bool {
+    report_path().is_some() && std::env::var("COURIER_E2E_ONLY").is_ok_and(|o| o.contains("perf:"))
+}
+
+/// WebKit renders no frames for a page whose window is covered or on another Space, and the end-to-end window sits
+/// behind the others. The perf run times frames, so it tells WebKit to render the page as if it were in front.
+#[cfg(target_os = "macos")]
+pub fn keep_rendering(window: &tauri::WebviewWindow) {
+    let _ = window.with_webview(|pv| {
+        let wk = pv.inner() as *mut objc2::runtime::AnyObject;
+        // SAFETY: on macOS `inner()` is the live WKWebView, and this runs on the main thread. The setter is WebKit SPI,
+        // so it is asked for first.
+        unsafe {
+            let known: bool = !wk.is_null() && objc2::msg_send![&*wk, respondsToSelector: objc2::sel!(_setWindowOcclusionDetectionEnabled:)];
+            if known {
+                let _: () = objc2::msg_send![&*wk, _setWindowOcclusionDetectionEnabled: false];
+                // WebKit decides whether the page is visible again only when the view or its window changes.
+                let _: () = objc2::msg_send![&*wk, setHidden: true];
+                let _: () = objc2::msg_send![&*wk, setHidden: false];
+            }
+        }
+    });
+}
+
+/// Runs before the main window's page in perf runs: notes (`performance.now()`, ms) when the first
+/// conversation rows reach the page and when the frame showing them has rendered, for the perf run's launch time.
+pub const FIRST_ROWS_SCRIPT: &str = r#"(() => {
+  const t = (window.__firstRows = { dom: 0, painted: 0 });
+  const mo = new MutationObserver(() => {
+    if (!document.querySelector('[data-testid="thread-row"]')) return;
+    mo.disconnect();
+    t.dom = performance.now();
+    requestAnimationFrame(() => {
+      const ch = new MessageChannel();
+      ch.port1.onmessage = () => (t.painted = performance.now());
+      ch.port2.postMessage(0);
+    });
+  });
+  mo.observe(document, { childList: true, subtree: true });
+})();"#;
 
 pub const GMAIL_ADDR: &str = "pat@example.com";
 pub const IMAP_ADDR: &str = "pat@example.org";
@@ -70,6 +134,7 @@ fn with_attachment(from: &str, to: &str, subject: &str, date: &str, body: &str, 
 impl E2e {
     #[cfg(debug_assertions)]
     pub async fn start(report_path: String) -> E2e {
+        let begun = crate::error::now_ms();
         crate::db::TRACE_INBOX.store(true, std::sync::atomic::Ordering::Relaxed);
         let gmail = FakeGmail::start(GMAIL_ADDR, "Pat Example").await;
         let imap = FakeImap::start(IMAP_ADDR, IMAP_PASSWORD).await;
@@ -196,7 +261,8 @@ impl E2e {
         imap.deliver("INBOX", &mail("Eli Park <eli@club.example>", "pat@example.org", "Club meeting Thursday", &d(0, 8), "Meeting moved to Thursday at 7.", ""), &[]);
         imap.deliver("INBOX", &mail("Fay Wong <fay@club.example>", "pat@example.org", "Train tickets", &d(2, 14), "Tickets for the trip are booked.", ""), &["\\Seen"]);
         imap.deliver("Sent", &mail("Pat <pat@example.org>", "eli@club.example", "Re: Club agenda", &d(5, 20), "Sounds good.", ""), &["\\Seen"]);
-        E2e { report_path, gmail, imap, smtp, notes: Mutex::new(vec![]), opened: Mutex::new(vec![]), activations: Default::default(), extra: Mutex::new(vec![]), traffic: Default::default() }
+        let boot_ms = (begun, crate::error::now_ms());
+        E2e { report_path, gmail, imap, smtp, notes: Mutex::new(vec![]), opened: Mutex::new(vec![]), activations: Default::default(), extra: Mutex::new(vec![]), traffic: Default::default(), boot_ms }
     }
 
     pub fn info(&self) -> Value {
@@ -210,6 +276,47 @@ impl E2e {
         }
         #[cfg(not(debug_assertions))]
         json!({})
+    }
+
+    /// For the perf run: when the kernel started this process and when `start` (the fakes) began and ended, all in
+    /// ms since the epoch, and WebKit's processes for the window (the page's, the GPU's and the network's), whose
+    /// memory and CPU are Courier's too.
+    pub async fn perf_info(&self, app: &tauri::AppHandle) -> Result<Value> {
+        #[cfg(target_os = "macos")]
+        {
+            use tauri::Manager;
+            let w = app.get_webview_window("main").ok_or_else(|| Error::msg("no main window"))?;
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let _ = w.with_webview(move |pv| {
+                let wk = pv.inner() as *mut objc2::runtime::AnyObject;
+                // SAFETY: on macOS `inner()` is the live WKWebView, and this runs on the main thread. The selectors are
+                // WebKit SPI, so each is asked for first.
+                macro_rules! pid {
+                    ($sel:ident) => {
+                        unsafe {
+                            let known: bool = !wk.is_null() && objc2::msg_send![&*wk, respondsToSelector: objc2::sel!($sel)];
+                            if known {
+                                let p: i32 = objc2::msg_send![&*wk, $sel];
+                                p
+                            } else {
+                                0
+                            }
+                        }
+                    };
+                }
+                let _ = tx.send((pid!(_webProcessIdentifier), pid!(_gpuProcessIdentifier), pid!(_networkProcessIdentifier)));
+            });
+            let (web, gpu, net) = rx.await.unwrap_or_default();
+            Ok(json!({
+                "pid": std::process::id(), "processStartMs": process_start_ms(), "fakesMs": [self.boot_ms.0, self.boot_ms.1],
+                "webContentPid": web, "gpuPid": gpu, "networkPid": net,
+            }))
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = app;
+            Ok(json!({"pid": std::process::id(), "fakesMs": [self.boot_ms.0, self.boot_ms.1]}))
+        }
     }
 
     /// Discovery for the fake IMAP domain (so the add-account flow can be exercised end to end).
@@ -436,6 +543,39 @@ impl E2e {
                 }
                 "sync" => {
                     engine.trigger_all();
+                    Ok(json!({}))
+                }
+                // What the fake mail APIs spent answering, by route, since the last `reset` (perf runs check that the
+                // fakes, which run inside the app, aren't what they measured).
+                "fake-stats" => {
+                    let mut fakes = vec![self.gmail.clone()];
+                    fakes.extend(self.extra.lock().iter().cloned());
+                    let mut routes: std::collections::BTreeMap<String, crate::testsupport::fake_gmail::Served> = Default::default();
+                    for f in &fakes {
+                        let mut st = f.state.lock();
+                        for (route, s) in &st.served {
+                            let r = routes.entry(route.clone()).or_default();
+                            r.count += s.count;
+                            r.total_ms += s.total_ms;
+                            r.max_ms = r.max_ms.max(s.max_ms);
+                        }
+                        if args["reset"].as_bool() == Some(true) {
+                            st.served.clear();
+                        }
+                    }
+                    let total: f64 = routes.values().map(|r| r.total_ms).sum();
+                    let routes: serde_json::Map<String, Value> = routes.into_iter().map(|(k, r)| (k, json!({"count": r.count, "totalMs": r.total_ms, "maxMs": r.max_ms}))).collect();
+                    Ok(json!({"totalMs": total, "routes": routes}))
+                }
+                // End-to-end runs log every cache write that moves a message into or out of the Inbox (an extra read and
+                // a log line each); perf runs turn it off, as it is in the app people use.
+                "trace-inbox" => {
+                    crate::db::TRACE_INBOX.store(args["on"].as_bool().unwrap_or(true), std::sync::atomic::Ordering::Relaxed);
+                    Ok(json!({}))
+                }
+                // End-to-end runs sync every 2 s; perf runs time the views at the app's own 60 s (from the next cycle).
+                "sync-interval" => {
+                    *engine.sync_interval.write() = std::time::Duration::from_secs(args["seconds"].as_u64().unwrap_or(2).max(1));
                     Ok(json!({}))
                 }
                 _ => Err(Error::msg(format!("unknown e2e action {action}"))),

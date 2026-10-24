@@ -10,6 +10,7 @@ import { api } from "../ipc/api";
 import { applyViewportSize, getState, loadLabels, setSetting, setState, visibleThreads } from "../state/store";
 import { flashes, recordFrames } from "./frames";
 import { layoutIssues } from "./layout";
+import "./perf"; // the "perf:" steps: they run after these when COURIER_E2E_ONLY names them, and join the report
 
 interface StepResult {
   name: string;

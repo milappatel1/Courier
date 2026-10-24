@@ -231,6 +231,7 @@ pub fn window_builder<'a>(app: &'a AppHandle, label: &str, url: &str, title: &st
         });
     #[cfg(target_os = "macos")]
     let b = b.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true).traffic_light_position(LogicalPosition::new(20.0, 26.0));
+    let b = if e2e && label == "main" && e2e::perf_run() { b.initialization_script(e2e::FIRST_ROWS_SCRIPT) } else { b };
     b
 }
 
@@ -577,6 +578,9 @@ pub fn run() {
                 macos::enable_swipe_navigation(&main);
                 if e2e_state.is_some() {
                     macos::order_back(&main);
+                    if e2e::perf_run() {
+                        e2e::keep_rendering(&main);
+                    }
                 } else {
                     macos::remember_frame(&main, "CourierMain");
                 }
