@@ -771,7 +771,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
     const ids = new Set(threadMsgIds(String(a.accountId), a.threadIds as string[]));
     for (let i = msgs.length - 1; i >= 0; i--) if (ids.has(msgs[i].id)) msgs.splice(i, 1);
     emit("mail-changed", { accountId: a.accountId });
-    return null;
+    return "done";
   },
   empty_label: (a) => {
     let n = 0;

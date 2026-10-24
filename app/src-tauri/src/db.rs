@@ -379,6 +379,10 @@ CREATE TABLE IF NOT EXISTS thread_queue (
   account_id TEXT NOT NULL, thread_id TEXT NOT NULL, seq INTEGER NOT NULL, add_labels TEXT NOT NULL, remove_labels TEXT NOT NULL,
   PRIMARY KEY (account_id, thread_id)
 );
+CREATE TABLE IF NOT EXISTS delete_queue (
+  account_id TEXT NOT NULL, message_id TEXT NOT NULL, seq INTEGER NOT NULL,
+  PRIMARY KEY (account_id, message_id)
+);
 CREATE TABLE IF NOT EXISTS change_queue (
   account_id TEXT NOT NULL, message_id TEXT NOT NULL, seq INTEGER NOT NULL, before TEXT, add_labels TEXT NOT NULL, remove_labels TEXT NOT NULL,
   PRIMARY KEY (account_id, message_id)
@@ -709,7 +713,7 @@ impl Db {
     pub fn delete_account(&self, id: &str) -> Result<()> {
         self.with(|c| {
             c.execute("DELETE FROM fts WHERE rowid IN (SELECT rowid FROM messages WHERE account_id = ?)", [id])?;
-            for t in ["messages", "labels", "drafts", "outbox", "snoozes", "bumps", "muted", "star_types", "contacts", "signatures", "local_filters", "blocked", "change_queue", "thread_queue"] {
+            for t in ["messages", "labels", "drafts", "outbox", "snoozes", "bumps", "muted", "star_types", "contacts", "signatures", "local_filters", "blocked", "change_queue", "thread_queue", "delete_queue"] {
                 c.execute(&format!("DELETE FROM {t} WHERE account_id = ?"), [id])?;
             }
             c.execute("DELETE FROM templates WHERE account_id = ?", [id])?;
@@ -995,6 +999,10 @@ impl Db {
     fn upsert_from_server(&self, m: &MessageRow, raw: Option<&[u8]>, stamp: i64) -> Result<()> {
         let p = self.pending.lock();
         let c = self.conn.lock();
+        // Deleted forever here and waiting to go out: whatever the server says meanwhile doesn't bring it back.
+        if c.query_row("SELECT 1 FROM delete_queue WHERE account_id=? AND message_id=?", [&m.account_id, &m.id], |_| Ok(())).optional()?.is_some() {
+            return Ok(());
+        }
         let held: Option<(String, i64)> = c.query_row("SELECT server_labels, server_stamp FROM messages WHERE account_id=? AND id=?", [&m.account_id, &m.id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
         let (base, base_stamp) = match held {
             Some((b, s)) if s > stamp => (labels_from(&b), s),
@@ -1345,12 +1353,41 @@ impl Db {
     }
 
     pub fn has_queued(&self, account: &str) -> Result<bool> {
-        self.with(|c| c.query_row("SELECT EXISTS(SELECT 1 FROM change_queue WHERE account_id=?1) OR EXISTS(SELECT 1 FROM thread_queue WHERE account_id=?1)", [account], |r| r.get(0)))
+        self.with(|c| {
+            c.query_row(
+                "SELECT EXISTS(SELECT 1 FROM change_queue WHERE account_id=?1) OR EXISTS(SELECT 1 FROM thread_queue WHERE account_id=?1) OR EXISTS(SELECT 1 FROM delete_queue WHERE account_id=?1)",
+                [account],
+                |r| r.get(0),
+            )
+        })
     }
 
     /// Accounts with changes waiting to go to the server.
     pub fn queued_accounts(&self) -> Result<Vec<String>> {
-        self.with(|c| c.prepare("SELECT account_id FROM change_queue UNION SELECT account_id FROM thread_queue")?.query_map([], |r| r.get(0))?.collect())
+        self.with(|c| c.prepare("SELECT account_id FROM change_queue UNION SELECT account_id FROM thread_queue UNION SELECT account_id FROM delete_queue")?.query_map([], |r| r.get(0))?.collect())
+    }
+
+    /// Delete forever with no connection: the messages leave the cache now and wait (over a restart) to be deleted
+    /// on the server, after any label change still waiting.
+    pub fn queue_delete(&self, account: &str, ids: &[String]) -> Result<()> {
+        for id in ids {
+            self.delete_message(account, id)?;
+            self.with(|c| c.execute("INSERT OR IGNORE INTO delete_queue (account_id, message_id, seq) VALUES (?1, ?2, (SELECT COALESCE(MAX(seq), 0) + 1 FROM delete_queue))", [account, id]))?;
+        }
+        Ok(())
+    }
+
+    /// Messages deleted forever here that the server doesn't know about yet, oldest first.
+    pub fn queued_deletes(&self, account: &str) -> Result<Vec<String>> {
+        self.with(|c| c.prepare("SELECT message_id FROM delete_queue WHERE account_id=? ORDER BY seq")?.query_map([account], |r| r.get(0))?.collect())
+    }
+
+    /// The server deleted them (or refused, and they may come back from it): they no longer wait.
+    pub fn delete_done(&self, account: &str, ids: &[String]) -> Result<()> {
+        for id in ids {
+            self.with(|c| c.execute("DELETE FROM delete_queue WHERE account_id=? AND message_id=?", [account, id]))?;
+        }
+        Ok(())
     }
 
     /// The server took `add`/`remove` for these messages: their queued changes are done, or, where another change

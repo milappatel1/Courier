@@ -70,7 +70,7 @@ export const api = {
   undoChange: (accountId: string, change: number) => call<"done" | "queued">("undo_change", { accountId, change }),
   modifyMessages: (accountId: string, messageIds: string[], add: string[], remove: string[]) =>
     call<Changed>("modify_messages", { accountId, messageIds, add, remove }),
-  deleteForever: (accountId: string, threadIds: string[]) => call<void>("delete_forever", { accountId, threadIds }),
+  deleteForever: (accountId: string, threadIds: string[]) => call<Changed>("delete_forever", { accountId, threadIds }),
   subscriptions: (accountId: string) => call<Subscription[]>("subscriptions", { accountId }),
   markUnsubscribed: (accountId: string, email: string) => call<void>("mark_unsubscribed", { accountId, email }),
   bulkModify: (view: ViewQuery, add: string[], remove: string[], keep: string[]) => call<BulkOutcome>("bulk_modify", { view, add, remove, keep }),

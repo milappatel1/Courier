@@ -294,6 +294,29 @@ async fn delete_forever_offline_is_made_at_once_survives_a_restart_and_goes_out_
 }
 
 #[tokio::test]
+async fn imap_delete_forever_offline_waits_and_expunges_once_online() {
+    let w = world().await;
+    w.imap.deliver("Trash", &sample_mail("Cy <cy@x.io>", "pat@example.org", "Old trip", "x", ""), &[]);
+    w.imap.deliver("Trash", &sample_mail("Di <di@x.io>", "pat@example.org", "Old dinner", "y", ""), &[]);
+    w.engine.sync_account("i1").await.unwrap();
+    w.engine.list(&ViewQuery { mode: Some("server".into()), ..view("i1", "TRASH") }).await.unwrap();
+    let trash = w.engine.list(&view("i1", "TRASH")).await.unwrap().threads;
+    let trip = trash.iter().find(|t| t.subject == "Old trip").unwrap().thread_id.clone();
+    w.imap.state.lock().offline = true;
+    assert_eq!(w.engine.delete_forever("i1", std::slice::from_ref(&trip)).await.unwrap(), Changed::Queued);
+    let left = |v: Vec<courier_lib::db::ThreadSummary>| v.into_iter().map(|t| t.subject).collect::<Vec<_>>();
+    assert_eq!(left(w.engine.list(&view("i1", "TRASH")).await.unwrap().threads), vec!["Old dinner".to_string()]);
+    assert_eq!(w.imap.folder("Trash").unwrap().msgs.len(), 2, "the server changed while offline");
+    w.imap.state.lock().offline = false;
+    w.engine.sync_account("i1").await.unwrap();
+    let on_server = w.imap.folder("Trash").unwrap().msgs;
+    assert_eq!(on_server.len(), 1);
+    assert!(String::from_utf8_lossy(&on_server[0].raw).contains("Old dinner"));
+    assert!(!w.engine.db.has_queued("i1").unwrap());
+    assert_eq!(left(w.engine.list(&view("i1", "TRASH")).await.unwrap().threads), vec!["Old dinner".to_string()]);
+}
+
+#[tokio::test]
 async fn snoozing_and_unsnoozing_offline_wait_and_reach_the_server_once_back() {
     let w = world().await;
     let id = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Later", "x", ""), &["INBOX", "UNREAD"]);

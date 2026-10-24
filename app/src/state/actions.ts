@@ -259,8 +259,9 @@ async function deleteForever(targets: Target[], count: number) {
   advanceAfter(true);
   let ok = false;
   try {
-    for (const t of targets) await api.deleteForever(t.accountId, t.threadIds);
-    toast(RULES["delete-forever"].text(count));
+    let queued = false;
+    for (const t of targets) queued = (await api.deleteForever(t.accountId, t.threadIds)) === "queued" || queued;
+    toast(RULES["delete-forever"].text(count) + (queued ? WHEN_ONLINE : ""));
     ok = true;
   } catch (e) {
     toast(failureText(doing("delete-forever", count), e), { action: { label: "Try again", run: () => void deleteForever(targets, count) } });

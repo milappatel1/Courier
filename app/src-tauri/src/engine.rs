@@ -1267,7 +1267,8 @@ impl Engine {
         let _one_at_a_time = lock.lock().await;
         let queued = self.db.queued_changes(account)?;
         let queued_threads = self.db.queued_threads(account)?;
-        if queued.is_empty() && queued_threads.is_empty() {
+        let deletes = self.db.queued_deletes(account)?;
+        if queued.is_empty() && queued_threads.is_empty() && deletes.is_empty() {
             return Ok(());
         }
         let gmail = self.kind(account)? == "gmail";
@@ -1355,6 +1356,22 @@ impl Engine {
                     }
                 }
             }
+        }
+        // Delete forever last: whatever was moved first has been.
+        if outcome.is_ok() && !deletes.is_empty() {
+            let mut gone = HashSet::new();
+            match self.delete_on_server(account, gmail, &deletes, &mut gone).await {
+                Ok(()) => {}
+                Err(e) if e.is_offline() || e.is_auth() || e.is_rate_limited() => outcome = Err(e),
+                Err(e) => {
+                    let left: Vec<String> = deletes.iter().filter(|id| !gone.contains(*id)).cloned().collect();
+                    crate::applog::warn(&format!("{account}: Delete forever made offline was refused for {} message(s) ({})", left.len(), e.kind()));
+                    self.db.delete_done(account, &left)?;
+                    refused += left.len();
+                }
+            }
+            sent += gone.len();
+            self.db.delete_done(account, &gone.into_iter().collect::<Vec<_>>())?;
         }
         if sent + refused > 0 {
             crate::applog::info(&format!("{account}: changes made offline: {sent} message(s) sent, {refused} refused"));
@@ -1698,51 +1715,90 @@ impl Engine {
         let gmail = self.kind(account)? == "gmail";
         let threads = self.thread_ids_of(account, &ids);
         let before = self.db.label_thread_stats(account, &threads)?;
+        if self.db.has_queued(account)? {
+            let _ = self.flush_queue(account).await;
+        }
+        // Earlier changes still waiting go first (a move to Trash, say); this one waits behind them.
+        let behind = self.db.has_queued(account)?;
+        let mut done: HashSet<String> = HashSet::new();
+        let result = if behind { Err(Error::Offline("earlier changes are still waiting".into())) } else { self.delete_on_server(account, gmail, &ids, &mut done).await };
+        match result {
+            Ok(()) => {}
+            Err(e) if e.is_offline() => {
+                // An IMAP message with a move still waiting isn't where the server has it yet: that one needs the
+                // connection.
+                let waiting: HashSet<String> = if gmail { HashSet::new() } else { self.db.queued_changes(account)?.into_iter().map(|q| q.message_id).collect() };
+                let rest: Vec<String> = ids.iter().filter(|id| !done.contains(*id)).cloned().collect();
+                if rest.iter().any(|id| waiting.contains(id)) {
+                    return Err(e);
+                }
+                self.db.queue_delete(account, &rest)?;
+                if !behind {
+                    self.set_online(false);
+                }
+                self.after_delete(account, gmail, &threads, &before).await?;
+                return Ok(Changed::Queued);
+            }
+            Err(e) => {
+                if let Ok(g) = self.gmail(account) {
+                    let _ = gmail::refresh_labels(&g, &self.db, account).await;
+                }
+                self.changed(account, "delete");
+                return Err(e);
+            }
+        }
+        self.after_delete(account, gmail, &threads, &before).await?;
+        Ok(Changed::Done)
+    }
+
+    /// Delete messages on the server, recording in `done` (and dropping from the cache) what it deleted: batch by
+    /// batch, so a later batch refused or cut off doesn't lose what went.
+    async fn delete_on_server(&self, account: &str, gmail: bool, ids: &[String], done: &mut HashSet<String>) -> Result<()> {
         if gmail {
-            // Batch by batch, so the cache drops what the server deleted even if a later batch is refused.
             let g = self.gmail(account)?;
             for part in ids.chunks(1000) {
-                let r = g.batch_delete(part).await;
-                if r.is_ok() {
-                    for id in part {
-                        self.db.delete_message(account, id)?;
-                    }
-                }
-                if let Err(e) = r {
-                    let _ = gmail::refresh_labels(&g, &self.db, account).await;
-                    self.changed(account, "delete");
-                    return Err(e);
+                g.batch_delete(part).await?;
+                for id in part {
+                    self.db.delete_message(account, id)?;
+                    done.insert(id.clone());
                 }
             }
-        } else {
-            let acc = self.imap_account(account)?;
-            let mut g = acc.session().await?;
-            let mut by_folder: HashMap<String, Vec<u32>> = HashMap::new();
-            for id in &ids {
-                if let Some((path, _, uid)) = imap::parse_message_id(id) {
-                    by_folder.entry(path).or_default().push(uid);
-                }
-            }
-            for (folder, uids) in by_folder {
-                if let Err(e) = imap::expunge_uids(g.as_mut().unwrap(), &folder, &uids).await {
-                    *g = None;
-                    return Err(e);
-                }
+            return Ok(());
+        }
+        let acc = self.imap_account(account)?;
+        let mut g = acc.session().await?;
+        let mut by_folder: HashMap<String, Vec<(u32, String)>> = HashMap::new();
+        for id in ids {
+            if let Some((path, _, uid)) = imap::parse_message_id(id) {
+                by_folder.entry(path).or_default().push((uid, id.clone()));
             }
         }
-        for id in &ids {
-            self.db.delete_message(account, id)?;
+        for (folder, msgs) in by_folder {
+            let uids: Vec<u32> = msgs.iter().map(|m| m.0).collect();
+            if let Err(e) = imap::expunge_uids(g.as_mut().unwrap(), &folder, &uids).await {
+                *g = None;
+                return Err(e);
+            }
+            for (_, id) in msgs {
+                self.db.delete_message(account, &id)?;
+                done.insert(id);
+            }
         }
+        Ok(())
+    }
+
+    /// Counts after messages left the cache by Delete forever.
+    async fn after_delete(&self, account: &str, gmail: bool, threads: &[String], before: &HashMap<String, (i64, i64)>) -> Result<()> {
         if gmail {
-            let after = self.db.label_thread_stats(account, &threads)?;
-            self.db.apply_label_deltas(account, &before, &after)?;
+            let after = self.db.label_thread_stats(account, threads)?;
+            self.db.apply_label_deltas(account, before, &after)?;
             let touched: Vec<String> = before.keys().cloned().collect();
             let _ = gmail::refresh_label_counts(&*self.gmail(account)?, &self.db, account, &touched).await;
         } else {
             self.db.recount_labels(account).ok();
         }
         self.changed(account, "delete");
-        Ok(Changed::Done)
+        Ok(())
     }
 
     pub async fn empty_label(&self, account: &str, label: &str) -> Result<usize> {
