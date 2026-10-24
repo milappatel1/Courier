@@ -71,9 +71,10 @@ scheduled mail need Courier running (it can be in the background) at the chosen 
 
 - Courier keeps the last 30 days of mail (and older unread Inbox mail) on your Mac; older mail comes from the
   server page by page, so it needs a connection.
-- Acting on every conversation in a view, Delete forever and editing labels need a connection. Archiving,
-  deleting, labelling, read/unread and stars done offline happen on your Mac at once and wait, even over a
-  restart, until the connection is back (as sends wait in the Outbox); Undo before then takes them back.
+- Archiving, deleting, Delete forever, labelling, snoozing, read/unread and stars done offline happen on your Mac
+  at once and wait, even over a restart, until the connection is back (as sends wait in the Outbox); Undo before
+  then takes them back. Offline, acting on every conversation in a view changes the ones on your Mac only (older
+  ones need a connection) and can't be undone; creating or editing labels needs a connection.
 - Gmail's Purchases category isn't available through the Gmail API, so it has no tab or label in Courier.
 - Unsubscribe uses the sender's one-click link (RFC 8058), else an unsubscribe email from your account, else the
   sender's web page; it can take a sender a few days to stop.
