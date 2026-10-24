@@ -171,6 +171,8 @@ export interface BulkOutcome {
   ids: string[];
   conversations: number;
   failedConversations: number;
+  /** Offline: the conversations this Mac has were changed here and wait to go out. */
+  queued: boolean;
 }
 
 /**

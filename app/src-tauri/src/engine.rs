@@ -1428,7 +1428,7 @@ impl Engine {
     /// Every message in a view — all pages, from the server for Gmail and for IMAP folders — except the
     /// conversations in `keep`. Whole conversations, as the web client acts on them: the cached messages of
     /// each matching conversation come along (a reply in Sent goes to Trash with the rest).
-    pub async fn view_message_ids(&self, v: &ViewQuery, keep: &HashSet<String>) -> Result<Vec<(String, String)>> {
+    pub async fn view_message_ids(&self, v: &ViewQuery, keep: &HashSet<String>) -> Result<(Vec<(String, String)>, bool)> {
         let account = v.account_id.as_str();
         let label = v.label.clone().unwrap_or_default();
         let kind = self.kind(account)?;
@@ -1437,61 +1437,77 @@ impl Engine {
         let mut threads: HashSet<String> = HashSet::new();
         let local_only = matches!(label.as_str(), "SNOOZED" | "SCHEDULED" | "OUTBOX");
         let has_query = v.query.as_deref().map(|q| !q.trim().is_empty()).unwrap_or(false) || v.category.as_deref().map(|c| !c.is_empty()).unwrap_or(false);
-        if kind == "gmail" && !local_only {
-            let g = self.gmail(account)?;
-            let (label_ids, q) = self.gmail_view_query_for(v);
-            let mut page: Option<String> = None;
-            let read = self.db.begin_read(account);
-            loop {
-                let r = g.messages_list(&read, Some(&q), &label_ids, page.as_deref(), 500).await?;
-                for m in r["messages"].as_array().cloned().unwrap_or_default() {
-                    let (Some(id), Some(t)) = (m["id"].as_str(), m["threadId"].as_str()) else { continue };
-                    if keep.contains(t) {
-                        continue;
-                    }
-                    threads.insert(t.to_string());
-                    if seen.insert(id.to_string()) {
-                        ids.push((id.to_string(), t.to_string()));
-                    }
-                }
-                self.emit("bulk-progress", json!({"accountId": account, "phase": "finding", "found": ids.len()}));
-                page = r["nextPageToken"].as_str().map(str::to_string);
-                if page.is_none() {
-                    break;
-                }
-            }
-        } else if kind == "imap" && !local_only && !has_query && !label.is_empty() && label != "ALL" {
-            // A folder: every message in it on the server, not only the cached window.
-            if let Some(l) = self.db.label(account, &label)? {
-                if let (Some(path), Some(uv)) = (l.imap_path.clone(), l.imap_uidvalidity) {
-                    let acc = self.imap_account(account)?;
-                    let mut g = acc.session().await?;
-                    let s = g.as_mut().unwrap();
-                    let found: Result<Vec<u32>> = async {
-                        s.select(&path).await?;
-                        Ok(s.uid_search("ALL").await?.into_iter().collect())
-                    }
-                    .await;
-                    let uids = match found {
-                        Ok(u) => u,
-                        Err(e) => {
-                            *g = None;
-                            return Err(e);
+        // Offline: the conversations this Mac has for the view (the second value says so).
+        let mut offline = false;
+        let found: Result<()> = async {
+            if kind == "gmail" && !local_only {
+                let g = self.gmail(account)?;
+                let (label_ids, q) = self.gmail_view_query_for(v);
+                let mut page: Option<String> = None;
+                let read = self.db.begin_read(account);
+                loop {
+                    let r = g.messages_list(&read, Some(&q), &label_ids, page.as_deref(), 500).await?;
+                    for m in r["messages"].as_array().cloned().unwrap_or_default() {
+                        let (Some(id), Some(t)) = (m["id"].as_str(), m["threadId"].as_str()) else { continue };
+                        if keep.contains(t) {
+                            continue;
                         }
-                    };
-                    let kept: HashSet<String> = keep.iter().flat_map(|t| self.db.thread_messages(account, t).unwrap_or_default()).map(|m| m.id).collect();
-                    let mut uids = uids;
-                    uids.sort_unstable();
-                    for uid in uids.into_iter().rev() {
-                        let id = imap::message_id_for(&path, uv as u32, uid);
-                        if !kept.contains(&id) && seen.insert(id.clone()) {
-                            // Uncached mail has no conversation yet: it counts as its own.
-                            let thread = self.db.message(account, &id)?.map(|m| m.thread_id).unwrap_or_else(|| id.clone());
-                            ids.push((id, thread));
+                        threads.insert(t.to_string());
+                        if seen.insert(id.to_string()) {
+                            ids.push((id.to_string(), t.to_string()));
                         }
                     }
+                    self.emit("bulk-progress", json!({"accountId": account, "phase": "finding", "found": ids.len()}));
+                    page = r["nextPageToken"].as_str().map(str::to_string);
+                    if page.is_none() {
+                        break;
+                    }
+                }
+            } else if kind == "imap" && !local_only && !has_query && !label.is_empty() && label != "ALL" {
+                // A folder: every message in it on the server, not only the cached window.
+                if let Some(l) = self.db.label(account, &label)? {
+                    if let (Some(path), Some(uv)) = (l.imap_path.clone(), l.imap_uidvalidity) {
+                        let acc = self.imap_account(account)?;
+                        let mut g = acc.session().await?;
+                        let s = g.as_mut().unwrap();
+                        let found: Result<Vec<u32>> = async {
+                            s.select(&path).await?;
+                            Ok(s.uid_search("ALL").await?.into_iter().collect())
+                        }
+                        .await;
+                        let uids = match found {
+                            Ok(u) => u,
+                            Err(e) => {
+                                *g = None;
+                                return Err(e);
+                            }
+                        };
+                        let kept: HashSet<String> = keep.iter().flat_map(|t| self.db.thread_messages(account, t).unwrap_or_default()).map(|m| m.id).collect();
+                        let mut uids = uids;
+                        uids.sort_unstable();
+                        for uid in uids.into_iter().rev() {
+                            let id = imap::message_id_for(&path, uv as u32, uid);
+                            if !kept.contains(&id) && seen.insert(id.clone()) {
+                                // Uncached mail has no conversation yet: it counts as its own.
+                                let thread = self.db.message(account, &id)?.map(|m| m.thread_id).unwrap_or_else(|| id.clone());
+                                ids.push((id, thread));
+                            }
+                        }
+                    }
                 }
             }
+            Ok(())
+        }
+        .await;
+        match found {
+            Ok(()) => {}
+            Err(e) if e.is_offline() => {
+                offline = true;
+                ids.clear();
+                seen.clear();
+                threads.clear();
+            }
+            Err(e) => return Err(e),
         }
         if ids.is_empty() {
             // The cache: every page of the local listing.
@@ -1518,7 +1534,7 @@ impl Engine {
                 }
             }
         }
-        Ok(ids)
+        Ok((ids, offline))
     }
 
     /// Apply a label change to everything in a view except `keep`. A batch the server refuses doesn't stop the
@@ -1527,14 +1543,24 @@ impl Engine {
     pub async fn bulk_modify(&self, v: &ViewQuery, add: &[String], remove: &[String], keep: &[String]) -> Result<BulkOutcome> {
         let account = v.account_id.clone();
         let keep: HashSet<String> = keep.iter().cloned().collect();
-        let ids = self.view_message_ids(v, &keep).await?;
+        let (ids, offline) = self.view_message_ids(v, &keep).await?;
         let total = ids.len();
         self.emit("bulk-progress", json!({"accountId": account, "phase": "working", "done": 0, "total": total}));
-        let chunk = if self.kind(&account)? == "gmail" { 1000 } else { total.max(1) };
+        let gmail = self.kind(&account)? == "gmail";
+        let chunk = if gmail { 1000 } else { total.max(1) };
         let mut out = BulkTally::default();
         for part in ids.chunks(chunk) {
             let only: Vec<String> = part.iter().map(|(id, _)| id.clone()).collect();
-            match self.modify_messages(&account, &only, add, remove).await {
+            let r = if offline && gmail {
+                // As conversation changes: each conversation's messages this Mac doesn't have go with it.
+                let (add, remove) = expand_label_rules(add, remove);
+                let mut threads: Vec<String> = part.iter().map(|(_, t)| t.clone()).collect();
+                threads.dedup();
+                self.change(&account, &only, &add, &remove, &threads).await.map(|r| r.result)
+            } else {
+                self.modify_messages(&account, &only, add, remove).await
+            };
+            match r {
                 Ok(_) => out.done(part),
                 Err(e) if e.is_offline() || e.is_auth() || out.ids.is_empty() && part.len() == total => return Err(e),
                 Err(e) => out.failed(part, e),
@@ -1546,7 +1572,7 @@ impl Engine {
         }
         self.emit("bulk-progress", json!({"accountId": account, "phase": "done", "done": total, "total": total}));
         self.changed(&account, "bulk");
-        out.finish()
+        out.finish().map(|o| BulkOutcome { queued: offline, ..o })
     }
 
     /// Delete forever everything in Trash or Spam (or a search inside them) except `keep`. As with
@@ -1558,9 +1584,19 @@ impl Engine {
             return Err(Error::msg("Only conversations in Trash or Spam can be deleted forever."));
         }
         let keep: HashSet<String> = keep.iter().cloned().collect();
-        let pairs = self.view_message_ids(v, &keep).await?;
+        let (pairs, offline) = self.view_message_ids(v, &keep).await?;
         let total = pairs.len();
         self.emit("bulk-progress", json!({"accountId": account, "phase": "working", "done": 0, "total": total}));
+        if offline {
+            let mut threads: Vec<String> = pairs.iter().map(|(_, t)| t.clone()).collect();
+            threads.sort();
+            threads.dedup();
+            let r = self.delete_forever(&account, &threads).await?;
+            let mut out = BulkTally::default();
+            out.done(&pairs);
+            self.emit("bulk-progress", json!({"accountId": account, "phase": "done", "done": total, "total": total}));
+            return out.finish().map(|o| BulkOutcome { queued: r == Changed::Queued, ..o });
+        }
         if self.kind(&account)? == "gmail" {
             let g = self.gmail(&account)?;
             let mut out = BulkTally::default();

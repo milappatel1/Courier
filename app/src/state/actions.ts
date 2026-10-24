@@ -602,6 +602,7 @@ async function runBulk(kind: ActionKind, keep: string[], currentView: (page?: nu
   const changed: { accountId: string; ids: string[] }[] = [];
   let done = 0;
   let failed = 0;
+  let queued = false;
   const again = () => void runBulk(kind, keep, currentView, rule, accounts);
   try {
     for (const accountId of accounts) {
@@ -610,6 +611,7 @@ async function runBulk(kind: ActionKind, keep: string[], currentView: (page?: nu
       if (kind !== "delete-forever") changed.push({ accountId, ids: out.ids });
       done += out.conversations;
       failed += out.failedConversations;
+      queued ||= out.queued;
     }
     off();
     dismissToast(progress);
@@ -625,7 +627,9 @@ async function runBulk(kind: ActionKind, keep: string[], currentView: (page?: nu
         action: { label: "Try again", run: again },
         secondary: kind === "delete-forever" ? undefined : { label: "Undo", run: () => void undo() },
       });
-    } else if (kind === "delete-forever") toast(text);
+    } else if (queued)
+      toast(text + WHEN_ONLINE); // waiting conversation changes can't be taken back one by one
+    else if (kind === "delete-forever") toast(text);
     else withUndo(text, undo);
   } catch (e) {
     off();
