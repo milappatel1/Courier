@@ -366,11 +366,19 @@ window.addEventListener("popstate", () => {
   }
 });
 
+/**
+ * Where each list was scrolled to, so going back from a conversation returns to the same place (as the web client
+ * does). Choosing a list from the sidebar, a tab or a search starts it at the top.
+ */
+export const listSpots = new Map<string, number>();
+export const listKey = (accountId: string, l: ListRoute) => `${accountId}|${l.label}|${l.category}|${l.query}|${l.page}`;
+
 export function go(list: Partial<ListRoute>, opts: { keepThread?: boolean } = {}) {
   const prev = get().route;
   const next: ListRoute = { ...prev.list, page: 0, ...list };
   if (list.label !== undefined && list.query === undefined) next.query = null;
   if (list.label !== undefined && list.category === undefined) next.category = list.label === "INBOX" ? (hasTabs() ? "primary" : null) : null;
+  listSpots.delete(listKey(get().accountId, next));
   set({
     route: { list: next, thread: opts.keepThread ? prev.thread : null, settings: null },
     drawer: false,

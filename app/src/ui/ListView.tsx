@@ -1,7 +1,7 @@
 // The thread list: toolbar (select, refresh, selection actions, paging), category tabs, inbox-type
 // sections, rows (checkbox, star, importance, participants, label chips, subject + snippet, attachment
 // chips, date / hover actions), select-all banner, search chips, empty states.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listDate, scheduledWhen, shortWhen } from "../core/dates";
 import { chipState, setChip, TIME_CHIPS } from "../core/search/advanced";
 import { parseQuery } from "../core/search/parser";
@@ -43,6 +43,8 @@ import {
   setState,
   setSetting,
   NO_LABELS,
+  listKey,
+  listSpots,
 } from "../state/store";
 import { Avatar, FileIcon, Icon, IconButton, Menu, MenuButton, anchorOf, type MenuEntry } from "./common";
 import { FilterDialog } from "./FilterDialog";
@@ -57,6 +59,16 @@ export function ListView() {
   const accountId = useMail((s) => s.accountId);
   const showTabs = useMail(() => hasTabs()) && route.list.label === "INBOX" && !route.list.query;
   const sections = route.list.label === "INBOX" && !route.list.query && inboxType !== "default" && accountId !== "all";
+  const scroller = useRef<HTMLDivElement>(null);
+  const key = listKey(accountId, route.list);
+  const hasRows = (list.result?.threads.length ?? 0) > 0;
+  // Back at a list from a conversation: where it was scrolled to, once its rows are there.
+  const restored = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (!scroller.current || !hasRows || restored.current === key) return;
+    restored.current = key;
+    scroller.current.scrollTop = listSpots.get(key) ?? 0;
+  }, [key, hasRows]);
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }} data-testid="list-view">
       {route.list.query && <SearchChips query={route.list.query} />}
@@ -72,7 +84,14 @@ export function ListView() {
       <EmptyBinBanner />
       {showTabs && <CategoryTabs />}
       {list.loading && <div className="loading-bar" />}
-      <div className="list" role="grid" aria-label="Conversations" data-testid="thread-list">
+      <div
+        className="list"
+        role="grid"
+        aria-label="Conversations"
+        data-testid="thread-list"
+        ref={scroller}
+        onScroll={(e) => restored.current === key && listSpots.set(key, e.currentTarget.scrollTop)}
+      >
         {sections ? <InboxSections /> : <Rows threads={null} />}
         {list.error && <div className="empty">{list.error}</div>}
       </div>

@@ -2216,6 +2216,48 @@ step(
   360_000,
 );
 
+step(
+  "back from a conversation returns to the same place in the list; choosing the list again starts at the top",
+  async () => {
+    await backToInbox();
+    const list = () => q("thread-list")!;
+    const scrollable = () => list().scrollHeight > list().clientHeight + 300;
+    for (let i = 0; i < 40 && !scrollable(); i += 5) {
+      for (let j = i; j < i + 5; j++)
+        await api.e2eControl("deliver-gmail", { from: "Older Mail <older@test.example>", subject: `Older ${j}`, body: "x", minutesAgo: 900 + j });
+      await until(`Older ${i + 4}`, () => row(`Older ${i + 4}`), 20_000);
+    }
+    check(scrollable(), "the Inbox doesn't scroll");
+    const lastVisible = () => {
+      const box = list().getBoundingClientRect();
+      return rows()
+        .filter((r) => r.getBoundingClientRect().bottom <= box.bottom)
+        .pop()!;
+    };
+    for (const how of ["Back button", "history back"]) {
+      list().scrollTop = list().scrollHeight;
+      list().dispatchEvent(new Event("scroll"));
+      await sleep(150);
+      const spot = list().scrollTop;
+      check(spot > 200, `${how}: the list didn't scroll (${spot})`);
+      click(lastVisible());
+      await until(`${how}: open`, () => getState().route.thread && q("conv-back"));
+      if (how === "Back button") click(q("conv-back")!);
+      else history.back();
+      await until(`${how}: back at the list`, () => !getState().route.thread && q("thread-list"));
+      await until(`${how}: scrolled to where it was (${spot})`, () => (Math.abs(list().scrollTop - spot) <= 2 ? true : null), 3000);
+    }
+    // Choosing Inbox from the menu (or another list) starts at the top, as in the web client.
+    click(lastVisible());
+    await until("open", () => getState().route.thread);
+    click(await el("nav-INBOX"));
+    await until("the Inbox list", () => !getState().route.thread && q("thread-list"));
+    await sleep(200);
+    check(list().scrollTop === 0, `choosing Inbox kept the old place (${list().scrollTop})`);
+  },
+  120_000,
+);
+
 step("IMAP: reply goes out over SMTP and is saved to Sent", async () => {
   const before = (await server()).imapFolders.Sent ?? 0;
   await switchTo(info.imapEmail);
