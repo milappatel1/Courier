@@ -512,6 +512,10 @@ impl E2e {
                     let on = args["on"].as_bool().unwrap_or(true);
                     self.gmail.state.lock().offline = on;
                     *self.smtp.reject.lock() = on;
+                    // "imap": the IMAP server goes too (connections reset, new ones refused).
+                    if args["imap"].as_bool().unwrap_or(false) || !on {
+                        self.imap.state.lock().offline = on;
+                    }
                     Ok(json!({}))
                 }
                 "state" => {

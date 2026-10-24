@@ -144,9 +144,14 @@ export function flashes(rec: Recording, gone: string[], opts: { conversationOpen
   if (loading) issues.push(`the loading bar showed at +${loading.t} ms`);
   const empty = listFrames.find((f) => f.empty && others.length > 0);
   if (empty) issues.push(`the list showed as empty at +${empty.t} ms`);
-  // Counts move one way: a value seen before never comes back after it changed.
+  // Counts move one way: a value seen before never comes back after it changed. The end of the page's range is
+  // left out: a page refills from the next one as rows leave it (1–48 back to 1–50, new rows at the bottom), and a
+  // removed row coming back is caught above.
   const seq: string[] = [];
-  for (const f of listFrames) if (seq[seq.length - 1] !== f.counts) seq.push(f.counts);
+  for (const f of listFrames) {
+    const c = f.counts.replace(/\|(\d+)–\d+/, "|$1–");
+    if (seq[seq.length - 1] !== c) seq.push(c);
+  }
   const revisit = seq.findIndex((c, i) => seq.indexOf(c) < i);
   if (revisit >= 0) issues.push(`the counts went back: ${seq.slice(0, revisit + 1).join(" → ")}`);
   if (opts.conversationOpen) {

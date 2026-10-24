@@ -2281,11 +2281,48 @@ step("IMAP: delete moves the message to Trash", async () => {
   await until("moved to Trash", async () => ((await server()).imapFolders.Trash ?? 0) > before);
 });
 
+step("offline (IMAP): a delete is made at once, waits, and reaches the server when back online", async () => {
+  if (q("conv-back")) click(q("conv-back")!);
+  await switchTo(info.imapEmail);
+  await openList("INBOX");
+  await api.e2eControl("deliver-imap", { from: "Offline Test <offline@test.example>", subject: "IMAP delete offline", body: "No connection." });
+  await api.e2eControl("sync");
+  const r = await until("the row", () => row("IMAP delete offline"), 30_000);
+  const gone = r.dataset.thread!;
+  const trash = async () => (await server()).imapFolders.Trash ?? 0;
+  const before = await trash();
+  await api.e2eControl("offline", { on: true, imap: true });
+  try {
+    click(await el("hover-delete", r));
+    await until("the toast says when", () => toastWith(/It'll sync when you're back online\./), 20_000);
+    await until("the row leaves", () => !row("IMAP delete offline"));
+    await api.e2eControl("sync");
+    await sleep(1500);
+    check(!row("IMAP delete offline"), "the deleted row came back while offline");
+    check((await trash()) === before, "the IMAP server changed while offline");
+  } finally {
+    await api.e2eControl("offline", { on: false });
+  }
+  const rec = recordFrames();
+  await api.e2eControl("sync");
+  await until("in Trash on the server", async () => ((await trash()) > before ? true : null), 40_000);
+  await sleep(2000);
+  const back = rec.stop().frames.find((f) => f.rows.includes(gone));
+  check(!back, `the deleted row came back at +${back?.t} ms after reconnecting`);
+  check((await trash()) === before + 1, `moved to Trash ${(await trash()) - before} times`);
+});
+
 step("signs out of the IMAP account (removes it and its cache)", async () => {
   click(await el("account-button"));
   click(await el("sign-out"));
   click(await el("confirm-ok"));
-  await until("one account left", () => getState().accounts.length === 1 && getState().accounts[0].email === info.gmailEmail);
+  // The busy accounts of the flash step stay signed in; only the IMAP account goes.
+  await until("the IMAP account gone, the others kept", () => {
+    const emails = getState().accounts.map((a) => a.email);
+    return !emails.includes(info.imapEmail) && emails.includes(info.gmailEmail);
+  });
+  await until("another account shown", () => getState().accounts.some((a) => a.id === getState().accountId));
+  await switchTo(info.gmailEmail);
   await until("Gmail inbox", () => row("Dinner tonight?"));
 });
 
