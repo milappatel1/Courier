@@ -317,6 +317,29 @@ async fn imap_delete_forever_offline_waits_and_expunges_once_online() {
 }
 
 #[tokio::test]
+async fn acting_on_a_whole_view_offline_changes_the_conversations_here_and_they_go_out_once_online() {
+    let w = world().await;
+    let a = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "One", "x", ""), &["INBOX"]);
+    w.gmail.deliver(&sample_mail("Bo <bo@x.io>", "pat@example.com", "Two", "y", ""), &["INBOX"]);
+    let kept = w.gmail.deliver(&sample_mail("Cy <cy@x.io>", "pat@example.com", "Kept", "z", ""), &["INBOX"]);
+    w.engine.sync_account("g1").await.unwrap();
+    // An older message of One's conversation that this Mac doesn't have: it goes with the conversation.
+    let t = w.engine.db.message("g1", &a).unwrap().unwrap().thread_id;
+    let old = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Re: One", "older", ""), &["INBOX"]);
+    w.gmail.state.lock().messages.get_mut(&old).unwrap().thread_id = t.clone();
+    let tk = w.engine.db.message("g1", &kept).unwrap().unwrap().thread_id;
+    w.gmail.state.lock().offline = true;
+    let out = w.engine.bulk_modify(&view("g1", "INBOX"), &["TRASH".into()], &["INBOX".into()], std::slice::from_ref(&tk)).await.unwrap();
+    assert_eq!((out.conversations, out.queued), (2, true));
+    assert_eq!(w.engine.list(&view("g1", "INBOX")).await.unwrap().threads.iter().map(|x| x.subject.as_str()).collect::<Vec<_>>(), vec!["Kept"]);
+    w.gmail.state.lock().offline = false;
+    w.engine.sync_account("g1").await.unwrap();
+    let in_inbox: Vec<String> = w.gmail.state.lock().messages.values().filter(|m| m.labels.iter().any(|l| l == "INBOX")).map(|m| m.id.clone()).collect();
+    assert_eq!(in_inbox, vec![kept.clone()], "the whole conversations went to Trash, the kept one stayed");
+    assert!(!w.engine.db.has_queued("g1").unwrap());
+}
+
+#[tokio::test]
 async fn snoozing_and_unsnoozing_offline_wait_and_reach_the_server_once_back() {
     let w = world().await;
     let id = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Later", "x", ""), &["INBOX", "UNREAD"]);

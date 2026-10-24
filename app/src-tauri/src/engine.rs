@@ -2394,6 +2394,8 @@ pub struct BulkOutcome {
     pub ids: Vec<String>,
     pub conversations: usize,
     pub failed_conversations: usize,
+    /// Offline: the conversations this Mac has were changed here and wait to go out.
+    pub queued: bool,
 }
 
 #[derive(Default)]
@@ -2425,7 +2427,7 @@ impl BulkTally {
             }
         }
         let conversations = self.threads.iter().filter(|t| !self.failed_threads.contains(*t)).count();
-        Ok(BulkOutcome { ids: self.ids, conversations, failed_conversations: self.failed_threads.len() })
+        Ok(BulkOutcome { ids: self.ids, conversations, failed_conversations: self.failed_threads.len(), queued: false })
     }
 }
 
