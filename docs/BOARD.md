@@ -7,10 +7,10 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 ## Doing
 
 - P12.2 differential runner (Milap allowed the recon scripts 2026-10-25): done when the same action scripts run in the web client (recon account) and in Courier with matching rows, counts, toasts and focus · research/tools · builder (web side waits until the read-only sweep frees the recon tab)
-- Visual diff tooling (L-06): done when research/tools/visual-diff.mjs compares Courier and web goldens under a LOOK-SPEC threshold with masks, and states over it are listed · research/tools · builder
 
 ## Next
 
+- Visual parity hillclimb: done when every state in `node research/tools/visual-diff.mjs` is under the LOOK-SPEC threshold or its remaining difference is Google-only and masked. Start with what repeats: header search icon, tab strip pitch, row checkbox style, hover grip, advanced-search underlines · app/src/styles · main session
 - Parity rows (Milap allows temporary recon setting changes, restored after; resume the sweep once P12.2 frees the recon tab): 96 unverified need a setting change in the recon account (59 shortcut rows need Keyboard shortcuts on), a mail write, or network emulation; 10 differ (custom date range, compose formatting bar overflow, label palette, star tooltips, search-as-you-type …) · research/PARITY.md · builder
 
 ## Backlog
@@ -25,6 +25,8 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 - Cleanup list for Milap after the release (what of Courier leaves the Mac), asked before deleting · main session
 
 ## Done
+
+- Visual diff tooling (L-06): research/tools/visual-diff.mjs, Courier capture plan, threshold 10% of ink pixels in LOOK-SPEC.md; first run: 0 of 32 states under it (VERIFY-P12.1-visual.md lists each difference) · f3ecb20
 
 - Perf budgets (P12.5): 3 runs on 20,000 conversations, budgets set from the medians, all within; research/PERF.md and VERIFY-P12.5.md; All Mail switch ~0.9 s filed as #10 · 2026-10-25
 
