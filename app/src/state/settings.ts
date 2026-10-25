@@ -74,6 +74,9 @@ export interface Settings {
   conversationView: boolean;
   stars: string[];
   keyboardShortcuts: boolean;
+  /** Compose underlines misspelt words (the web client's Spelling) and macOS corrects as you type (Autocorrect). */
+  spelling: boolean;
+  autocorrect: boolean;
   buttonLabels: "icons" | "text";
   autoContacts: boolean;
   personalIndicators: boolean;
@@ -121,6 +124,8 @@ export const DEFAULTS: Settings = {
   conversationView: true,
   stars: ["yellow-star"],
   keyboardShortcuts: true,
+  spelling: true,
+  autocorrect: true,
   buttonLabels: "icons",
   autoContacts: true,
   personalIndicators: false,

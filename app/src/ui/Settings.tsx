@@ -288,6 +288,14 @@ function General({ accountId }: { accountId: string }) {
           test="images-ask"
         />
       </Row>
+      <Row k="Spelling:">
+        <Radio name="sp" value={true} cur={d.spelling} onPick={(v) => set("spelling", v)} label="Spelling suggestions on" />
+        <Radio name="sp" value={false} cur={d.spelling} onPick={(v) => set("spelling", v)} label="Spelling suggestions off" />
+      </Row>
+      <Row k="Autocorrect:">
+        <Radio name="ac" value={true} cur={d.autocorrect} onPick={(v) => set("autocorrect", v)} label="Autocorrect on" />
+        <Radio name="ac" value={false} cur={d.autocorrect} onPick={(v) => set("autocorrect", v)} label="Autocorrect off" />
+      </Row>
       <Row k="Conversation View:" small="(group emails on the same topic together)">
         <Radio name="cv" value={true} cur={d.conversationView} onPick={(v) => set("conversationView", v)} label="Group replies into conversations" />
         <Radio

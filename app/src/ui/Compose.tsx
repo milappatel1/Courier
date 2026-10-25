@@ -450,7 +450,8 @@ function ComposeBody({ c, inline, onPopOut }: { c: ComposeData; inline?: boolean
           className="editor selectable"
           contentEditable
           suppressContentEditableWarning
-          spellCheck
+          spellCheck={settings.spelling}
+          autoCorrect={settings.autocorrect ? "on" : "off"}
           role="textbox"
           aria-multiline="true"
           aria-label="Message Body"

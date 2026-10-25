@@ -34,6 +34,20 @@ export function AccountMenu({ onClose }: { onClose: () => void }) {
       },
     });
   };
+  const signOutAll = () =>
+    ui({
+      confirm: {
+        title: "Sign out of all accounts?",
+        body: "Courier removes every account's sign-in from the Keychain and deletes its local copy of your mail. Nothing changes on the server.",
+        ok: "Sign out",
+        run: () =>
+          void (async () => {
+            for (const a of accounts) await api.removeAccount(a.id);
+            await loadAccounts();
+            toast("Signed out of all accounts.");
+          })().catch((e) => toast(failureText("sign out", e))),
+      },
+    });
   return (
     <div className="acct-menu" ref={ref} role="dialog" aria-label="Accounts" data-testid="account-menu">
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
@@ -119,6 +133,16 @@ export function AccountMenu({ onClose }: { onClose: () => void }) {
             </span>
             <div className="who">
               <div className="n">Sign out of {current.email}</div>
+            </div>
+          </div>
+        )}
+        {accounts.length > 1 && (
+          <div className="acct-row" role="button" tabIndex={0} onClick={() => (signOutAll(), onClose())} data-testid="sign-out-all">
+            <span style={{ width: 32, display: "inline-flex", justifyContent: "center" }}>
+              <Icon name="logout" size={24} />
+            </span>
+            <div className="who">
+              <div className="n">Sign out of all accounts</div>
             </div>
           </div>
         )}

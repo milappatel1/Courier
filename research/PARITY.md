@@ -59,7 +59,7 @@ and features the mail API doesn't expose).
 | H-04 | Search | Advanced search panel; Create filter | matches | golden advanced-search.png + LOOK-SPEC Advanced search (fields, sizes, Create filter, Search) | app/src/ui/Header.tsx:225-326; tests/search.test.ts:107 form <-> query; e2e run.ts:644 and :686 |
 | H-05 | Help | Help menu (keyboard shortcuts; Google support links ✗) | unverified | | |
 | H-06 | Settings | Settings gear: quick settings (density, theme, inbox type, reading pane) and See all settings | matches | golden quick-settings.png + LOOK-SPEC Quick settings + VERIFY-P4 measurements (320 wide, density, theme, inbox type, reading pane) | app/src/ui/QuickSettings.tsx:81-186; e2e run.ts:739 and :810 |
-| H-07 | Account | Account menu: switch, add, sign out, all inboxes | differs | Web signs out of every account at once; Courier signs out the current one. Courier adds the Cmd+1..9 hints and All inboxes by design. | app/src/ui/AccountMenu.tsx:121 'Sign out of {current.email}' only; e2e run.ts:269 and :2315 |
+| H-07 | Account | Account menu: switch, add, sign out, all inboxes | matches | Web account menu: Add another account, Sign out of all accounts; Courier also keeps per-account sign-out (a desktop app holds several sign-ins) | e2e "signs out of all accounts (the last step…)" |
 | H-08 | Apps | Apps grid, Gemini, Support status | ✗ Google-only | | — |
 
 ## Menu
@@ -137,7 +137,7 @@ The web client's tabs and settings as harvested from the recon profile on 2026-1
 | ST-08 | General | Images (always / ask) | matches | settings-general.json: Always display external images / Ask before displaying | app/src/ui/Settings.tsx:279-290; e2e run.ts:896 and :1089; tests/sanitize.test.ts:20 |
 | ST-09 | General | Dynamic email | ✗ Google-only | AMP for email is rendered by the web client only | — |
 | ST-10 | General | Grammar, Autocorrect, Smart Compose (+ personalization), Nudges, Smart Reply, smart features, Workspace smart features, Package tracking | ✗ Google-only | Google models and services | — |
-| ST-11 | General | Spelling | missing | Add an on/off setting. | no setting in app/src/ui/Settings.tsx; Compose.tsx:453 spellCheck always on, :351 Check spelling dialog |
+| ST-11 | General | Spelling | matches | captures/web/settings-general.json: Grammar (Google service, left out), Spelling suggestions on/off, Autocorrect on/off | e2e "Settings ▸ General ▸ Spelling and Autocorrect reach the compose window" |
 | ST-12 | General | Conversation view on/off | matches | settings-general.json: Conversation view on/off | app/src/ui/Settings.tsx:291-300; state/store.ts:442; Rust engine.rs:782 and :843 |
 | ST-13 | General | Desktop notifications (new mail, important mail, off) | matches | settings-general.json: New mail / Important mail / Mail notifications off | app/src/ui/Settings.tsx:355-405; Rust engine.rs:645-668; engine.rs:371 snooze_mute_block_filters_and_notifications; e2e run.ts:933 |
 | ST-14 | General | Stars (presets, in use / not in use) | unverified | | |

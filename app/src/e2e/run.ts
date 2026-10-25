@@ -854,6 +854,21 @@ step("keyboard: ] and [ archive and open the older or newer one; ; and : expand 
   }
 });
 
+step("Settings ▸ General ▸ Spelling and Autocorrect reach the compose window", async () => {
+  await setSetting("spelling", false);
+  await setSetting("autocorrect", false);
+  let w = await newCompose();
+  let body = await el("compose-body", w);
+  check(body.getAttribute("spellcheck") === "false" && body.getAttribute("autocorrect") === "off", `off: ${body.outerHTML.slice(0, 200)}`);
+  click(await el("compose-discard", w));
+  await setSetting("spelling", true);
+  await setSetting("autocorrect", true);
+  w = await newCompose();
+  body = await el("compose-body", w);
+  check(body.getAttribute("spellcheck") === "true" && body.getAttribute("autocorrect") === "on", `on: ${body.outerHTML.slice(0, 200)}`);
+  click(await el("compose-discard", w));
+});
+
 step("reading pane: right of inbox shows the conversation beside the list", async () => {
   click(await el("settings-gear"));
   click(await el("qs-pane-right"));
@@ -2383,6 +2398,14 @@ step("signs out of the IMAP account (removes it and its cache)", async () => {
   await until("another account shown", () => getState().accounts.some((a) => a.id === getState().accountId));
   await switchTo(info.gmailEmail);
   await until("Gmail inbox", () => row("Dinner tonight?"));
+});
+
+step("signs out of all accounts (the last step: nothing is left signed in)", async () => {
+  click(await el("account-button"));
+  click(await el("sign-out-all"));
+  click(await el("confirm-ok"));
+  await until("no accounts", () => getState().accounts.length === 0, 30_000);
+  await until("the toast", () => toastWith(/^Signed out of all accounts\./));
 });
 
 // ---- runner ----
