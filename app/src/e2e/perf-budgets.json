@@ -1,4 +1,73 @@
 {
-  "mailbox": { "conversations": 20000, "seed": 11, "pageSize": 100 },
-  "budgets": {}
+  "mailbox": {
+    "conversations": 20000,
+    "seed": 11,
+    "pageSize": 100
+  },
+  "budgets": {
+    "launch.firstPaintMs": {
+      "max": 1700,
+      "measured": "1193 median, 1282 worst of 9 relaunches (3 runs, 2026-10-25, M-series Mac, quiet)"
+    },
+    "launch.rowsMs": {
+      "max": 2000,
+      "measured": "1358 median, 1617 worst (3 runs, 2026-10-25, M-series Mac, quiet)"
+    },
+    "sync.firstMs": {
+      "max": 2800,
+      "measured": "1782 median, 2118 worst (3 runs, 2026-10-25, M-series Mac, quiet)"
+    },
+    "label.firstRowsMs": {
+      "max": 1400,
+      "measured": "894 median, 1098 worst (slow: issue to file) (3 runs, 2026-10-25, M-series Mac, quiet)"
+    },
+    "label.settledMs": {
+      "max": 3000,
+      "measured": "1930 median, 2371 worst (3 runs, 2026-10-25, M-series Mac, quiet)"
+    },
+    "tab.firstRowsMs": {
+      "max": 320,
+      "measured": "203 median, 230 worst (3 runs, 2026-10-25, M-series Mac, quiet)"
+    },
+    "tab.settledMs": {
+      "max": 900,
+      "measured": "577 median, 662 worst (3 runs, 2026-10-25, M-series Mac, quiet)"
+    },
+    "search.firstRowsMs": {
+      "max": 320,
+      "measured": "197 median, 219 worst (3 runs, 2026-10-25, M-series Mac, quiet)"
+    },
+    "search.settledMs": {
+      "max": 800,
+      "measured": "442 median, 567 worst (3 runs, 2026-10-25, M-series Mac, quiet)"
+    },
+    "scroll.p95FrameMs": {
+      "max": 22,
+      "measured": "17 median, 18 worst (60 Hz) (3 runs, 2026-10-25, M-series Mac, quiet)"
+    },
+    "scroll.maxFrameMs": {
+      "max": 50,
+      "measured": "30 median, 33 worst (3 runs, 2026-10-25, M-series Mac, quiet)"
+    },
+    "scroll.slowFrames": {
+      "max": 4,
+      "measured": "1 median, 1 worst (3 runs, 2026-10-25, M-series Mac, quiet)"
+    },
+    "memory.views.totalFootprintMb": {
+      "max": 560,
+      "measured": "410 median, 419 worst (3 runs, 2026-10-25, M-series Mac, quiet)"
+    },
+    "memory.synced.totalFootprintMb": {
+      "max": 480,
+      "measured": "341 median, 357 worst (3 runs, 2026-10-25, M-series Mac, quiet)"
+    },
+    "memory.idle.totalFootprintMb": {
+      "max": 520,
+      "measured": "383 median, 391 worst (3 runs, 2026-10-25, M-series Mac, quiet)"
+    },
+    "cpu.totalPct": {
+      "max": 95,
+      "measured": "70 median, 74 worst, syncing every 2 s with mail arriving (the app syncs every 30 s or more by default) (3 runs, 2026-10-25, M-series Mac, quiet)"
+    }
+  }
 }

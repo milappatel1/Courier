@@ -6,7 +6,6 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 
 ## Doing
 
-- Perf budgets (P12.5): done when `app/scripts/perf.sh` runs on a quiet Mac, budgets are set in `app/src/e2e/perf-budgets.json`, and research/PERF.md + VERIFY-P12.5.md are written · app/scripts · main session (3 runs started)
 - P12.2 differential runner (Milap allowed the recon scripts 2026-10-25): done when the same action scripts run in the web client (recon account) and in Courier with matching rows, counts, toasts and focus · research/tools · builder (web side waits until the read-only sweep frees the recon tab)
 - Visual diff tooling (L-06): done when research/tools/visual-diff.mjs compares Courier and web goldens under a LOOK-SPEC threshold with masks, and states over it are listed · research/tools · builder
 
@@ -16,6 +15,7 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 
 ## Backlog
 
+- Faster All Mail on big mailboxes (#10): done when label.firstRowsMs drops well under budget with list order unchanged · app/src-tauri/src/db.rs · builder
 - Fuzzer engine bugs, deferred by Milap until there's budget ("a rainy day"): #6 offline conversation change sent before an earlier Undo (A), #7 Undo after an offline change went out puts wrong labels (B), #8 Undo racing the reconnect flush is lost (D), #9 another device's change lost when an Undo races the sync (E). Each has an `#[ignore]`d repro in app/src-tauri/tests/race_fuzz.rs naming its issue; done when the repro passes un-ignored and the issue is closed · app/src-tauri/src · debugger
 - Settings ▸ General ▸ Language selector stays (English US/UK) for languages Milap may add later; ST-01 stays a deliberate gap until then · app · main session
 - Security gate: `/claude-security` on the changes, `trivy fs`, supply-chain-risk-auditor, differential-review, rust-review · repo · reviewer
@@ -25,6 +25,8 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 - Cleanup list for Milap after the release (what of Courier leaves the Mac), asked before deleting · main session
 
 ## Done
+
+- Perf budgets (P12.5): 3 runs on 20,000 conversations, budgets set from the medians, all within; research/PERF.md and VERIFY-P12.5.md; All Mail switch ~0.9 s filed as #10 · 2026-10-25
 
 - Full e2e on a quiet Mac: 83/85, never in front; the 2 failures were an unsubscribe reload race (fixed c7c93f8) and test mail from a new step showing as "new" (fixed); both steps green in a rerun · 2026-10-25
 
