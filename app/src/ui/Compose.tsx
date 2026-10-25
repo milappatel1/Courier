@@ -87,7 +87,7 @@ export function ComposeWindow({ c, popout, folded, onRaise }: { c: ComposeData; 
           />
           <IconButton
             icon={c.fullscreen ? "close_fullscreen" : "open_in_full"}
-            label={c.fullscreen ? "Exit full screen" : "Full screen (⇧ for pop-out)"}
+            label={c.fullscreen ? "Exit full screen" : "Full screen (Shift for pop-out)"}
             onClick={(e) => (e.shiftKey ? void popOut() : updateCompose(c.id, { fullscreen: !c.fullscreen, minimized: false }))}
             testId="compose-fullscreen"
           />
@@ -250,33 +250,12 @@ function ComposeBody({ c, inline, onPopOut }: { c: ComposeData; inline?: boolean
   };
   const userLabels = labelsFor(c.accountId).filter((l) => l.type === "user");
   const moreItems = (): MenuEntry[] => [
-    ...(acct?.kind === "gmail" && userLabels.length
-      ? [
-          {
-            label: "Label",
-            testId: "compose-label",
-            // Applied to the conversation once the message is sent.
-            submenu: userLabels.map((l) => ({
-              label: l.name,
-              checked: (c.labels ?? []).includes(l.id),
-              keepOpen: true,
-              testId: `compose-label-${l.name}`,
-              run: () =>
-                changeCompose(c.id, {
-                  labels: (c.labels ?? []).includes(l.id) ? (c.labels ?? []).filter((x) => x !== l.id) : [...(c.labels ?? []), l.id],
-                }),
-            })),
-          } as MenuEntry,
-          { sep: true },
-        ]
-      : []),
     {
       label: "Default to full screen",
       checked: settings.compose.fullScreenDefault,
       run: () =>
         void import("../state/store").then((s) => s.setSetting("compose", { ...settings.compose, fullScreenDefault: !settings.compose.fullScreenDefault })),
     },
-    { sep: true },
     ...(settings.templates
       ? [
           {
@@ -348,8 +327,28 @@ function ComposeBody({ c, inline, onPopOut }: { c: ComposeData; inline?: boolean
       label: "Print",
       run: () => void api.windowOpen("print", { compose: serializeCompose(useMail.getState().composes.find((x) => x.id === c.id) ?? c) }, "Print"),
     },
-    { label: "Check spelling", run: () => setDialog("spell") },
+    { label: "Spell check", run: () => setDialog("spell") },
     ...(onPopOut && !inline ? [{ label: "Open in a new window", run: onPopOut }] : []),
+    ...(acct?.kind === "gmail" && userLabels.length
+      ? [
+          { sep: true },
+          {
+            label: "Label",
+            testId: "compose-label",
+            // Applied to the conversation once the message is sent.
+            submenu: userLabels.map((l) => ({
+              label: l.name,
+              checked: (c.labels ?? []).includes(l.id),
+              keepOpen: true,
+              testId: `compose-label-${l.name}`,
+              run: () =>
+                changeCompose(c.id, {
+                  labels: (c.labels ?? []).includes(l.id) ? (c.labels ?? []).filter((x) => x !== l.id) : [...(c.labels ?? []), l.id],
+                }),
+            })),
+          } as MenuEntry,
+        ]
+      : []),
   ];
   const chooseFrom = sendAs.length > 1 || (acct?.aliases.length ?? 0) > 1;
   const sendLabel = useMemo(() => (navigator.platform.includes("Mac") ? "Send (⌘Enter)" : "Send (Ctrl-Enter)"), []);

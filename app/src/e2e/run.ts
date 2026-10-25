@@ -953,6 +953,53 @@ step("Settings ▸ General ▸ Vacation responder: the message is rich text and 
   await backToInbox();
 });
 
+step("the web client's words and order: search chips, Scheduled note, label, message and compose menus", async () => {
+  await backToInbox();
+  const items = () => [...document.querySelectorAll<HTMLElement>(".menu .menu-item")].map((b) => b.textContent?.trim() ?? "");
+  const escape = () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  // Search: Has attachment, Last 7 days, From me under the box.
+  const input = (await el("search-input")) as HTMLInputElement;
+  input.focus();
+  const chip = await el("sugg-chip-has:attachment");
+  check(!!q("sugg-chip-newer_than:7d") && !!q("sugg-chip-from:me"), "the quick search chips");
+  chip.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  await until("the chip's search", () => getState().route.list.query === "has:attachment");
+  await backToInbox();
+  // Scheduled: the note above the list.
+  await openList("SCHEDULED");
+  check((await el("scheduled-banner")).textContent === "Messages in Scheduled will be sent at their scheduled time.", "Scheduled note");
+  await backToInbox();
+  // A label's menu starts with its colour.
+  click(await until("a label's options", () => document.querySelector<HTMLElement>('[aria-label^="Options for "]')));
+  await until("the label menu", () => items().length > 0);
+  check(items()[0].startsWith("Label color"), `label menu: ${items().join(" | ")}`);
+  escape();
+  await until("closed", () => !items().length);
+  // Compose ▸ More options: Default to full screen first, Spell check, Label last.
+  const w = await newCompose();
+  click(await el("compose-more", w));
+  await until("compose menu", () => items().length > 0);
+  check(items()[0].includes("Default to full screen") && items().some((x) => x === "Spell check"), `compose menu: ${items().join(" | ")}`);
+  escape();
+  click(await el("compose-discard", w));
+  // A conversation's earlier message: "Mark unread from here"; the last: "Mark as unread".
+  click(await until("a two-message conversation", () => row("Lunch on Friday?")));
+  await until("the conversation", () => q("conversation"));
+  (document.activeElement as HTMLElement | null)?.blur?.();
+  key(document.body, ";");
+  await until("expanded", () => qa("msg-more").length >= 2);
+  click(qa("msg-more")[0]);
+  await until("message menu", () => items().length > 0);
+  check(items().some((x) => x.endsWith("Mark unread from here")), `earlier message: ${items().join(" | ")}`);
+  escape();
+  await until("closed", () => !items().length);
+  click(qa("msg-more").at(-1)!);
+  await until("message menu", () => items().length > 0);
+  check(items().some((x) => x.endsWith("Mark as unread")), `last message: ${items().join(" | ")}`);
+  escape();
+  await backToInbox();
+});
+
 step("reading pane: right of inbox shows the conversation beside the list", async () => {
   click(await el("settings-gear"));
   click(await el("qs-pane-right"));

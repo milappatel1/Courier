@@ -312,7 +312,10 @@ function General({ accountId }: { accountId: string }) {
           test="conversation-off"
         />
       </Row>
-      <Row k="Stars:" small="Click stars to move them between the lists. They rotate in this order when you click a star repeatedly.">
+      <Row
+        k="Stars:"
+        small="Drag the stars between the lists. The stars will rotate in the order shown below when you click successively. To learn the name of a star for search, hover your mouse over the image."
+      >
         <div style={{ marginBottom: 6 }}>
           Presets:{" "}
           <button className="linkbtn" onClick={() => set("stars", ["yellow-star"])}>

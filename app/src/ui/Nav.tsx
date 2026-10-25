@@ -384,16 +384,19 @@ function LabelMenu({ label, anchor, onClose }: { label: Label; anchor: ReturnTyp
     ),
   };
   const vis = label.labelListVisibility ?? "labelShow";
+  // In the web client's order: colour, then where the label shows, then edit/remove/sublabel.
   const items: MenuEntry[] = [
+    colors,
+    { sep: true },
     { head: "In label list" },
     { label: "Show", checked: vis === "labelShow", run: () => update({ labelListVisibility: "labelShow" }) },
     { label: "Show if unread", checked: vis === "labelShowIfUnread", run: () => update({ labelListVisibility: "labelShowIfUnread" }) },
     { label: "Hide", checked: vis === "labelHide", run: () => update({ labelListVisibility: "labelHide" }) },
+    { sep: true },
     { head: "In message list" },
     { label: "Show", checked: label.messageListVisibility !== "hide", run: () => update({ messageListVisibility: "show" }) },
     { label: "Hide", checked: label.messageListVisibility === "hide", run: () => update({ messageListVisibility: "hide" }) },
     { sep: true },
-    colors,
     { label: "Edit", run: () => ui({ labelDialog: { accountId: label.accountId, edit: label } }) },
     {
       label: "Remove label",

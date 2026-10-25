@@ -83,6 +83,7 @@ export function ListView() {
       <ListToolbar />
       <SelectAllBanner />
       <EmptyBinBanner />
+      <ScheduledBanner />
       {showTabs && <CategoryTabs />}
       {list.loading && <div className="loading-bar" />}
       <div
@@ -119,6 +120,17 @@ function EmptyBinBanner() {
           {label === "TRASH" ? "Empty Trash now" : "Delete all spam messages now"}
         </button>
       )}
+    </div>
+  );
+}
+
+/** The Scheduled view's note, as in the web client. */
+function ScheduledBanner() {
+  const label = useMail((s) => (s.route.list.query ? null : s.route.list.label));
+  if (label !== "SCHEDULED") return null;
+  return (
+    <div className="bin-banner" data-testid="scheduled-banner">
+      Messages in Scheduled will be sent at their scheduled time.
     </div>
   );
 }
@@ -175,7 +187,7 @@ function ListToolbar() {
       : [];
   const box = selected.length === 0 ? "check_box_outline_blank" : selected.length === threads.length ? "check_box" : "indeterminate_check_box";
   const toolbarSwitch: MenuEntry = advanced
-    ? { label: "Switch to simplified toolbar", icon: "sync_alt", run: () => void setSetting("advancedToolbar", false), testId: "toolbar-simplified" }
+    ? { label: "Switch to simple toolbar", icon: "sync_alt", run: () => void setSetting("advancedToolbar", false), testId: "toolbar-simplified" }
     : { label: "Switch to advanced toolbar", icon: "sync_alt", run: () => void setSetting("advancedToolbar", true), testId: "toolbar-advanced" };
   const moreAnchor = () => menu?.anchor ?? { x: 0, y: 0 };
   const moreItems = (): MenuEntry[] =>
@@ -691,30 +703,28 @@ function ListFooter() {
 function EmptyList() {
   const route = useMail((s) => s.route);
   const l = route.list;
-  // Courier's own wording throughout.
-  let title = "Nothing here.";
+  // The web client's words where it has them (read on the recon account); Courier's own for the rest.
+  let title = "There are no conversations with this label.";
   let body = "";
-  if (l.query) {
-    title = "Nothing matches that search.";
-    body = "Try fewer words, or narrow it down with the search options (sender, dates, size…).";
-  } else if (l.label === "INBOX") {
+  if (l.query) title = "No messages matched your search. Try using search options such as sender, date, size and more.";
+  else if (l.label === "INBOX") {
     const cat = l.category && l.category !== "primary" ? CATEGORIES.find((c) => c.key === l.category)?.name : null;
     title = cat ? `Nothing in ${cat}.` : "Inbox is clear.";
     body = cat ? `New ${cat.toLowerCase()} mail will show up here.` : "New mail will show up here.";
   } else if (l.label === "STARRED") {
     title = "No starred conversations.";
     body = "Click the star next to a conversation to keep it here.";
-  } else if (l.label === "SNOOZED") {
-    title = "Nothing snoozed.";
-    body = "Snoozed conversations come back to your inbox at the time you pick.";
-  } else if (l.label === "SENT") title = "Nothing sent yet.";
-  else if (l.label === "DRAFT") title = "No drafts.";
-  else if (l.label === "SCHEDULED") title = "Nothing scheduled.";
+  } else if (l.label === "SNOOZED" || l.label === "IMPORTANT") title = "";
+  else if (l.label === "SENT") title = "No sent messages! Send one now!";
+  else if (l.label === "DRAFT") {
+    title = "You don't have any saved drafts.";
+    body = "Saving a draft allows you to keep a message you aren't ready to send yet.";
+  } else if (l.label === "SCHEDULED") title = "Nothing scheduled.";
   else if (l.label === "SPAM") title = "Spam is empty.";
   else if (l.label === "TRASH") title = "Trash is empty.";
   return (
     <div className="empty" data-testid="empty-list">
-      <h3>{title}</h3>
+      {title && <h3>{title}</h3>}
       {body && <div>{body}</div>}
     </div>
   );

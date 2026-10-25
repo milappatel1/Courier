@@ -6,15 +6,15 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 
 ## Doing
 
+- Fix the fuzzer's engine bugs: done when each `#[ignore]` repro in app/src-tauri/tests/race_fuzz.rs passes un-ignored and the fuzzer's KNOWN list is empty. A: offline conversation change sent before an earlier Undo's rows (flush order). B: Undo after the offline change went out inserts the literal inverse. C: server listing that ingests a conversation while it's binned lists it in the old view. D: Undo of a waiting change racing the reconnect flush. E: remote change lost when an Undo's ack stamps a message newer than the sync's read · app/src-tauri/src · main session (debugger if one beats two attempts)
 - P12.2 differential runner (Milap allowed the recon scripts 2026-10-25): done when the same action scripts run in the web client (recon account) and in Courier with matching rows, counts, toasts and focus · research/tools · builder (web side waits until the read-only sweep frees the recon tab)
 - Visual diff tooling (L-06): done when research/tools/visual-diff.mjs compares Courier and web goldens under a LOOK-SPEC threshold with masks, and states over it are listed · research/tools · builder
-- Race fuzzer (P12.4): done when `app/src-tauri/tests/race_fuzz.rs` (WIP, 73 KB, kept out of git in .git/info/exclude) is reviewed, finished, green, and committed with the exclude line removed · app/src-tauri/tests · builder
 
 ## Next
 
 - Full e2e rerun on a quiet Mac: done when every step passes with nothing heavy running (new since the last green run: Move to tab, `] [ ; : \` ~` shortcuts, Spelling/Autocorrect, Sign out of all accounts) · app/src/e2e · verifier
 - Perf budgets (P12.5): done when `app/scripts/perf.sh` runs on a quiet Mac, budgets are set in `app/src/e2e/perf-budgets.json`, and research/PERF.md + VERIFY-P12.5.md are written · app/scripts · builder
-- Parity rows (read-only sweep running in a researcher agent): done when the 112 unverified rows are checked read-only in the recon profile and the 10 that differ are fixed · research/PARITY.md · builder
+- Parity rows: 96 unverified need a setting change in the recon account (59 shortcut rows need Keyboard shortcuts on), a mail write, or network emulation; 10 differ (custom date range, compose formatting bar overflow, label palette, star tooltips, search-as-you-type …) · research/PARITY.md · builder
 
 ## Backlog
 
@@ -26,6 +26,9 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 - Cleanup list for Milap after the release (what of Courier leaves the Mac), asked before deleting · main session
 
 ## Done
+
+- Race fuzzer (P12.4): green in normal runs (60 seeds × 40 steps, 24 s); long run 710 seeds × 80 steps; each invariant shown able to fail; found engine bugs A–E (ignored repros in race_fuzz.rs) · 09dea06, cdefe75, 5e0b02c
+- Parity sweep fixes: Scheduled note, empty-view wording, search chips, label menu order, message/compose menu words and order, Switch to simple toolbar, Stars help text (V-08, V-14, H-02, N-05, CV-03, B-05, CP-01, CP-05, T-05, ST-14) · 2026-10-25
 
 - Language (ST-01): Milap chose English only; PARITY.md marks it "✗ left out", README Known limitations says so · 2026-10-25
 

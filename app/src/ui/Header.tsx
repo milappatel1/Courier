@@ -141,7 +141,7 @@ function SearchBar() {
   };
   return (
     <form
-      className={["search", focused ? "focused" : "", focused && items.length ? "dropdown" : ""].join(" ")}
+      className={["search", focused ? "focused" : "", focused ? "dropdown" : ""].join(" ")}
       role="search"
       aria-label="Search mail"
       onSubmit={(e) => {
@@ -184,11 +184,28 @@ function SearchBar() {
       />
       {text && <IconButton icon="close" label="Clear search" iconSize={24} onClick={() => submit("")} />}
       {!phone && (
-        <IconButton icon="tune" label="Show search options" iconSize={24} onClick={() => ui({ advancedSearch: !advancedOpen })} testId="search-options" />
+        <IconButton icon="tune" label="Advanced search options" iconSize={24} onClick={() => ui({ advancedSearch: !advancedOpen })} testId="search-options" />
       )}
       {phone && !text && <AccountButton className="avatar-btn in-search" />}
-      {focused && items.length > 0 && (
+      {focused && (
         <div className="search-suggest" role="listbox" data-testid="search-suggest">
+          {/* The web client's quick filters, added to what's typed. */}
+          <div className="sugg-chips">
+            {QUICK_CHIPS.map(([name, op]) => (
+              <button
+                key={op}
+                type="button"
+                className="chip"
+                data-testid={`sugg-chip-${op}`}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  submit(`${text} ${op}`.trim());
+                }}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
           {items.map((it, i) => (
             <div
               key={`${it.contact ? "c" : "r"}:${it.q}`}
@@ -221,6 +238,12 @@ function SearchBar() {
     </form>
   );
 }
+
+const QUICK_CHIPS: [string, string][] = [
+  ["Has attachment", "has:attachment"],
+  ["Last 7 days", "newer_than:7d"],
+  ["From me", "from:me"],
+];
 
 export function AdvancedSearch({ initial, onClose, onSearch }: { initial: AdvancedFields; onClose: () => void; onSearch: (q: string) => void }) {
   const [f, setF] = useState<AdvancedFields>({ ...EMPTY_ADVANCED, ...initial });

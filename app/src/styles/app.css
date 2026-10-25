@@ -491,6 +491,11 @@ a {
 .search-suggest .sugg:hover {
   background: #eee;
 }
+.search-suggest .sugg-chips {
+  display: flex;
+  gap: 8px;
+  padding: 4px 20px 8px;
+}
 .search-suggest .sugg .who {
   color: #5f6368;
   font-size: 13px;

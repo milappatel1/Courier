@@ -129,7 +129,7 @@ export function Conversation({ split }: { split?: boolean }) {
     ...(detail?.snoozedUntil ? [{ label: "Unsnooze", icon: "alarm_off", run: () => void act("unsnooze", target) }] : []),
     { sep: true },
     advanced
-      ? { label: "Switch to simplified toolbar", icon: "sync_alt", run: () => void setSetting("advancedToolbar", false) }
+      ? { label: "Switch to simple toolbar", icon: "sync_alt", run: () => void setSetting("advancedToolbar", false) }
       : { label: "Switch to advanced toolbar", icon: "sync_alt", run: () => void setSetting("advancedToolbar", true) },
   ];
   return (
@@ -258,6 +258,7 @@ export function Conversation({ split }: { split?: boolean }) {
                   key={it.id}
                   m={msgs.find((x) => x.id === it.id)!}
                   index={msgs.findIndex((x) => x.id === it.id)}
+                  msgCount={msgs.length}
                   expanded={isOpen(it.id, it.expanded)}
                   onToggle={() => setOpen((o) => ({ ...o, [it.id]: !isOpen(it.id, it.expanded) }))}
                   accountId={ref.accountId}
@@ -298,6 +299,7 @@ async function printThread(accountId: string, threadId: string) {
 function Message({
   m,
   index,
+  msgCount,
   expanded,
   onToggle,
   accountId,
@@ -305,6 +307,7 @@ function Message({
 }: {
   m: MessageRow;
   index: number;
+  msgCount: number;
   expanded: boolean;
   onToggle: () => void;
   accountId: string;
@@ -354,7 +357,12 @@ function Message({
       icon: "delete",
       run: () => void api.modifyMessages(accountId, [m.id], ["TRASH"], []).then(() => loadThread({ accountId, threadId: m.threadId })),
     },
-    { label: "Mark as unread", icon: "mark_email_unread", run: () => void markUnreadFromHere({ accountId, threadId: m.threadId }, index) },
+    {
+      // The web client's words: "from here" when later messages would turn unread too.
+      label: index < msgCount - 1 ? "Mark unread from here" : "Mark as unread",
+      icon: "mark_email_unread",
+      run: () => void markUnreadFromHere({ accountId, threadId: m.threadId }, index),
+    },
     { sep: true },
     ...(!fromSelf ? [{ label: `Block "${name}"`, icon: "block", run: () => void blockSender(accountId, m.fromEmail, name) }] : []),
     { label: "Report spam", icon: "report", run: () => void act("spam", [{ accountId, threadIds: [m.threadId] }]) },

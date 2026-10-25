@@ -20,9 +20,9 @@ and features the mail API doesn't expose). **✗ left out** (Milap's call: delib
 | C-04 | Menu | Categories hidden from the menu by default; Settings ▸ Labels ▸ Categories show/hide; shown ones sit above More | matches | Recon: Social/Updates/Forums/Promotions "hide" by default; shown, they appear after Drafts | e2e "counts mean what the web client's do" |
 | C-05 | Tabs | "N new" under a tab: unread mail arrived since the tab was last opened, with senders; none for mail already there | matches | Recon: Promotions tab with 9 unread rows shows no number | e2e "counts mean what the web client's do" |
 | C-06 | Menu | User label counts: unread conversations in the label | matches | Recon 2026-10-25 (read-only): the menu item reads "Counts 6 unread" (aria-label); the label has 6 conversations, all unread; Courier shows threadsUnread | Rust label_counts_follow_actions_and_changes_made_elsewhere |
-| C-07 | Menu | Spam shows its unread count only with "show if unread" | unverified | | e2e "Settings ▸ Labels: show, hide and show if unread" |
-| C-08 | Menu | Drafts count | unverified | | |
-| C-09 | List | Page count "1–50 of N" for labels, tabs and searches ("many" when the server only estimates) | unverified | | |
+| C-07 | Menu | Spam shows its unread count only with "show if unread" | matches | Recon 2026-10-25 (read-only): Nav 'Spam 2 unread' with 2 conversations in Spam, both unread; Trash shows no number although 1 of 3 is unread; Important/Scheduled/All Mail/Starred show none Show-if-unread toggle itself is a setting; not changed. Count semantics match. | e2e "Settings ▸ Labels: show, hide and show if unread" |
+| C-08 | Menu | Drafts count | unverified | needs write: Drafts has no number with 0 drafts (aria 'Drafts'); a non-zero count needs a saved draft Seed one draft via API then read 'Drafts N' (conversations vs messages) |  |
+| C-09 | List | Page count "1–50 of N" for labels, tabs and searches ("many" when the server only estimates) | matches | Recon 2026-10-25 (read-only): Count text is '1–39 of 39' (en dash, no spaces; thousands not seen); All Mail 1–74 of 74; every list here is under the page size so 'of many' and 1–50 paging not seen Page size in recon account is >=74; 'many' needs a list longer than the page (NEEDS_SETTING_CHANGE: Max page size 25) | ListView.tsx:125-133 pageInfo same format |
 | C-10 | All | Counts settle to the server's after any action and never go back | differs | e2e under the user's conditions: Inbox count 203 → 202 → 203 during a burst of deletes | e2e "deleting the top row two or three times in a row never flashes…" |
 | C-11 | Purchases | The Purchases category (menu item and tab) | ✗ Google-only | The mail API exposes no CATEGORY_PURCHASES label | — |
 
@@ -32,20 +32,20 @@ and features the mail API doesn't expose). **✗ left out** (Milap's call: delib
 | --- | --- | --- | --- | --- | --- |
 | V-01 | Inbox | Default inbox with Primary/Promotions/Social/Updates(/Forums) tabs | matches | goldens inbox-default/inbox-primary/inbox-promotions/inbox-social + LOOK-SPEC tabs (4 equal tabs, Forums off by default; settings-inbox.json Forums option) | app/src/ui/ListView.tsx:391-436 CategoryTabs; Rust engine.rs:113 views_categories_search_and_unified; e2e run.ts:1693 |
 | V-02 | Inbox | Primary tab = Inbox minus the enabled tabs' categories (Forums mail in Primary while its tab is off; starred ones when set) | matches | Recon query probe (2026-10-22): `category:primary` 38 = the web client's Primary; Courier asks for the Inbox minus its enabled tabs (+ starred), the same rule as its cache | Rust `starred_in_primary_and_the_auto_contacts_setting`; e2e flash step under the user's conditions |
-| V-03 | Inbox | Inbox type: Important first | unverified | | |
-| V-04 | Inbox | Inbox type: Unread first | unverified | | |
-| V-05 | Inbox | Inbox type: Starred first | unverified | | |
-| V-06 | Inbox | Inbox type: Priority Inbox (sections, options) | unverified | | |
-| V-07 | Inbox | Inbox type: Multiple Inboxes (sections, position, max) | unverified | | |
-| V-08 | Labels | Starred, Snoozed, Important, Sent, Scheduled, Drafts, All Mail, Spam, Trash views | unverified | | |
-| V-09 | Labels | User label view; nested labels | unverified | | |
+| V-03 | Inbox | Inbox type: Important first | unverified | needs setting change: Inbox settings list: Default / Important first / Unread first / Starred first / Priority Inbox / Multiple Inboxes (same order as Courier); current type is Default Set Settings > Inbox > Inbox type to 'Important first' (then back to Default) to read section titles and counts |  |
+| V-04 | Inbox | Inbox type: Unread first | unverified | needs setting change: Inbox settings list: Default / Important first / Unread first / Starred first / Priority Inbox / Multiple Inboxes (same order as Courier); current type is Default Set Settings > Inbox > Inbox type to 'Unread first' (then back to Default) to read section titles and counts |  |
+| V-05 | Inbox | Inbox type: Starred first | unverified | needs setting change: Inbox settings list: Default / Important first / Unread first / Starred first / Priority Inbox / Multiple Inboxes (same order as Courier); current type is Default Set Settings > Inbox > Inbox type to 'Starred first' (then back to Default) to read section titles and counts |  |
+| V-06 | Inbox | Inbox type: Priority Inbox (sections, options) | unverified | needs setting change: Inbox settings list: Default / Important first / Unread first / Starred first / Priority Inbox / Multiple Inboxes (same order as Courier); current type is Default Set Settings > Inbox > Inbox type to 'Priority Inbox' (then back to Default) to read section titles and counts |  |
+| V-07 | Inbox | Inbox type: Multiple Inboxes (sections, position, max) | unverified | needs setting change: Inbox settings list: Default / Important first / Unread first / Starred first / Priority Inbox / Multiple Inboxes (same order as Courier); current type is Default Set Settings > Inbox > Inbox type to 'Multiple Inboxes' (then back to Default) to read section titles and counts |  |
+| V-08 | Labels | Starred, Snoozed, Important, Sent, Scheduled, Drafts, All Mail, Spam, Trash views | matches | Recon: Scheduled shows "Messages in Scheduled will be sent at their scheduled time." | e2e "the web client's words and order…" |
+| V-09 | Labels | User label view; nested labels | matches | Recon 2026-10-25 (read-only): Parent label Recon lists 0 conversations while child Recon/Counts lists 6: a parent view does not include children; label view chips: From, Any time, Has attachment, To, Exclude Social, Exclude Promotions, Is unread, Advanced search Not verified in Courier's list query code beyond the single-labelId route; chips 'Exclude Social/Promotions' only appear on web label views with tab categories | Nav.tsx label click go({label:id}) queries one label id |
 | V-10 | Labels | Category label views (Social, Updates, Forums, Promotions) list archived mail too | matches | VERIFY-P12.0 (recon: Updates label view 14 unread rows = labels.get 14, archived included) + golden category-updates-label.png | Label view lists by label alone: db.rs:1599 list_thread_ids over m.labels; Nav.tsx:187 CATS go({label}) |
 | V-11 | Search | Search results view (chips, "Inbox" chip on rows in the Inbox) | matches | golden search-results.png (chips row, 'Inbox' chip on rows, 1-17 of 17) + LOOK-SPEC Search results | app/src/ui/ListView.tsx:438-480 SearchChips, :749-756 chip rule; e2e run.ts:644 |
 | V-12 | Reading | Conversation view, no split | matches | golden conversation.png + LOOK-SPEC Conversation (subject 22/28, message geometry) | app/src/ui/Conversation.tsx:130-232; VERIFY-P1 table (offsets 0 px); e2e run.ts:282 |
-| V-13 | Reading | Reading pane right of / below the list | unverified | | |
-| V-14 | Empty | Empty views (Inbox tabs, labels, Spam, Trash, search) | unverified | | |
-| V-15 | Loading | Loading bar and first paint | unverified | | |
-| V-16 | Errors | Offline banner; failures said in words | unverified | | e2e "no toast showed a raw error" |
+| V-13 | Reading | Reading pane right of / below the list | unverified | needs setting change: Settings > Inbox has Reading pane: 'Show reading pane' + Reading pane position: 'No split' / 'Right of inbox' / 'Below inbox'; currently No split Set Reading pane position to Right of inbox then Below inbox and measure; revert |  |
+| V-14 | Empty | Empty views (Inbox tabs, labels, Spam, Trash, search) | matches | Recon: label "There are no conversations with this label.", search, Sent and Drafts strings; Snoozed/Important show none. Inbox, Starred, Spam, Trash keep Courier's words (not observed empty) | app/src/ui/ListView.tsx EmptyList |
+| V-15 | Loading | Loading bar and first paint | unverified | blocked: Not observed: needs network throttling or reload of the recon tab Use a throttled reload in a separate plan |  |
+| V-16 | Errors | Offline banner; failures said in words | unverified | blocked: Not observed: offline emulation changes the tab's network state Needs Network.emulateNetworkConditions; outside read-only brief | e2e "no toast showed a raw error" |
 | V-17 | Subscriptions | Manage subscriptions page | matches | VERIFY-P8 (measured: 48 px title, 40 px description, 86 px rows, 40 px avatar) + VERIFY-P10 findings 6 and 14; web page was empty on the recon account | e2e "manage subscriptions…" |
 | V-18 | Trash/Spam | Banners: 30-day note, Empty Trash now / Delete all spam messages now | matches | goldens spam-banner.png and trash-banner.png + VERIFY-P10 finding 10 (text and 48 px band measured) | e2e "Trash and Spam say what happens to their mail…" |
 
@@ -54,10 +54,10 @@ and features the mail API doesn't expose). **✗ left out** (Milap's call: delib
 | ID | Area | Item | Status | Evidence | Test |
 | --- | --- | --- | --- | --- | --- |
 | H-01 | Menu button | Main menu toggles the full menu and the rail | matches | goldens: full nav (inbox-default) vs rail (inbox-primary, row-hover) + LOOK-SPEC Header/Nav (256 wide, menu button 12,8 48x48) | app/src/ui/Header.tsx:21 toggleNav, Nav.tsx:63-120 (peek slide-out); e2e run.ts:1566 (layout at every size) |
-| H-02 | Search | Search box, suggestions, recent searches | unverified | | |
-| H-03 | Search | Filter chips under the search box | unverified | | |
+| H-02 | Search | Search box, suggestions, recent searches | differs | Recon: chips Has attachment, Last 7 days, From me (now in Courier) and the options button "Advanced search options" (now in Courier); still differs: typing shows matching messages in the dropdown | e2e "the web client's words and order…" |
+| H-03 | Search | Filter chips under the search box | differs | Recon 2026-10-25: 'Any time' menu: Any time / Older than a week / Older than a month / Older than 6 months / Older than a year / Custom range…. Chips order From, Any time, Has attachment, To, Is unread, Advanced search (matches). From/To open a contact picker (not fully read). Add 'Custom range…' as the last 'Any time' menu entry (opens a date range). From/To: Courier shows a free-text box 'Type a name or email'; w |  |
 | H-04 | Search | Advanced search panel; Create filter | matches | golden advanced-search.png + LOOK-SPEC Advanced search (fields, sizes, Create filter, Search) | app/src/ui/Header.tsx:225-326; tests/search.test.ts:107 form <-> query; e2e run.ts:644 and :686 |
-| H-05 | Help | Help menu (keyboard shortcuts; Google support links ✗) | unverified | | |
+| H-05 | Help | Help menu (keyboard shortcuts; Google support links ✗) | ✗ Google-only | Recon: Help, Training, Send feedback to Google are Google's own; Courier's ? menu has Keyboard shortcuts, Google sign-in setup, About | — |
 | H-06 | Settings | Settings gear: quick settings (density, theme, inbox type, reading pane) and See all settings | matches | golden quick-settings.png + LOOK-SPEC Quick settings + VERIFY-P4 measurements (320 wide, density, theme, inbox type, reading pane) | app/src/ui/QuickSettings.tsx:81-186; e2e run.ts:739 and :810 |
 | H-07 | Account | Account menu: switch, add, sign out, all inboxes | matches | Web account menu: Add another account, Sign out of all accounts; Courier also keeps per-account sign-out (a desktop app holds several sign-ins) | e2e "signs out of all accounts (the last step…)" |
 | H-08 | Apps | Apps grid, Gemini, Support status | ✗ Google-only | | — |
@@ -69,28 +69,28 @@ and features the mail API doesn't expose). **✗ left out** (Milap's call: delib
 | N-01 | Compose | Compose button | matches | golden inbox-default.png + LOOK-SPEC (compose 142x56 r16 at 8,72) | app/src/ui/Nav.tsx:168-174; VERIFY-P1 table (+1 px width); e2e uses data-testid compose throughout |
 | N-02 | System labels | Order: Inbox, Starred, Snoozed, Important, Sent, Scheduled, Drafts, All Mail, Spam, Trash; shown ones above More | matches | golden inbox-default.png (order Inbox, Starred, Snoozed, Sent, Drafts, categories, More; hidden ones listed under Less) + settings-labels.json + VERIFY-P10 finding 13 | e2e "Settings ▸ Labels…" |
 | N-03 | More | More/Less reveals hidden system labels, Manage subscriptions, Manage labels, Create new label | matches | golden inbox-default.png (Less, Important, Scheduled, All Mail, Spam, Trash, Manage subscriptions, Manage labels) + VERIFY-P10 'More section' observation | app/src/ui/Nav.tsx:233-262; e2e run.ts:1749 |
-| N-04 | Labels | Nested label tree with colours, expand/collapse | unverified | | |
-| N-05 | Labels | Label ⋮ menu: colour, show/hide in label list and message list, edit, add sublabel, remove | unverified | | |
-| N-06 | Labels | Drag conversations onto a label | unverified | | |
+| N-04 | Labels | Nested label tree with colours, expand/collapse | unverified | needs setting change: Parent label shows 'Recon expanded has menu'; label ▼ element carries no colour for an uncoloured label; collapsing writes the account's pref Toggle expander and reload to see persistence (changes account state); Courier does not persist collapse across restart |  |
+| N-05 | Labels | Label ⋮ menu: colour, show/hide in label list and message list, edit, add sublabel, remove | differs | Recon: Label color ▸ / In label list / In message list / Edit, Remove label, Add sublabel (order now in Courier); still differs: web palette is 4×6 plus Add custom color | e2e "the web client's words and order…" |
+| N-06 | Labels | Drag conversations onto a label | unverified | needs write: Dragging onto a label changes mail Drag a seeded conversation onto a label in the recon account |  |
 | N-07 | Chat/Meet | Chat, Spaces, Meet in the menu | ✗ Google-only | | — |
 
 ## List toolbar and rows
 
 | ID | Area | Item | Status | Evidence | Test |
 | --- | --- | --- | --- | --- | --- |
-| T-01 | Select | Select checkbox and its menu (All, None, Read, Unread, Starred, Unstarred) | unverified | | |
-| T-02 | Select | "Select all N conversations in this view" banner | unverified | | |
+| T-01 | Select | Select checkbox and its menu (All, None, Read, Unread, Starred, Unstarred) | matches | Recon 2026-10-25 (read-only): Select arrow menu: All / None / Read / Unread / Starred / Unstarred. With nothing selected the More menu shows 'Mark all as read' then hint 'Select messages to see more actions' | ListView.tsx:240-250 same six entries; ListView.tsx:218-222 same More menu |
+| T-02 | Select | "Select all N conversations in this view" banner | unverified | needs setting change: Not seen: every list in the recon account fits one page (page size >=74) Set Max page size to 25 (Settings > General), tick select-all in All Mail, read banner |  |
 | T-03 | Toolbar | Refresh, More (Mark all as read …), page arrows, page count | matches | goldens/web/list-more-menu.png: Mark all as read, then the hint "Select messages to see more actions" | app/src/ui/ListView.tsx no-selection More menu; e2e button sweep |
 | T-04 | Toolbar | With a selection: Archive, Report spam, Delete, Mark read/unread, Move to, More (simplified toolbar) | matches | goldens row-selected-toolbar.png and toolbar-more-menu.png (Archive, Report spam, Delete / Mark as read, Move to / More; More: Snooze, Label as, Forward as attachment, Filter messages like these, Mute, Switch to advanced toolbar) + LOOK-SPEC | app/src/ui/ListView.tsx:135-340; VERIFY-P1 icon x positions 0 px; e2e run.ts:591 |
-| T-05 | Toolbar | Advanced toolbar (Snooze, Labels next to Move to) | unverified | | |
+| T-05 | Toolbar | Advanced toolbar (Snooze, Labels next to Move to) | matches | Recon: "Switch to simple toolbar" | app/src/ui/ListView.tsx, Conversation.tsx toolbar menus |
 | T-06 | Rows | Hover actions: Archive, Delete, Mark read/unread, Snooze | matches | golden row-hover.png (drag strip, Archive, Delete, Mark as read, Snooze) + LOOK-SPEC hover actions | app/src/ui/ListView.tsx:977-996; e2e run.ts:330 (hover delete) and :2219 button sweep |
 | T-07 | Rows | Checkbox, star, importance marker, sender(s) with counts, subject – snippet, label chips, attachment chips, date | matches | LOOK-SPEC Rows (cells 3/43/30/[20]/200/flex/date; chips 30 tall) + goldens inbox-primary, search-results (label chips, counts) | app/src/ui/ListView.tsx:800-1000; VERIFY-P1 table (0 to 4 px) |
 | T-08 | Rows | Unread rows bold; read rows grey background | matches | LOOK-SPEC Type and Colour tokens (unread 700, read bg #f2f6fc, dark rgba(0,0,0,.5)) + goldens | app/src/styles/app.css:38 --row-read, :76 --row-read-text, :91; VERIFY-P1 dark theme rows |
 | T-09 | Rows | Right-click menu | matches | goldens/web/row-context-menu.png: Move to tab ▸ first, Reply…Forward as attachment, Archive/Delete/Mark/Snooze, Move to/Label as/Mute, Find emails from, Open in new window (Add to Tasks is Google-only; both Mark items show for a mixed selection in the golden, Courier shows the one that applies) | e2e "right-click a row: the menu acts on that conversation" (incl. Move to tab) |
-| T-10 | Rows | Drag rows (to labels, to compose) | unverified | | |
+| T-10 | Rows | Drag rows (to labels, to compose) | unverified | needs write: Drag changes mail Drag a seeded row onto a label / compose |  |
 | T-11 | Actions | Removing a conversation from view never flashes it back, from hover, toolbar, keys or the open conversation | differs | e2e under the user's conditions: rows come back (stale reads), rows vanish (Primary/Forums) | e2e "deleting the top row two or three times in a row never flashes…" |
 | T-12 | Actions | A conversation action changes every message of the conversation on the server, older ones included | differs | Rust repro: a 60-day-old message stays in the Inbox | Rust `deleting_or_archiving_a_conversation_takes_all_of_it_even_messages_older_than_this_mac_keeps` |
-| T-13 | Actions | Undo in the toast restores what was there | unverified | | |
+| T-13 | Actions | Undo in the toast restores what was there | unverified | needs write: Undo toast needs an archive Archive a seeded conversation and read the toast |  |
 | T-14 | Density | Default, Comfortable, Compact | matches | LOOK-SPEC Layout (default 40, comfortable 40 without attachment chips, compact 28/24/40/48) + golden quick-settings.png | app/src/ui/ListView.tsx:770 showAttachments (density default only); e2e run.ts:739 (compact 28, default) |
 | T-15 | Category chips | Category label chips in the message list (Settings ▸ Labels ▸ Categories ▸ Show in message list) | matches | Recon 2026-10-25 (read-only): Settings ▸ Labels ▸ Categories has Show in message list, hide by default for Social/Updates/Forums/Promotions; shown, rows carry the category chip | e2e "Settings ▸ Labels ▸ Categories ▸ Show in message list puts the category on rows outside its tab" |
 
@@ -100,24 +100,24 @@ and features the mail API doesn't expose). **✗ left out** (Milap's call: delib
 | --- | --- | --- | --- | --- | --- |
 | CV-01 | Toolbar | Back, Archive, Report spam, Delete, Mark unread, Snooze, Move to, Labels, More; older/newer | matches | golden conversation.png (Back, Archive, Report spam, Delete / Mark as unread, Move to, More; paging '7 of 38') + LOOK-SPEC | app/src/ui/Conversation.tsx:130-190; e2e run.ts:1988 button sweep |
 | CV-02 | Header | Subject with label chips (removable), print all, open in new window | matches | golden conversation.png ('Inbox x' chip, print, open in new window) + LOOK-SPEC subject 22/28 | app/src/ui/Conversation.tsx:208-233 (chips with remove x, Print all, In new window) |
-| CV-03 | Message | Sender card, details popover, star, reply, ⋮ menu | unverified | | |
+| CV-03 | Message | Sender card, details popover, star, reply, ⋮ menu | matches | Recon: message menu Reply, Forward / Delete, Mark unread from here (earlier messages) / Block, Report spam, Report phishing / Filter, Print, Download, Show original; Translate, Add reaction and Share-to-Google are Google-only | e2e "the web client's words and order…" |
 | CV-04 | Message | ⋮ menu: Reply, Forward, Delete, Mark unread from here, Report spam, Report phishing, Filter like this, Print, Download, Show original, Block | matches | goldens/web/message-more-menu.png: Reply, (Reply all), Forward / Delete, Mark as unread / Block, Report spam, Report phishing / Filter messages like this, Translate (Google-only), Print, Download message, Show original; Courier adds Share… (macOS) at the end | app/src/ui/Conversation.tsx message menu; e2e button sweep "every button and menu item does something…" |
-| CV-05 | Thread | Collapsed older messages, "N older messages", expand/collapse all | unverified | | |
-| CV-06 | Opening | Opening marks read; auto-advance after archive/delete | unverified | | e2e "archiving with e moves on…" |
+| CV-05 | Thread | Collapsed older messages, "N older messages", expand/collapse all | unverified | needs write: 3-message thread: older messages shown as collapsed rows, header buttons 'Expand all', 'Print all', 'In new window'; no 'N older messages' bubble seen (needs a thread of 5+ messages) Seed a long thread; button order Expand all/Print all/In new window MATCHES Courier |  |
+| CV-06 | Opening | Opening marks read; auto-advance after archive/delete | unverified | needs write: Opening an unread thread marks it read Open a seeded unread thread; auto-advance needs a setting change | e2e "archiving with e moves on…" |
 | CV-07 | Google-only | Translate, reactions, summary cards | ✗ Google-only | | — |
 
 ## Compose
 
 | ID | Area | Item | Status | Evidence | Test |
 | --- | --- | --- | --- | --- | --- |
-| CP-01 | Window | New message window: minimise, full screen, pop out, stacking | unverified | | |
-| CP-02 | Recipients | To/Cc/Bcc, autocomplete, contact picker | unverified | | |
-| CP-03 | Format | Formatting toolbar (undo/redo, font, size, bold, italic, underline, colour, align, lists, indent, quote, strikethrough, remove formatting) | unverified | | |
+| CP-01 | Window | New message window: minimise, full screen, pop out, stacking | matches | Recon: "Full screen (Shift for pop-out)" | app/src/ui/Compose.tsx header |
+| CP-02 | Recipients | To/Cc/Bcc, autocomplete, contact picker | unverified | needs write: To row has 'To - Select contacts' link/button; typing a recipient autosaves a draft Type in To in the recon account and read suggestions (creates a draft) |  |
+| CP-03 | Format | Formatting toolbar (undo/redo, font, size, bold, italic, underline, colour, align, lists, indent, quote, strikethrough, remove formatting) | differs | Recon 2026-10-25: Formatting bar (Aa toggle), left to right: Font, Size, Bold, Italic, Underline, Text color, Align, Numbered list, Bulleted list, Indent less, Indent more, Quote, Strikethrough, 'More formatting options' (overflow holds 'Remove formatting (⌘\)'); no Undo/Redo seen at the left Drop Undo/Redo from the bar (or keep as extra); optionally move Remove formatting into an overflow. Order otherwise matches |  |
 | CP-04 | Insert | Attach, link, emoji, inline image, signature | matches | golden compose.png and LOOK-SPEC (attach, link, emoji, photo, signature, more icons at 32 px) | app/src/ui/Compose.tsx; e2e run.ts:700 and :719 |
-| CP-05 | More | More options: default to full screen, label, plain text, print, check spelling, templates | unverified | | |
-| CP-06 | Send | Send, Schedule send, Undo send window and toast | unverified | | |
-| CP-07 | Drafts | Autosave and Draft saved; discard | unverified | | |
-| CP-08 | Reply | Inline reply/reply all/forward; show trimmed content; forward as attachment | unverified | | |
+| CP-05 | More | More options: default to full screen, label, plain text, print, check spelling, templates | matches | Recon: Default to full screen, Plain text mode / Print, Spell check / Label ▸ (Set up a time to meet is Google-only) | e2e "the web client's words and order…" |
+| CP-06 | Send | Send, Schedule send, Undo send window and toast | unverified | needs write: 'More send options' menu (new message): 'Schedule send' only. Schedule send with no recipient shows alert 'Error / Please specify at least one recipient. / OK'. Presets need a recipient (autosaves draft) Courier's send menu MATCHES; check what Courier does for Schedule send with no recipient (web error string above) |  |
+| CP-07 | Drafts | Autosave and Draft saved; discard | unverified | needs write: Autosave needs typing Type in a recon compose and read the saved indicator |  |
+| CP-08 | Reply | Inline reply/reply all/forward; show trimmed content; forward as attachment | unverified | needs write: Inline reply opens a draft Open Reply in the recon account and read toolbar |  |
 | CP-09 | Google-only | Help me write, smart compose, confidential mode, Drive/Photos | ✗ Google-only | | — |
 
 ## Settings
@@ -140,13 +140,13 @@ The web client's tabs and settings as harvested from the recon profile on 2026-1
 | ST-11 | General | Spelling | matches | captures/web/settings-general.json: Grammar (Google service, left out), Spelling suggestions on/off, Autocorrect on/off | e2e "Settings ▸ General ▸ Spelling and Autocorrect reach the compose window" |
 | ST-12 | General | Conversation view on/off | matches | settings-general.json: Conversation view on/off | app/src/ui/Settings.tsx:291-300; state/store.ts:442; Rust engine.rs:782 and :843 |
 | ST-13 | General | Desktop notifications (new mail, important mail, off) | matches | settings-general.json: New mail / Important mail / Mail notifications off | app/src/ui/Settings.tsx:355-405; Rust engine.rs:645-668; engine.rs:371 snooze_mute_block_filters_and_notifications; e2e run.ts:933 |
-| ST-14 | General | Stars (presets, in use / not in use) | unverified | | |
+| ST-14 | General | Stars (presets, in use / not in use) | differs | Recon: help text now matches; still differs: web star tooltips are bare names (red-bang), Courier adds (has:…) | app/src/ui/Settings.tsx Stars |
 | ST-15 | General | Keyboard shortcuts on/off (the web client's default is off; Courier ships on, by decision) | differs | LOOK-SPEC behaviour notes; PLAN decision | — |
 | ST-16 | General | Button labels (icons / text) | matches | settings-general.json: Icons / Text | e2e "settings that change the list and replies…" |
 | ST-17 | General | My picture | ✗ Google-only | settings-general.json: 'Your Google profile picture is visible across Google services' | no setting (profile picture lives in the Google account) |
 | ST-18 | General | Create contacts for auto-complete | matches | settings-general.json: add new people to Other Contacts / I'll add contacts myself | app/src/ui/Settings.tsx:416-425; Rust engine.rs:700 starred_in_primary_and_the_auto_contacts_setting |
 | ST-19 | General | Importance signals for ads | ✗ Google-only | | — |
-| ST-20 | General | Signature (per address, defaults for new and replies) | unverified | | |
+| ST-20 | General | Signature (per address, defaults for new and replies) | unverified | needs write: Signature section: 'No signatures' + 'Create new' button; Create new opens 'Name new signature' dialog (0/320, Cancel / Create); editor and 'Signature defaults' appear only after Create Create a signature in the recon account to read the editor/defaults |  |
 | ST-21 | General | Personal level indicators | matches | settings-general.json: No indicators / Show indicators (> and >>) | app/src/ui/Settings.tsx:427-436; ListView.tsx:922; Rust engine.rs:731; e2e run.ts:1894 |
 | ST-22 | General | Snippets | matches | settings-general.json: Show snippets / No snippets | app/src/ui/Settings.tsx:438-447; ListView.tsx:952 |
 | ST-23 | General | Vacation responder | matches | captures/web/settings-general.json: on/off, First day, Last day, Subject, Message (rich editor), Only send to my Contacts | e2e "Settings ▸ General ▸ Vacation responder: the message is rich text…" |
@@ -162,14 +162,14 @@ The web client's tabs and settings as harvested from the recon profile on 2026-1
 | ST-33 | Inbox | Reading pane (no split, right, below) | matches | settings-inbox.json: Show reading pane; No split / Right of inbox / Below inbox | app/src/ui/Settings.tsx:936-941; e2e run.ts:810 |
 | ST-34 | Inbox | Importance markers; use past actions to predict importance | matches | settings-inbox.json: Show markers / No markers; use-past-actions toggle | app/src/ui/Settings.tsx:943-954; ListView.tsx:904 |
 | ST-35 | Inbox | Filtered mail: override filters | ✗ Google-only | settings-inbox.json: Override filters / Don't override filters | none |
-| ST-36 | Accounts | Send mail as (aliases), reply from the address the message was sent to | unverified | | |
+| ST-36 | Accounts | Send mail as (aliases), reply from the address the message was sent to | unverified | needs write: Send mail as: one address with 'edit info' link and 'Add another email address'; 'When replying to a message' choice appears only with 2+ addresses Add an alias in the recon account |  |
 | ST-37 | Accounts | Check mail from other accounts, Grant access, Import, storage | ✗ Google-only | Server-side account features with no API | — |
 | ST-38 | Accounts | Mark conversation as read when opened by others | ✗ Google-only | Delegation | — |
 | ST-39 | Filters | Filters list, create, edit, delete, export, import; blocked addresses, unblock | matches | settings-filters.json + golden settings-filters.png (list, Select All/None, Export, Delete, Create a new filter, Import filters, blocked addresses, unblock) | app/src/ui/Settings.tsx:1259-1430; tests/filtersxml.test.ts; e2e run.ts:984 |
 | ST-40 | Forwarding | Forwarding address, POP download, IMAP access options | matches | settings-fwdandpop.json (forwarding, POP status/options, IMAP expunge, folder size limits) | app/src/ui/Settings.tsx:1453-1626 |
 | ST-41 | Advanced | Templates and other advanced settings | matches | goldens/web/settings-advanced.png: Auto-advance, Templates, Custom keyboard shortcuts (Enable adds a Keyboard Shortcuts tab), Unread icon and badge; Courier's Auto-advance keeps its 3-way choice (newer/older/list, list by default as the web's Disable) | e2e "Settings ▸ Advanced ▸ Custom keyboard shortcuts: …"; Vitest "custom keys replace an action's default…" |
-| ST-42 | Offline | Offline settings (days to keep) | unverified | | |
-| ST-43 | Themes | Themes picker, custom image | unverified | | |
+| ST-42 | Offline | Offline settings (days to keep) | unverified | needs setting change: Offline tab shows only 'Offline: Learn more' and checkbox 'Enable offline mail' with Save Changes/Cancel; sync and security options appear after ticking Tick the box (do not save) to read 'Sync settings' and 'Security' |  |
+| ST-43 | Themes | Themes picker, custom image | unverified | blocked: Themes tab exists after Offline in the settings tab bar; picker opened in an overlay not reachable Tab order observed: General, Labels, Inbox, Accounts and Import, Filters and Blocked Addresses, Forwarding and POP/IMAP, Add-ons, Chat and Meet, Advanced, Offline, Themes |  |
 | ST-44 | Add-ons, Chat and Meet | Add-ons and Chat and Meet tabs | ✗ Google-only | | — |
 
 ## Keyboard shortcuts
@@ -178,92 +178,92 @@ From `app/src/core/shortcuts.ts`; the web client's own list (its help sheet) is 
 
 | ID | Area | Item | Status | Evidence | Test |
 | --- | --- | --- | --- | --- | --- |
-| K-01 | Application | `c` Compose | unverified | | |
-| K-02 | Application | `d` Compose in a new window | unverified | | |
-| K-03 | Application | `/` Search mail | unverified | | |
-| K-04 | Application | `?` Open keyboard shortcut help | unverified | | |
-| K-05 | Application | `.` Open "more actions" menu | unverified | | |
-| K-06 | Application | `v` Open "move to" menu | unverified | | |
-| K-07 | Application | `l` Open "label as" menu | unverified | | |
-| K-08 | Navigation | `k` Newer conversation | unverified | | |
-| K-09 | Navigation | `j` Older conversation | unverified | | |
-| K-10 | Navigation | `o` Open conversation | unverified | | |
-| K-11 | Navigation | `Enter` Open conversation | unverified | | |
-| K-12 | Navigation | `u` Back to threadlist | unverified | | |
-| K-13 | Navigation | `n` Next message in open conversation | unverified | | |
-| K-14 | Navigation | `p` Previous message in open conversation | unverified | | |
-| K-15 | Navigation | ``` Go to next inbox section | unverified | Courier fixed in 45884aa (the key now acts as Google's published list says); confirm in the web client's ? sheet | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
-| K-16 | Navigation | `~` Go to previous inbox section | unverified | Courier fixed in 45884aa (the key now acts as Google's published list says); confirm in the web client's ? sheet | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
-| K-17 | Actions | `,` Move focus to toolbar | unverified | | |
-| K-18 | Actions | `x` Select conversation | unverified | | |
-| K-19 | Actions | `s` Toggle star / rotate among stars | unverified | | |
-| K-20 | Actions | `e` Archive | unverified | | |
-| K-21 | Actions | `m` Mute conversation | unverified | | |
-| K-22 | Actions | `!` Report as spam | unverified | | |
-| K-23 | Actions | `#` Delete | unverified | | |
-| K-24 | Actions | `r` Reply | unverified | | |
-| K-25 | Actions | `Shift+R` Reply in a new window | unverified | Courier fixed (the reply opens in a window of its own); confirm in the web client's ? sheet | e2e "keyboard: Shift+R opens the reply in a window of its own" |
-| K-26 | Actions | `a` Reply all | unverified | | |
-| K-27 | Actions | `Shift+A` Reply all in a new window | unverified | Courier fixed (the reply opens in a window of its own); confirm in the web client's ? sheet | e2e "keyboard: Shift+R opens the reply in a window of its own" |
-| K-28 | Actions | `f` Forward | unverified | | |
-| K-29 | Actions | `Shift+F` Forward in a new window | unverified | Courier fixed (the reply opens in a window of its own); confirm in the web client's ? sheet | e2e "keyboard: Shift+R opens the reply in a window of its own" |
-| K-30 | Actions | `Shift+N` Update conversation | unverified | | |
-| K-31 | Actions | `]` Archive and go to older | unverified | Courier fixed in 45884aa (the key now acts as Google's published list says); confirm in the web client's ? sheet | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
-| K-32 | Actions | `[` Archive and go to newer | unverified | Courier fixed in 45884aa (the key now acts as Google's published list says); confirm in the web client's ? sheet | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
-| K-33 | Actions | `z` Undo last action | unverified | | |
-| K-34 | Actions | `Shift+I` Mark as read | unverified | | |
-| K-35 | Actions | `Shift+U` Mark as unread | unverified | | |
-| K-36 | Actions | `_` Mark unread from the selected message | unverified | Courier fixed in 45884aa (the key now acts as Google's published list says); confirm in the web client's ? sheet | app/src/core/shortcuts.ts defines mark-unread-from-here; app/src/App.tsx runCommand has no case (the menu item exists: state/actions.ts:377) |
-| K-37 | Actions | `+` Mark as important | unverified | | |
-| K-38 | Actions | `=` Mark as important | unverified | | |
-| K-39 | Actions | `-` Mark as not important | unverified | | |
-| K-40 | Actions | `b` Snooze | unverified | | |
-| K-41 | Actions | `;` Expand entire conversation | unverified | Courier fixed in 45884aa (the key now acts as Google's published list says); confirm in the web client's ? sheet | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
-| K-42 | Actions | `:` Collapse entire conversation | unverified | Courier fixed in 45884aa (the key now acts as Google's published list says); confirm in the web client's ? sheet | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
-| K-43 | Jumping | `g i` Go to Inbox | unverified | | |
-| K-44 | Jumping | `g s` Go to Starred conversations | unverified | | |
-| K-45 | Jumping | `g b` Go to Snoozed conversations | unverified | | |
-| K-46 | Jumping | `g t` Go to Sent messages | unverified | | |
-| K-47 | Jumping | `g d` Go to Drafts | unverified | | |
-| K-48 | Jumping | `g a` Go to All Mail | unverified | | |
-| K-49 | Jumping | `g l` Go to label | unverified | | |
-| K-50 | Jumping | `g n` Go to next page | unverified | | |
-| K-51 | Jumping | `g p` Go to previous page | unverified | | |
-| K-52 | Jumping | `g u` Back to threadlist | unverified | | |
-| K-53 | Jumping | `g e` Go to Settings | unverified | | |
-| K-54 | Threadlist selection | `* a` Select all conversations | unverified | | |
-| K-55 | Threadlist selection | `* n` Deselect all conversations | unverified | | |
-| K-56 | Threadlist selection | `* r` Select read conversations | unverified | | |
-| K-57 | Threadlist selection | `* u` Select unread conversations | unverified | | |
-| K-58 | Threadlist selection | `* s` Select starred conversations | unverified | | |
-| K-59 | Threadlist selection | `* t` Select unstarred conversations | unverified | | |
+| K-01 | Application | `c` Compose | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-02 | Application | `d` Compose in a new window | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-03 | Application | `/` Search mail | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-04 | Application | `?` Open keyboard shortcut help | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-05 | Application | `.` Open "more actions" menu | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-06 | Application | `v` Open "move to" menu | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-07 | Application | `l` Open "label as" menu | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-08 | Navigation | `k` Newer conversation | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-09 | Navigation | `j` Older conversation | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-10 | Navigation | `o` Open conversation | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-11 | Navigation | `Enter` Open conversation | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-12 | Navigation | `u` Back to threadlist | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-13 | Navigation | `n` Next message in open conversation | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-14 | Navigation | `p` Previous message in open conversation | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-15 | Navigation | ``` Go to next inbox section | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
+| K-16 | Navigation | `~` Go to previous inbox section | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
+| K-17 | Actions | `,` Move focus to toolbar | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-18 | Actions | `x` Select conversation | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-19 | Actions | `s` Toggle star / rotate among stars | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-20 | Actions | `e` Archive | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-21 | Actions | `m` Mute conversation | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-22 | Actions | `!` Report as spam | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-23 | Actions | `#` Delete | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-24 | Actions | `r` Reply | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-25 | Actions | `Shift+R` Reply in a new window | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off | e2e "keyboard: Shift+R opens the reply in a window of its own" |
+| K-26 | Actions | `a` Reply all | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-27 | Actions | `Shift+A` Reply all in a new window | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off | e2e "keyboard: Shift+R opens the reply in a window of its own" |
+| K-28 | Actions | `f` Forward | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-29 | Actions | `Shift+F` Forward in a new window | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off | e2e "keyboard: Shift+R opens the reply in a window of its own" |
+| K-30 | Actions | `Shift+N` Update conversation | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-31 | Actions | `]` Archive and go to older | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
+| K-32 | Actions | `[` Archive and go to newer | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
+| K-33 | Actions | `z` Undo last action | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-34 | Actions | `Shift+I` Mark as read | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-35 | Actions | `Shift+U` Mark as unread | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-36 | Actions | `_` Mark unread from the selected message | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off | app/src/core/shortcuts.ts defines mark-unread-from-here; app/src/App.tsx runCommand has no case (the menu item exists: state/actions.ts:377) |
+| K-37 | Actions | `+` Mark as important | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-38 | Actions | `=` Mark as important | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-39 | Actions | `-` Mark as not important | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-40 | Actions | `b` Snooze | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-41 | Actions | `;` Expand entire conversation | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
+| K-42 | Actions | `:` Collapse entire conversation | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
+| K-43 | Jumping | `g i` Go to Inbox | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-44 | Jumping | `g s` Go to Starred conversations | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-45 | Jumping | `g b` Go to Snoozed conversations | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-46 | Jumping | `g t` Go to Sent messages | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-47 | Jumping | `g d` Go to Drafts | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-48 | Jumping | `g a` Go to All Mail | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-49 | Jumping | `g l` Go to label | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-50 | Jumping | `g n` Go to next page | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-51 | Jumping | `g p` Go to previous page | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-52 | Jumping | `g u` Back to threadlist | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-53 | Jumping | `g e` Go to Settings | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-54 | Threadlist selection | `* a` Select all conversations | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-55 | Threadlist selection | `* n` Deselect all conversations | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-56 | Threadlist selection | `* r` Select read conversations | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-57 | Threadlist selection | `* u` Select unread conversations | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-58 | Threadlist selection | `* s` Select starred conversations | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
+| K-59 | Threadlist selection | `* t` Select unstarred conversations | unverified | needs setting change: Recon account has Keyboard shortcuts OFF (Settings > General radio 'Keyboard shortcuts off' checked); pressing ? opens nothing Turn on Settings > General > Keyboard shortcuts, read the ? sheet, then turn off |  |
 
 ## Behaviour, toasts and dialogs
 
 | ID | Area | Item | Status | Evidence | Test |
 | --- | --- | --- | --- | --- | --- |
-| B-01 | Toasts | Archive/delete/spam/move/label toasts: wording, Undo, how long they stay | unverified | | |
-| B-02 | Toasts | Undo send window: "Sending…", "Message sent · Undo / View message" | unverified | LOOK-SPEC | |
+| B-01 | Toasts | Archive/delete/spam/move/label toasts: wording, Undo, how long they stay | unverified | needs write: Toasts need actions on mail Act on a seeded conversation |  |
+| B-02 | Toasts | Undo send window: "Sending…", "Message sent · Undo / View message" | unverified | needs write: Needs a send Send from the recon account |  |
 | B-03 | Actions | Snooze presets and Pick date & time | matches | LOOK-SPEC Snooze menu (256 wide, 'Snooze until...', presets, Pick date & time) and Behaviour notes on presets | app/src/core/dates.ts; tests/core.test.ts:73 (presets on a Sunday evening); app/src/ui/menus.tsx:142; e2e run.ts:608 |
-| B-04 | Actions | Mute; muted conversations skip the Inbox | unverified | | |
-| B-05 | Actions | Mark as read when opened; mark unread from here | unverified | | |
-| B-06 | Actions | Report spam / phishing; Report spam or unsubscribe dialog | unverified | P10 recon | e2e "reporting list mail as spam asks whether to unsubscribe…" |
-| B-07 | Actions | Block sender; unblock | unverified | | |
+| B-04 | Actions | Mute; muted conversations skip the Inbox | unverified | needs write: Mute changes mail Mute a seeded thread |  |
+| B-05 | Actions | Mark as read when opened; mark unread from here | matches | Recon: "Mark unread from here" on an earlier message | e2e "the web client's words and order…" |
+| B-06 | Actions | Report spam / phishing; Report spam or unsubscribe dialog | unverified | needs write: Message menu has 'Report spam' and 'Report phishing'; not clicked because a missing dialog would act at once Click Report phishing on a throwaway thread and read the dialog | e2e "reporting list mail as spam asks whether to unsubscribe…" |
+| B-07 | Actions | Block sender; unblock | unverified | needs write: Message menu entry 'Block "<sender name>"' (not clicked) Click it on a throwaway thread and read dialog/toast |  |
 | B-08 | Actions | Unsubscribe (one-click, mail, website) | matches | VERIFY-P10 finding 6 (recon dialogs: list vs sender scope, mailto branch, website-only, toast 'Unsubscribed from this mailing list.') | e2e "unsubscribe as the web client does…" |
-| B-09 | Dialogs | Delete forever, Empty Trash, Delete all spam: wording and confirmation | unverified | | |
-| B-10 | Selection | Acting on "all N conversations" (whole view), keeping ticked ones | unverified | | |
-| B-11 | Sync | Changes made elsewhere show up; counts follow | unverified | | |
-| B-12 | Offline | Actions made offline wait and go out once; Undo before then | unverified | | e2e "offline: a delete is made at once and waits…" |
+| B-09 | Dialogs | Delete forever, Empty Trash, Delete all spam: wording and confirmation | unverified | needs write: Banners 'Empty Trash now' / 'Delete all spam messages now' exist (strings match Courier); dialog not opened Click and read the confirm dialog, cancel |  |
+| B-10 | Selection | Acting on "all N conversations" (whole view), keeping ticked ones | unverified | needs write: Needs a bulk action Act on a selection of the whole view |  |
+| B-11 | Sync | Changes made elsewhere show up; counts follow | unverified | needs write: Needs a change from elsewhere Change mail via API and time the list |  |
+| B-12 | Offline | Actions made offline wait and go out once; Undo before then | unverified | blocked: Offline emulation not run Needs devtools offline | e2e "offline: a delete is made at once and waits…" |
 | B-13 | Offline | Acting on a whole view, Delete forever, snooze on mail-API accounts while offline (VERIFY-P11 gaps) | missing | VERIFY-P11 known gaps | |
-| B-14 | Errors | Failures said in words; never raw server text | unverified | | e2e "no toast showed a raw error" |
+| B-14 | Errors | Failures said in words; never raw server text | unverified | needs write: Failure toasts need a failing action Trigger an offline action | e2e "no toast showed a raw error" |
 
 ## Search
 
 | ID | Area | Item | Status | Evidence | Test |
 | --- | --- | --- | --- | --- | --- |
-| S-01 | Operators | from, to, cc, bcc, subject, label, has (attachment, drive ✗ …), filename, in, is, after/before/older/newer, older_than/newer_than, larger/smaller, size, category, list, deliveredto, rfc822msgid, OR / {} / - / () / "" | unverified | | Vitest `search.test.ts`, shared `search-cases.json` |
+| S-01 | Operators | from, to, cc, bcc, subject, label, has (attachment, drive ✗ …), filename, in, is, after/before/older/newer, older_than/newer_than, larger/smaller, size, category, list, deliveredto, rfc822msgid, OR / {} / - / () / "" | unverified | blocked: Not attempted in this pass Run operator examples against the seeded mailbox (P12.2 script) | Vitest `search.test.ts`, shared `search-cases.json` |
 | S-02 | Operators | `category:primary` means the Primary tab (Inbox minus the enabled tabs) | matches | decisions.tsv 2026-10-22 and PARITY V-02: in:inbox category:primary = 38 = the web Primary tab | Rust engine.rs:700 starred_in_primary_and_the_auto_contacts_setting; e2e run.ts:404 |
-| S-03 | Chips | Search chips (From, Any time, Has attachment, To, Is unread, Advanced search) | unverified | | |
+| S-03 | Chips | Search chips (From, Any time, Has attachment, To, Is unread, Advanced search) | differs | Recon 2026-10-25: Same as H-03 (chip row matches; Any time lacks Custom range… in Courier) See H-03 |  |
 | S-04 | Results | Rows show an "Inbox" chip when in the Inbox; search closes the options | matches | golden search-results.png ('Inbox' chip on rows, 'Recon/Counts' chip) + LOOK-SPEC Behaviour notes (search closes options) | app/src/ui/ListView.tsx:749-756 (INBOX chip unless viewing Inbox); the unit test core.test.ts:190 targets rowChips, which the UI does not call |
 
 ## Look
@@ -271,8 +271,8 @@ From `app/src/core/shortcuts.ts`; the web client's own list (its help sheet) is 
 | ID | Area | Item | Status | Evidence | Test |
 | --- | --- | --- | --- | --- | --- |
 | L-01 | Layout | Desktop layout at 1280 × 728 matches the measured boxes | matches | LOOK-SPEC Layout (measured boxes at 1280x728) + goldens | VERIFY-P1 table (0 to 4 px, hand-measured in the browser preview); app/src/styles/app.css |
-| L-02 | Layout | Rail (700–1023 px) and phone layout (< 700 px) | unverified | | e2e "fits every window size…" |
-| L-03 | Theme | Default, dark, colour themes, custom image | unverified | | |
+| L-02 | Layout | Rail (700–1023 px) and phone layout (< 700 px) | unverified | blocked: Window resizing not done | e2e "fits every window size…" |
+| L-03 | Theme | Default, dark, colour themes, custom image | unverified | blocked: Not done |  |
 | L-04 | Density | Default, Comfortable, Compact row heights | matches | LOOK-SPEC (default 40, comfortable 40, compact 28) + golden quick-settings.png | e2e run.ts:739 (compact 28, default); app/src/styles/app.css |
 | L-05 | Fonts and icons | Google Sans / Roboto (OFL, bundled), Material Symbols | matches | LOOK-SPEC Type table (Google Sans, Roboto fallback, sizes) from computed styles; Material Symbols in Icons section | app/src/styles/fonts.css:1 (bundled OFL, neutral names); app.css:5 --font; PLAN.md:44 |
 | L-06 | Visual diff | Every golden under the threshold in LOOK-SPEC (dynamic regions masked) | missing | Capture Courier goldens, write the diff and set a threshold. | no research/goldens/courier, no diff script (tools/goldens.mjs only captures) |
