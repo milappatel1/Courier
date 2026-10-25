@@ -74,7 +74,7 @@ const PAGE = String.raw`(() => {
     });
     const t = D.toast();
     return {
-      rows: sub.slice(0, 50),
+      rows: sub.slice(0, 100),
       rowState: state,
       counts: { nav: D.nav(), tabs: D.tabs() },
       selection: rows.filter(D.checked).length,
@@ -110,7 +110,7 @@ export async function createWebEnv({ s, known, mailbox }) {
 
   /** Centre of the element an expression returns, scrolled into view; [x, y] or null. */
   const where = (elExpr) =>
-    `(() => { const e = ${elExpr}; if (!e) return null; e.scrollIntoView({ block: "nearest" }); const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`;
+    `(() => { const e = ${elExpr}; if (!e) return null; e.scrollIntoView({ block: "nearest" }); const r = e.getBoundingClientRect(); const x = r.left + r.width / 2, y = r.top + r.height / 2; const hit = document.elementFromPoint(x, y); return hit && e.contains(hit) ? [x, y] : null; })()`;
   const move = async (x, y) => {
     await s("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
     await sleep(80);
@@ -310,20 +310,22 @@ export async function createWebEnv({ s, known, mailbox }) {
       await sleep(300);
     },
 
-    async toastGone(t0) {
-      const end = Date.now() + 30000;
-      let seen = false;
+    /** How long the toast that is up now stays, from when it was first seen. */
+    async toastGone() {
+      const end = Date.now() + 40000;
+      let seen = 0;
       while (Date.now() < end) {
         const t = await ev(`!!window.__d.toast()`);
-        if (t) seen = true;
-        else if (seen) return Date.now() - t0;
+        if (t && !seen) seen = Date.now();
+        else if (!t && seen) return Date.now() - seen;
         await sleep(50);
       }
       return null;
     },
 
     async compose({ to, subject, body }) {
-      await click("Compose", `[...document.querySelectorAll("div.T-I-KE[role=button]")].find((e) => e.getClientRects().length > 0 && e.textContent.trim() === "Compose")`);
+      // With the nav collapsed the Compose button sits under the toolbar, so the address Compose itself opens is used.
+      await ev(`location.hash = "inbox?compose=new"`);
       await until("the compose window", `[...document.querySelectorAll("div[role=dialog]")].some(window.__d.vis)`);
       await sleep(500);
       if (to) {

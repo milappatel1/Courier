@@ -156,9 +156,8 @@ export async function runScript(script, env, known, opts = {}) {
     ctx.how = undefined;
     ctx.labels = undefined;
     try {
-      const t0 = Date.now();
       await exec(st, env, known, ctx);
-      if (st.measureToast) rec.toastMs = await env.toastGone(t0);
+      if (st.measureToast) rec.toastMs = await env.toastGone();
       await env.settle();
     } catch (e) {
       rec.error = String(e?.message ?? e);

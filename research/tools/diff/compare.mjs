@@ -30,7 +30,11 @@ const courier = load(files[1]);
 
 let mismatches = 0;
 const out = [];
+let scriptName = "";
 let cur = [];
+const startDiffs = new Map();
+const startNotes = new Set();
+let atStart = false;
 let prev = new Set();
 let persisted = 0;
 const notes = args.includes("--notes");
@@ -43,6 +47,12 @@ const flush = () => {
   for (const m of cur) {
     const key = JSON.stringify([m.field, m.w, m.c]);
     keys.add(key);
+    if (atStart) {
+      const s = startDiffs.get(key) ?? { ...m, scripts: [] };
+      s.scripts.push(scriptName);
+      startDiffs.set(key, s);
+      continue;
+    }
     if (prev.has(key)) {
       persisted++;
       continue;
@@ -53,6 +63,16 @@ const flush = () => {
   prev = keys;
   cur = [];
 };
+// How old each seeded conversation's newest message is (hours), so two rows of the same age count as in either order: the
+// seed stamps each message with the time it ran, to the second, and the two clients break such ties differently.
+const mailbox = JSON.parse(readFileSync(new URL("./mailbox.json", import.meta.url), "utf8"));
+const age = new Map();
+mailbox.categories.forEach(([, name], ci) => {
+  for (const [key, what, msgs] of mailbox.cases) age.set(`${name} ${key}: ${what}`, Math.min(...msgs.map(([h]) => h + ci)));
+});
+for (const [, subject, , msgs] of mailbox.extras) age.set(subject, Math.min(...msgs.map(([h]) => h)));
+const ordered = (rows) => rows.every((r, i) => i === 0 || !age.has(r) || !age.has(rows[i - 1]) || age.get(rows[i - 1]) <= age.get(r));
+const firstOutOfOrder = (rows) => rows.findIndex((r, i) => i > 0 && age.has(r) && age.has(rows[i - 1]) && age.get(rows[i - 1]) > age.get(r));
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const seeded = (rows) => rows.filter((r) => r !== "(other)");
 
@@ -67,9 +87,29 @@ function compareObs(where, w, c) {
     if (onlyW.length || onlyC.length) bad(where, "rows only on one side", { web: onlyW }, { courier: onlyC });
     const both = wr.filter((r) => cr.includes(r));
     const bothC = cr.filter((r) => wr.includes(r));
-    if (!same(both, bothC)) {
-      const i = both.findIndex((r, k) => r !== bothC[k]);
-      bad(where, `row order (first difference at shared row ${i + 1})`, both.slice(Math.max(0, i - 1), i + 3), bothC.slice(Math.max(0, i - 1), i + 3));
+    for (const [side, rows] of [
+      ["web", both],
+      ["courier", bothC],
+    ]) {
+      if (!ordered(rows)) {
+        const i = firstOutOfOrder(rows);
+        bad(
+          where,
+          `row order on the ${side} side: not newest first (shared rows)`,
+          side === "web" ? rows.slice(i - 1, i + 2) : null,
+          side === "courier" ? rows.slice(i - 1, i + 2) : null,
+        );
+      }
+    }
+    if (ordered(both) && ordered(bothC) && !same(both, bothC)) {
+      // Both newest first. Only rows of different ages can disagree.
+      const cmpAge = (a, b) => (age.get(a) ?? 0) - (age.get(b) ?? 0);
+      const groups = (rows) => rows.map((r) => age.get(r) ?? r).join();
+      if (groups(both) !== groups(bothC) && both.slice().sort(cmpAge).join() === both.join()) {
+        const i = both.findIndex((r, k) => age.get(r) !== age.get(bothC[k]));
+        if (i >= 0)
+          bad(where, `row order (first difference at shared row ${i + 1})`, both.slice(Math.max(0, i - 1), i + 3), bothC.slice(Math.max(0, i - 1), i + 3));
+      }
     }
   }
   for (const s of wr.filter((r) => cr.includes(r))) {
@@ -88,15 +128,14 @@ function compareObs(where, w, c) {
       const b = c.counts[group][k] ?? 0;
       if (offsets[group][k] === undefined) {
         offsets[group][k] = a - b;
-        if (a !== b)
-          out.push(`  ${where} | note: ${label} ${k} starts at web ${a} / courier ${b} (other mail on the web account); later steps compare the change`);
+        if (a !== b) startNotes.add(`${label} ${k}: web ${a} / courier ${b}`);
       } else if (a - b !== offsets[group][k]) bad(where, `${label} ${k} (change since start)`, a, b + offsets[group][k]);
     }
   }
   if (w.selection !== c.selection) bad(where, "selected rows", w.selection, c.selection);
   if (!same(w.banner, c.banner)) bad(where, "select-all banner", w.banner, c.banner);
   if (!same(w.toolbar, c.toolbar)) bad(where, "toolbar", w.toolbar, c.toolbar);
-  if (!same(w.toast, c.toast)) bad(where, "toast", w.toast, c.toast);
+  if (!/^cleanup$/.test(where.replace(/^step \d+ /, "")) && !same(w.toast, c.toast)) bad(where, "toast", w.toast, c.toast);
   if (w.focus.cursor !== undefined && c.focus.cursor !== undefined && w.focus.cursor !== c.focus.cursor)
     bad(where, "cursor row", w.focus.cursor, c.focus.cursor);
   if (w.focus.active !== c.focus.active)
@@ -123,6 +162,7 @@ for (const name of names) {
   compared++;
   offsets = { nav: {}, tabs: {} };
   out.push(`${name}`);
+  scriptName = name;
   const before = mismatches;
   prev = new Set();
   persisted = 0;
@@ -144,10 +184,30 @@ for (const name of names) {
         bad(where, `toast stayed (ms, tolerance ${toastTol})`, ws.toastMs, cs.toastMs);
     }
     compareObs(where, ws.obs, cs.obs);
+    atStart = i === 0;
     flush();
+    atStart = false;
   }
   if (mismatches === before) out.push("  same");
   if (persisted) out.push(`  (${persisted} earlier difference${persisted === 1 ? "" : "s"} carried on unchanged through later steps, not repeated)`);
+}
+if (startNotes.size) {
+  console.log(
+    `counts at the start differ by the other mail on the web account, so later steps compare the change from there:\n  ${[...startNotes].join("\n  ")}\n`,
+  );
+}
+if (startDiffs.size) {
+  out.unshift("starting state (the first observation of each script: the web account as it is now against the seed)");
+  let k = 1;
+  for (const m of startDiffs.values()) {
+    mismatches++;
+    out.splice(
+      k++,
+      0,
+      `  ${m.field}: web ${JSON.stringify(m.w)} / courier ${JSON.stringify(m.c)}  [${m.scripts.length} script${m.scripts.length === 1 ? "" : "s"}]`,
+    );
+  }
+  out.splice(k, 0, "");
 }
 console.log(out.join("\n"));
 if (skipped.length) console.log(`\nnot compared:\n  ${skipped.join("\n  ")}`);

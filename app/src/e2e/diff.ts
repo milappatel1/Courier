@@ -110,7 +110,7 @@ function observe(o: { cursor?: boolean }): Observation {
   const t = toast();
   const cursorRow = rs.find((r) => r.classList.contains("focused"));
   return {
-    rows: sub.slice(0, 50),
+    rows: sub.slice(0, 100),
     rowState,
     counts: { nav, tabs },
     selection: rs.filter((r) => q("row-checkbox", r)?.getAttribute("aria-checked") === "true").length,
@@ -281,12 +281,12 @@ function makeEnv(): Env {
       await sleep(250);
     },
 
-    async toastGone(t0: number) {
-      const end = Date.now() + 30000;
-      let seen = false;
+    async toastGone() {
+      const end = Date.now() + 40000;
+      let seen = 0;
       while (Date.now() < end) {
-        if (toast()) seen = true;
-        else if (seen) return Date.now() - t0;
+        if (toast() && !seen) seen = Date.now();
+        else if (!toast() && seen) return Date.now() - seen;
         await sleep(50);
       }
       return null;

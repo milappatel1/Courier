@@ -74,7 +74,11 @@ async function snapshot(env) {
   for (const [label, tab] of views.slice(0, -1)) {
     await env.open(label, tab);
     const o = await env.observe({ cursor: false });
-    out[`${label}${tab ? `/${tab}` : ""}`] = { rows: o.rows.filter((r) => r !== "(other)"), rowState: Object.fromEntries(Object.entries(o.rowState).map(([s, r]) => [s, { ...r, selected: undefined }])), nav: o.counts.nav };
+    out[`${label}${tab ? `/${tab}` : ""}`] = {
+      rows: o.rows.filter((r) => r !== "(other)"),
+      rowState: Object.fromEntries(Object.entries(o.rowState).map(([s, r]) => [s, { ...r, selected: undefined }])),
+      nav: o.counts.nav,
+    };
   }
   await env.reset();
   return out;
