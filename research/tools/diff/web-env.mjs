@@ -274,11 +274,11 @@ export async function createWebEnv({ s, known, mailbox }) {
       );
       if (state === null) throw new Error(`no label ${name} in the menu`);
       if ((state === "true") !== on) await env.menuItem(name);
-      await click(
-        "Apply",
-        `[...document.querySelectorAll("[role=menuitem], [role=button]")].filter(window.__d.vis).find((e) => e.textContent.trim() === "Apply")`,
-      );
+      // This web client applies a label as it is ticked; an older one has an Apply button.
+      const apply = `[...document.querySelectorAll("[role=menuitem], [role=button]")].filter(window.__d.vis).find((e) => e.textContent.trim() === "Apply")`;
+      if (await until("Apply", apply, 800).catch(() => null)) await click("Apply", apply);
       await sleep(300);
+      if (await ev(`[...document.querySelectorAll("[role=menu]")].some(window.__d.vis)`)) await key("Escape");
     },
 
     async hover(subject, label) {
