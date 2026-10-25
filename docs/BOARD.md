@@ -13,14 +13,14 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 
 - Full e2e rerun on a quiet Mac: done when every step passes with nothing heavy running (new since the last green run: Move to tab, `] [ ; : \` ~` shortcuts, Spelling/Autocorrect, Sign out of all accounts) · app/src/e2e · verifier
 - Perf budgets (P12.5): done when `app/scripts/perf.sh` runs on a quiet Mac, budgets are set in `app/src/e2e/perf-budgets.json`, and research/PERF.md + VERIFY-P12.5.md are written · app/scripts · builder
-- Parity rows: 96 unverified need a setting change in the recon account (59 shortcut rows need Keyboard shortcuts on), a mail write, or network emulation; 10 differ (custom date range, compose formatting bar overflow, label palette, star tooltips, search-as-you-type …) · research/PARITY.md · builder
+- Parity rows (Milap allows temporary recon setting changes, restored after; resume the sweep once P12.2 frees the recon tab): 96 unverified need a setting change in the recon account (59 shortcut rows need Keyboard shortcuts on), a mail write, or network emulation; 10 differ (custom date range, compose formatting bar overflow, label palette, star tooltips, search-as-you-type …) · research/PARITY.md · builder
 
 ## Backlog
 
 - Fuzzer engine bugs, deferred by Milap until there's budget ("a rainy day"): #6 offline conversation change sent before an earlier Undo (A), #7 Undo after an offline change went out puts wrong labels (B), #8 Undo racing the reconnect flush is lost (D), #9 another device's change lost when an Undo races the sync (E). Each has an `#[ignore]`d repro in app/src-tauri/tests/race_fuzz.rs naming its issue; done when the repro passes un-ignored and the issue is closed · app/src-tauri/src · debugger
 - Settings ▸ General ▸ Language selector stays (English US/UK) for languages Milap may add later; ST-01 stays a deliberate gap until then · app · main session
 - Security gate: `/claude-security` on the changes, `trivy fs`, supply-chain-risk-auditor, differential-review, rust-review · repo · reviewer
-- Ultracode gates: final parity sweep and release-gate audit (ask Milap to switch ultracode on, then off) · main session
+- Ultracode gates: both (Milap chose both, 2026-10-25): final parity sweep and release-gate audit (ask Milap to switch ultracode on, then off) · main session
 - Release 1.1.0 per DEVELOPING.md: GitHub release, hashes, install after Milap quits Courier, numbers-only real-account check · main session
 - Confirm #2 (flash) and #5 (subscription count) in Milap's own use after 1.1.0 is installed, then close them · Milap + main session
 - Cleanup list for Milap after the release (what of Courier leaves the Mac), asked before deleting · main session
