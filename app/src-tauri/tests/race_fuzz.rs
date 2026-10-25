@@ -21,7 +21,7 @@
 //!
 //! Environment: COURIER_FUZZ_SEEDS (count, default 60), COURIER_FUZZ_SEED (first seed, default 1), COURIER_FUZZ_SEED_LIST (comma-separated seeds instead),
 //! COURIER_FUZZ_STEPS (per seed, default 40), COURIER_FUZZ_THREADS (seeds run side by side, default 3),
-//! COURIER_FUZZ_SHRINK=0 to skip reducing, COURIER_FUZZ_AVOID=undo-queued,undo-offline to leave out the Undo steps
+//! COURIER_FUZZ_BUDGET_SECS to stop starting seeds after that long, COURIER_FUZZ_SHRINK=0 to skip reducing, COURIER_FUZZ_AVOID=undo-queued,undo-offline to leave out the Undo steps
 //! that hit the problems already reported (so the rest of the space can be explored). COURIER_FUZZ_FAULT=resurrect|negative|leak|dupsend|swallow|stuck|drift
 //! injects one fault into the run, to show the matching check can fail (see `Fault`).
 //!
@@ -547,6 +547,7 @@ struct Acct {
     changed_at: Mutex<HashMap<String, i64>>,
     /// Conversations deleted forever here (the server may still hold them while the delete waits).
     deleted: Mutex<HashSet<String>>,
+    undos: Mutex<HashMap<String, u32>>,
     /// Refused requests in `sent` that the model has dealt with (by index).
     handled: Mutex<HashSet<usize>>,
     next_local: AtomicUsize,
@@ -563,6 +564,8 @@ struct Made {
     before_server: HashMap<&'static str, bool>,
     /// It waited for the connection when it was made.
     queued: bool,
+    /// Undos already made on its conversation when it was made.
+    undos: u32,
     epoch: u32,
     undone: bool,
 }
@@ -778,6 +781,7 @@ impl World {
                 dirty: Mutex::new(HashSet::new()),
                 changed_at: Mutex::new(HashMap::new()),
                 deleted: Mutex::new(HashSet::new()),
+                undos: Mutex::new(HashMap::new()),
                 next_local: AtomicUsize::new(0),
             });
         }
@@ -1224,6 +1228,7 @@ impl World {
                         before,
                         before_server,
                         queued: result == Changed::Queued,
+                        undos: ac.undos.lock().get(&tid).copied().unwrap_or(0),
                         epoch,
                         undone: false,
                     });
@@ -1234,6 +1239,10 @@ impl World {
                     }
                 }
                 ac.changed_at.lock().insert(tid.clone(), courier_lib::error::now_ms());
+                if message.is_some() {
+                    // A change to one message isn't in `made`, so an Undo of an older change proves nothing after it.
+                    *ac.epoch.lock().entry(tid.clone()).or_default() += 1;
+                }
                 if solo && quiet && result == Changed::Done {
                     if let Some(d) = self.duplicates(a, from) {
                         return fail(5, format!("{op:?} on {tid}: {d}"));
@@ -1246,7 +1255,8 @@ impl World {
                 ac.handled.lock().extend(refused.iter().map(|(i, _)| *i));
                 self.restore(a, saved);
                 self.stats.bump("changes refused");
-                Ok(Out::Changed { a, keys: vec![], change: None })
+                let keys = plan.iter().map(|(v, _)| (tid.clone(), *v)).collect();
+                Ok(Out::Changed { a, keys, change: None })
             }
             Err(e) => fail(0, format!("{op:?} on {} {tid} failed: {e}", ac.id)),
         }
@@ -1259,11 +1269,13 @@ impl World {
             let live: Vec<(usize, &Made)> = made.iter().enumerate().rev().filter(|(_, m)| !m.undone).take(4).collect();
             (!live.is_empty()).then(|| {
                 let (i, m) = live[back as usize % live.len()];
-                (i, m.clone(), made.iter().skip(i + 1).any(|x| x.thread == m.thread))
+                (i, m.clone(), made.iter().skip(i + 1).any(|x| x.thread == m.thread && !x.undone))
             })
         };
-        let Some((i, m, later)) = picked else { return Ok(Out::None) };
-        if ac.deleted.lock().contains(&m.thread) {
+        let Some((i, m, later_live)) = picked else { return Ok(Out::None) };
+        // The web client offers Undo for the latest change only: not one that a later change or an Undo has overtaken.
+        let overtaken = later_live || ac.undos.lock().get(&m.thread).copied().unwrap_or(0) != m.undos;
+        if ac.deleted.lock().contains(&m.thread) || overtaken {
             return Ok(Out::None);
         }
         let avoid = std::env::var("COURIER_FUZZ_AVOID").unwrap_or_default();
@@ -1279,7 +1291,7 @@ impl World {
             .iter()
             .filter_map(|v| {
                 if touched.iter().any(|l| l == v) {
-                    Some((*v, (!later && same_epoch && m.before[v] == m.before_server[v]).then(|| m.before[v])))
+                    Some((*v, (same_epoch && m.before[v] == m.before_server[v]).then(|| m.before[v])))
                 } else {
                     bin.then_some((*v, None))
                 }
@@ -1292,6 +1304,7 @@ impl World {
             Ok(result) => {
                 self.stats.bump(if result == Changed::Queued { "undone queued" } else { "undone" });
                 ac.made.lock()[i].undone = true;
+                *ac.undos.lock().entry(m.thread.clone()).or_default() += 1;
                 ac.changed_at.lock().insert(m.thread.clone(), courier_lib::error::now_ms());
                 let keys = plan.iter().filter(|(_, w)| w.is_some()).map(|(v, _)| (m.thread.clone(), *v)).collect();
                 Ok(Out::Changed { a, keys, change: Some(u64::MAX) })
@@ -1300,7 +1313,8 @@ impl World {
                 ac.handled.lock().extend(refused.iter().map(|(i, _)| *i));
                 self.restore(a, saved);
                 self.stats.bump("changes refused");
-                Ok(Out::Changed { a, keys: vec![], change: None })
+                let keys = plan.iter().map(|(v, _)| (m.thread.clone(), *v)).collect();
+                Ok(Out::Changed { a, keys, change: None })
             }
             Err(e) => fail(0, format!("Undo of change {} on {} failed: {e}", m.change, ac.id)),
         }
@@ -1672,7 +1686,7 @@ fn shrink(rt: &tokio::runtime::Runtime, seed: u64, all: &[Step], first: (usize, 
             let steps: Vec<Step> = cand.iter().map(|k| all[*k].clone()).collect();
             runs += 1;
             if let Err((n, f)) = run_sync(rt, seed, &steps, fault) {
-                if f.inv == why.inv {
+                if f.inv == why.inv && f.msg.split(" conversation").next() == why.msg.split(" conversation").next() {
                     keep = cand;
                     at = n;
                     why = f;
@@ -1696,6 +1710,8 @@ struct Config {
     shrink: bool,
     keep: Option<Vec<usize>>,
     fault: Fault,
+    /// Stop starting seeds after this long (the seeds under way finish).
+    budget: Option<Duration>,
 }
 
 fn env<T: std::str::FromStr>(name: &str, default: T) -> T {
@@ -1749,6 +1765,7 @@ fn config() -> Config {
         shrink: env::<u32>("COURIER_FUZZ_SHRINK", 1) != 0,
         keep: std::env::var("COURIER_FUZZ_KEEP").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()),
         fault: Fault::from_env(),
+        budget: std::env::var("COURIER_FUZZ_BUDGET_SECS").ok().and_then(|v| v.parse().ok()).map(Duration::from_secs),
     }
 }
 
@@ -1766,6 +1783,9 @@ fn random_orders_of_user_actions_and_server_events_keep_every_invariant() {
                 loop {
                     let i = next.fetch_add(1, Ordering::SeqCst);
                     let Some(&seed) = cfg.seeds.get(i) else { return };
+                    if cfg.budget.is_some_and(|b| started.elapsed() > b) {
+                        return;
+                    }
                     let all = if cfg.fault == Fault::None { gen_steps(seed, cfg.steps) } else { fault_script(cfg.fault) };
                     let (keep, steps): (Vec<usize>, Vec<Step>) = match &cfg.keep {
                         Some(k) => k.iter().filter(|x| **x < all.len()).map(|x| (*x, all[*x].clone())).unzip(),
@@ -1792,7 +1812,7 @@ fn random_orders_of_user_actions_and_server_events_keep_every_invariant() {
     });
     let mut passed = passed.into_inner();
     passed.sort_by_key(|p| p.seed);
-    for p in &passed {
+    for p in passed.iter().filter(|_| cfg.seeds.len() <= 100) {
         eprintln!("seed {}: ok in {:.1}s ({})", p.seed, p.ms as f64 / 1000.0, p.stats);
         for s in &p.soft {
             eprintln!("  note: {s}");
@@ -1800,7 +1820,10 @@ fn random_orders_of_user_actions_and_server_events_keep_every_invariant() {
     }
     let mut failed = failed.into_inner();
     failed.sort_by_key(|f| f.seed);
+    let ran = passed.len() + failed.len();
+    let soft_total: usize = passed.iter().map(|p| p.soft.len()).sum();
     if default_run() {
+        let known_failed: Vec<u64> = failed.iter().map(|f| f.seed).filter(|s| KNOWN.iter().any(|(k, _)| k == s)).collect();
         failed.retain(|f| match KNOWN.iter().find(|(seed, _)| *seed == f.seed) {
             Some((_, repro)) => {
                 eprintln!(
@@ -1814,7 +1837,7 @@ fn random_orders_of_user_actions_and_server_events_keep_every_invariant() {
             None => true,
         });
         for (seed, repro) in KNOWN {
-            if !passed.iter().any(|p| p.seed == *seed) && !failed.iter().any(|f| f.seed == *seed) && cfg.seeds.contains(seed) {
+            if passed.iter().any(|p| p.seed == *seed) && !known_failed.contains(seed) {
                 eprintln!("note: known seed {seed} passed this time ({repro})");
             }
         }
@@ -1833,12 +1856,13 @@ fn random_orders_of_user_actions_and_server_events_keep_every_invariant() {
         );
     }
     eprintln!(
-        "\nrace fuzz: {} seeds x {} steps in {:.1}s: {} passed, {} failed",
-        cfg.seeds.len(),
+        "\nrace fuzz: {} seeds x {} steps in {:.1}s: {} passed, {} failed ({} counts differing before the full resync)",
+        ran,
         cfg.steps,
         started.elapsed().as_secs_f64(),
         passed.len(),
-        failed.len()
+        failed.len(),
+        soft_total
     );
     assert!(failed.is_empty(), "{} seed(s) broke an invariant: {:?}", failed.len(), failed.iter().map(|f| (f.seed, inv_name(f.fail.inv))).collect::<Vec<_>>());
 }
