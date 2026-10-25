@@ -6,13 +6,12 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 
 ## Doing
 
+- Perf budgets (P12.5): done when `app/scripts/perf.sh` runs on a quiet Mac, budgets are set in `app/src/e2e/perf-budgets.json`, and research/PERF.md + VERIFY-P12.5.md are written · app/scripts · main session (3 runs started)
 - P12.2 differential runner (Milap allowed the recon scripts 2026-10-25): done when the same action scripts run in the web client (recon account) and in Courier with matching rows, counts, toasts and focus · research/tools · builder (web side waits until the read-only sweep frees the recon tab)
 - Visual diff tooling (L-06): done when research/tools/visual-diff.mjs compares Courier and web goldens under a LOOK-SPEC threshold with masks, and states over it are listed · research/tools · builder
 
 ## Next
 
-- Full e2e rerun on a quiet Mac: done when every step passes with nothing heavy running (new since the last green run: Move to tab, `] [ ; : \` ~` shortcuts, Spelling/Autocorrect, Sign out of all accounts) · app/src/e2e · verifier
-- Perf budgets (P12.5): done when `app/scripts/perf.sh` runs on a quiet Mac, budgets are set in `app/src/e2e/perf-budgets.json`, and research/PERF.md + VERIFY-P12.5.md are written · app/scripts · builder
 - Parity rows (Milap allows temporary recon setting changes, restored after; resume the sweep once P12.2 frees the recon tab): 96 unverified need a setting change in the recon account (59 shortcut rows need Keyboard shortcuts on), a mail write, or network emulation; 10 differ (custom date range, compose formatting bar overflow, label palette, star tooltips, search-as-you-type …) · research/PARITY.md · builder
 
 ## Backlog
@@ -26,6 +25,8 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 - Cleanup list for Milap after the release (what of Courier leaves the Mac), asked before deleting · main session
 
 ## Done
+
+- Full e2e on a quiet Mac: 83/85, never in front; the 2 failures were an unsubscribe reload race (fixed c7c93f8) and test mail from a new step showing as "new" (fixed); both steps green in a rerun · 2026-10-25
 
 - Fuzzer bug C fixed: a server listing no longer shows a conversation being binned in its old view · 1deab7c
 
