@@ -30,13 +30,33 @@ const courier = load(files[1]);
 
 let mismatches = 0;
 const out = [];
-const bad = (where, field, w, c) => {
-  mismatches++;
-  out.push(`  ${where} | ${field}: web ${JSON.stringify(w)} / courier ${JSON.stringify(c)}`);
+let cur = [];
+let prev = new Set();
+let persisted = 0;
+const notes = args.includes("--notes");
+// A difference is printed at the step where it first shows and again only if its values change, so one difference in the starting
+// state (the web account's categories, say) doesn't repeat under every step.
+const bad = (where, field, w, c) => cur.push({ where, field, w, c });
+const note = (text) => notes && out.push(`  ${text}`);
+const flush = () => {
+  const keys = new Set();
+  for (const m of cur) {
+    const key = JSON.stringify([m.field, m.w, m.c]);
+    keys.add(key);
+    if (prev.has(key)) {
+      persisted++;
+      continue;
+    }
+    mismatches++;
+    out.push(`  ${m.where} | ${m.field}: web ${JSON.stringify(m.w)} / courier ${JSON.stringify(m.c)}`);
+  }
+  prev = keys;
+  cur = [];
 };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const seeded = (rows) => rows.filter((r) => r !== "(other)");
 
+let offsets = { nav: {}, tabs: {} };
 function compareObs(where, w, c) {
   if (w.error || c.error) return same(w.error, c.error) || bad(where, "observation error", w.error, c.error);
   const wr = seeded(w.rows);
@@ -57,11 +77,21 @@ function compareObs(where, w, c) {
     const b = c.rowState[s];
     for (const k of ["unread", "starred", "selected", "chips"]) if (!same(a?.[k], b?.[k])) bad(where, `row "${s}" ${k}`, a?.[k], b?.[k]);
   }
-  for (const k of new Set([...Object.keys(w.counts.nav), ...Object.keys(c.counts.nav)])) {
-    if (w.counts.nav[k] !== c.counts.nav[k]) bad(where, `nav count ${k}`, w.counts.nav[k] ?? null, c.counts.nav[k] ?? null);
-  }
-  for (const k of new Set([...Object.keys(w.counts.tabs), ...Object.keys(c.counts.tabs)])) {
-    if (w.counts.tabs[k] !== c.counts.tabs[k]) bad(where, `tab badge ${k} (new)`, w.counts.tabs[k] ?? null, c.counts.tabs[k] ?? null);
+  // The web account holds mail that isn't the seed (Google's own notices), so a count is compared as its change since the start
+  // of the script; where the two differ at the start, that difference is noted once.
+  for (const [group, label] of [
+    ["nav", "nav count"],
+    ["tabs", "tab badge (new)"],
+  ]) {
+    for (const k of new Set([...Object.keys(w.counts[group]), ...Object.keys(c.counts[group])])) {
+      const a = w.counts[group][k] ?? 0;
+      const b = c.counts[group][k] ?? 0;
+      if (offsets[group][k] === undefined) {
+        offsets[group][k] = a - b;
+        if (a !== b)
+          out.push(`  ${where} | note: ${label} ${k} starts at web ${a} / courier ${b} (other mail on the web account); later steps compare the change`);
+      } else if (a - b !== offsets[group][k]) bad(where, `${label} ${k} (change since start)`, a, b + offsets[group][k]);
+    }
   }
   if (w.selection !== c.selection) bad(where, "selected rows", w.selection, c.selection);
   if (!same(w.banner, c.banner)) bad(where, "select-all banner", w.banner, c.banner);
@@ -70,7 +100,7 @@ function compareObs(where, w, c) {
   if (w.focus.cursor !== undefined && c.focus.cursor !== undefined && w.focus.cursor !== c.focus.cursor)
     bad(where, "cursor row", w.focus.cursor, c.focus.cursor);
   if (w.focus.active !== c.focus.active)
-    out.push(`  ${where} | note: focused element web ${JSON.stringify(w.focus.active)} / courier ${JSON.stringify(c.focus.active)}`);
+    note(`${where} | note: focused element web ${JSON.stringify(w.focus.active)} / courier ${JSON.stringify(c.focus.active)}`);
   if (w.labels || c.labels)
     for (const s of new Set([...Object.keys(w.labels ?? {}), ...Object.keys(c.labels ?? {})]))
       if (!same(w.labels?.[s], c.labels?.[s])) bad(where, `labels of "${s}"`, w.labels?.[s], c.labels?.[s]);
@@ -91,8 +121,11 @@ for (const name of names) {
     continue;
   }
   compared++;
+  offsets = { nav: {}, tabs: {} };
   out.push(`${name}`);
   const before = mismatches;
+  prev = new Set();
+  persisted = 0;
   const n = Math.max(w.steps.length, c.steps.length);
   for (let i = 0; i < n; i++) {
     const ws = w.steps[i];
@@ -100,6 +133,7 @@ for (const name of names) {
     const where = `step ${i} ${ws?.step ?? cs?.step}`;
     if (!ws || !cs) {
       bad(where, "step ran", ws ? "yes" : "no", cs ? "yes" : "no");
+      flush();
       continue;
     }
     if (ws.step !== cs.step) bad(where, "step", ws.step, cs.step);
@@ -110,8 +144,10 @@ for (const name of names) {
         bad(where, `toast stayed (ms, tolerance ${toastTol})`, ws.toastMs, cs.toastMs);
     }
     compareObs(where, ws.obs, cs.obs);
+    flush();
   }
   if (mismatches === before) out.push("  same");
+  if (persisted) out.push(`  (${persisted} earlier difference${persisted === 1 ? "" : "s"} carried on unchanged through later steps, not repeated)`);
 }
 console.log(out.join("\n"));
 if (skipped.length) console.log(`\nnot compared:\n  ${skipped.join("\n  ")}`);

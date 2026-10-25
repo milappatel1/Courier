@@ -161,6 +161,10 @@ export async function createWebEnv({ s, known, mailbox }) {
 
     async reset() {
       await env.open("INBOX", "primary");
+      // Spam, Trash and the rest show their unread counts once More is open, as in Courier's nav.
+      const more = await ev(`document.querySelector("[aria-label='More labels']") && window.__d.vis(document.querySelector("[aria-label='More labels']"))`);
+      if (more) await click("More labels", `document.querySelector("[aria-label='More labels']")`);
+      await env.clearSelection();
     },
 
     async open(label, tab) {
