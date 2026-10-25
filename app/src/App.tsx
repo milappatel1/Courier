@@ -26,10 +26,11 @@ import {
   visibleThreads,
   accountById,
   hasTabs,
+  removeCompose,
 } from "./state/store";
 import { CATEGORIES } from "./core/labels";
 import { Dialogs, Toasts } from "./ui/Dialogs";
-import { ComposeDock } from "./ui/Compose";
+import { ComposeDock, serializeCompose } from "./ui/Compose";
 import { Conversation, shareOpenConversation } from "./ui/Conversation";
 import { scrollToAnchor } from "./ui/MessageFrame";
 import { Header } from "./ui/Header";
@@ -252,7 +253,8 @@ function openThreadAtCursor() {
   if (t) openThread(t);
 }
 
-async function replyTo(kind: "reply" | "reply-all" | "forward") {
+/** Reply to the latest message of the open (or focused) conversation; `window`: in a window of its own (Shift+R/A/F). */
+async function replyTo(kind: "reply" | "reply-all" | "forward", window = false) {
   const s = getState();
   let d = s.thread.detail;
   if (!s.route.thread) {
@@ -262,7 +264,12 @@ async function replyTo(kind: "reply" | "reply-all" | "forward") {
     d = await api.thread(t.accountId, t.threadId);
   }
   const last = d?.messages.filter((m) => !m.labels.includes("DRAFT")).at(-1);
-  if (d && last) await openReply(d.accountId, last, kind);
+  if (!d || !last) return;
+  const id = await openReply(d.accountId, last, kind);
+  const c = getState().composes.find((x) => x.id === id);
+  if (!window || !c) return;
+  await api.windowOpen("compose", serializeCompose(c), kind === "forward" ? "Forward" : "Reply");
+  removeCompose(c.id);
 }
 
 /** Edit ▸ Paste and Match Style: the clipboard's text, without its formatting, where the cursor is. */
@@ -326,14 +333,13 @@ export function runCommand(a: ShortcutAction | string) {
     case "delete":
       return void act(s.route.list.label === "TRASH" ? "delete-forever" : "trash");
     case "reply":
-    case "reply-window":
-      return void replyTo("reply");
     case "reply-all":
-    case "reply-all-window":
-      return void replyTo("reply-all");
     case "forward":
+      return void replyTo(a);
+    case "reply-window":
+    case "reply-all-window":
     case "forward-window":
-      return void replyTo("forward");
+      return void replyTo(a.replace("-window", "") as "reply" | "reply-all" | "forward", true);
     case "forward-attachment":
       if (s.thread.detail)
         void forwardAsAttachment(

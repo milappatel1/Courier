@@ -979,6 +979,18 @@ pub async fn e2e_control(app: AppHandle, st: S<'_>, action: String, args: Value)
         #[cfg(debug_assertions)]
         "big-accounts" => e.big_accounts(&st.engine, &args).await,
         "perf-info" => e.perf_info(&app).await,
+        // The app's windows by label ("compose-…", "thread-…"); with "close", that one closes.
+        "windows" => {
+            use tauri::Manager;
+            if let Some(label) = args["close"].as_str() {
+                if let Some(w) = app.get_webview_window(label) {
+                    w.close().map_err(|e| Error::msg(e.to_string()))?;
+                }
+            }
+            let mut labels: Vec<String> = app.webview_windows().into_keys().collect();
+            labels.sort();
+            Ok(json!({"labels": labels}))
+        }
         // Files saved by Download (end-to-end runs use their own Downloads folder).
         "downloads" => {
             let dir = st.data_dir.join("Downloads");

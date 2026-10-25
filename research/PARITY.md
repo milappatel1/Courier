@@ -202,11 +202,11 @@ From `app/src/core/shortcuts.ts`; the web client's own list (its help sheet) is 
 | K-22 | Actions | `!` Report as spam | unverified | | |
 | K-23 | Actions | `#` Delete | unverified | | |
 | K-24 | Actions | `r` Reply | unverified | | |
-| K-25 | Actions | `Shift+R` Reply in a new window | differs | Opens no separate window. | app/src/App.tsx:326-327 'reply-window' runs the same inline reply as 'reply' |
+| K-25 | Actions | `Shift+R` Reply in a new window | unverified | Courier fixed (the reply opens in a window of its own); confirm in the web client's ? sheet | e2e "keyboard: Shift+R opens the reply in a window of its own" |
 | K-26 | Actions | `a` Reply all | unverified | | |
-| K-27 | Actions | `Shift+A` Reply all in a new window | differs | Opens no separate window. | app/src/App.tsx:329-330 'reply-all-window' = inline reply all |
+| K-27 | Actions | `Shift+A` Reply all in a new window | unverified | Courier fixed (the reply opens in a window of its own); confirm in the web client's ? sheet | e2e "keyboard: Shift+R opens the reply in a window of its own" |
 | K-28 | Actions | `f` Forward | unverified | | |
-| K-29 | Actions | `Shift+F` Forward in a new window | differs | Opens no separate window. | app/src/App.tsx:332-333 'forward-window' = inline forward |
+| K-29 | Actions | `Shift+F` Forward in a new window | unverified | Courier fixed (the reply opens in a window of its own); confirm in the web client's ? sheet | e2e "keyboard: Shift+R opens the reply in a window of its own" |
 | K-30 | Actions | `Shift+N` Update conversation | unverified | | |
 | K-31 | Actions | `]` Archive and go to older | unverified | Courier fixed in 45884aa (the key now acts as Google's published list says); confirm in the web client's ? sheet | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
 | K-32 | Actions | `[` Archive and go to newer | unverified | Courier fixed in 45884aa (the key now acts as Google's published list says); confirm in the web client's ? sheet | e2e "keyboard: ] and [ archive and open the older or newer one; …" |

@@ -869,6 +869,21 @@ step("Settings ▸ General ▸ Spelling and Autocorrect reach the compose window
   click(await el("compose-discard", w));
 });
 
+step("keyboard: Shift+R opens the reply in a window of its own", async () => {
+  await backToInbox();
+  const windows = async () => (await api.e2eControl<{ labels: string[] }>("windows", {})).labels.filter((l) => l.startsWith("compose-"));
+  const before = await windows();
+  click(await until("a conversation", () => row("Lunch on Friday?")));
+  await until("the conversation", () => q("conversation"));
+  const inline = qa("compose-window").length;
+  (document.activeElement as HTMLElement | null)?.blur?.();
+  key(document.body, "R", { shiftKey: true });
+  const opened = await until("a compose window", async () => (await windows()).find((l) => !before.includes(l)) ?? null, 10_000);
+  check(qa("compose-window").length === inline, "the reply also opened in the main window");
+  await api.e2eControl("windows", { close: opened });
+  await backToInbox();
+});
+
 step("reading pane: right of inbox shows the conversation beside the list", async () => {
   click(await el("settings-gear"));
   click(await el("qs-pane-right"));
