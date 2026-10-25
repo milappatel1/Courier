@@ -964,11 +964,6 @@ impl World {
             Step::Settle => self.settle(false).await?,
             s => {
                 let out = self.part(s, true).await?;
-                if matches!(s, Step::Sync { .. } | Step::Reconnect { .. }) {
-                    if let Step::Sync { a } | Step::Reconnect { a } = s {
-                        self.accts[*a].dirty.lock().clear();
-                    }
-                }
                 self.absorb_refusals();
                 self.check_out(&out, &HashSet::new())?;
             }
@@ -1109,7 +1104,13 @@ impl World {
             Step::Sync { a } => {
                 let ac = &self.accts[*a];
                 match self.engine.sync_account(ac.id).await {
-                    Ok(()) => self.set_online(true),
+                    Ok(()) => {
+                        self.set_online(true);
+                        // Only a sync made alone has read everything another device did before it.
+                        if solo {
+                            ac.dirty.lock().clear();
+                        }
+                    }
                     Err(e) if e.is_offline() => self.set_online(false),
                     Err(e) => return fail(0, format!("sync of {} failed: {e}", ac.id)),
                 }
@@ -1336,7 +1337,10 @@ impl World {
         }
         let from = ac.sent.lock().len();
         match self.engine.sync_account(ac.id).await {
-            Ok(()) => self.set_online(true),
+            Ok(()) => {
+                self.set_online(true);
+                ac.dirty.lock().clear();
+            }
             Err(e) => return fail(0, format!("sync of {} after the connection came back failed: {e}", ac.id)),
         }
         self.stats.bump("reconnects");
@@ -1937,6 +1941,19 @@ fn undo_of_a_waiting_change_as_the_connection_comes_back_is_not_lost() {
             Step::Race(vec![Step::Change { a: 1, t: 4, op: Op::Work }, Step::Change { a: 1, t: 2, op: Op::Trash }]),
             Step::Online { a: 1 },
             Step::Race(vec![Step::Change { a: 1, t: 1, op: Op::UnWork }, Step::ListServer { a: 1, label: 4157874260 }, Step::Undo { a: 1, back: 3 }]),
+        ],
+    );
+}
+
+#[test]
+#[ignore = "engine bug: a change made elsewhere is lost from the cache when an Undo races the sync that brings it, and no later sync repairs it"]
+fn a_remote_trash_is_not_lost_from_the_cache_when_an_undo_races_the_sync_that_brings_it() {
+    replay_seed(
+        20207,
+        vec![
+            Step::Change { a: 1, t: 2, op: Op::Unread },
+            Step::Remote { a: 1, t: 2, k: 369342037, op: Op::Trash },
+            Step::Race(vec![Step::Undo { a: 1, back: 1 }, Step::Sync { a: 1 }]),
         ],
     );
 }
