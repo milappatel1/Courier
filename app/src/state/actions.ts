@@ -455,6 +455,8 @@ export async function unsubscribe(o: {
         void Promise.all(direct.map((m) => (m.kind === "one-click" ? api.unsubscribeOneClick(m.url) : o.sendMail(m.to, m.subject || "unsubscribe", m.body))))
           .then(async () => {
             await api.markUnsubscribed(o.accountId, o.sender.email).catch(() => {});
+            // Again: a reload of the saved list between the click and here would have dropped it.
+            noteUnsubscribed(o.accountId, o.sender.email);
             toast(o.scope === "list" ? "Unsubscribed from this mailing list." : `Unsubscribed from ${name}.`);
           })
           .catch((e) => {

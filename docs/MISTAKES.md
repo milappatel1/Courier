@@ -14,3 +14,4 @@ Only this repo's lessons; lessons for every project go in `~/.claude/workflow/LE
 - Format only the lines you touched; `cargo fmt` on the whole crate reformats it at the default width, and this repo uses a wider one. (2026-10-21, 1.1.0)
 - In e2e checks, look for the expected item among all matches; a check that read the first chip, or assumed delivery order, failed on correct code. (2026-10-25, 1.1.0)
 - Run at most two subagents at once on the Pro plan; four in parallel (fuzzer, visual diff, parity sweep, P12.2 runner) used up the 5-hour window and all stopped mid-task. (2026-10-25, 1.1.0)
+- When a change shows at once and saves later, re-apply it after the save: a reload of the saved list in between dropped an unsubscribe the user had just confirmed. (2026-10-25, 1.1.0)

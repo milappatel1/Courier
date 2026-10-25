@@ -891,7 +891,8 @@ step("Settings ▸ Labels ▸ Categories ▸ Show in message list puts the categ
     from: "Chip Test <chip@test.example>",
     subject: "Category chip",
     body: "x",
-    labels: ["INBOX", "UNREAD", "CATEGORY_PROMOTIONS"],
+    // Archived, so the Inbox's Promotions tab has nothing new from this step.
+    labels: ["UNREAD", "CATEGORY_PROMOTIONS"],
   });
   const input = (await el("search-input")) as HTMLInputElement;
   const chipOn = () => [...(row("Category chip")?.querySelectorAll('[data-testid="row-label"]') ?? [])].some((c) => c.textContent === "Promotions");
@@ -990,12 +991,18 @@ step("the web client's words and order: search chips, Scheduled note, label, mes
   await until("expanded", () => qa("msg-more").length >= 2);
   click(qa("msg-more")[0]);
   await until("message menu", () => items().length > 0);
-  check(items().some((x) => x.endsWith("Mark unread from here")), `earlier message: ${items().join(" | ")}`);
+  check(
+    items().some((x) => x.endsWith("Mark unread from here")),
+    `earlier message: ${items().join(" | ")}`,
+  );
   escape();
   await until("closed", () => !items().length);
   click(qa("msg-more").at(-1)!);
   await until("message menu", () => items().length > 0);
-  check(items().some((x) => x.endsWith("Mark as unread")), `last message: ${items().join(" | ")}`);
+  check(
+    items().some((x) => x.endsWith("Mark as unread")),
+    `last message: ${items().join(" | ")}`,
+  );
   escape();
   await backToInbox();
 });

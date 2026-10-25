@@ -574,7 +574,8 @@ export async function markTabSeen(accountId: string, tab: string) {
 }
 
 export function noteUnsubscribed(accountId: string, email: string) {
-  set((s) => ({ unsubscribed: { ...s.unsubscribed, [accountId]: [...(s.unsubscribed[accountId] ?? []), email.toLowerCase()] } }));
+  const e = email.toLowerCase();
+  set((s) => ({ unsubscribed: { ...s.unsubscribed, [accountId]: [...(s.unsubscribed[accountId] ?? []).filter((x) => x !== e), e] } }));
 }
 
 export function forgetUnsubscribed(accountId: string, email: string) {
