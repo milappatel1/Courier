@@ -1,7 +1,7 @@
 // The main window: header, navigation, the list / conversation (with the reading-pane split), quick
 // settings, compose dock, dialogs and toasts; plus global keyboard shortcuts and native menu commands.
 import { useEffect, useRef, useState } from "react";
-import { isTypingTarget, ShortcutMatcher, type ShortcutAction } from "./core/shortcuts";
+import { isTypingTarget, ShortcutMatcher, withCustomKeys, type ShortcutAction } from "./core/shortcuts";
 import { api, on, type OpenItem } from "./ipc/api";
 import { act, currentTargets, emptyLabel, markUnreadFromHere, selectWhere, toggleStar } from "./state/actions";
 import { composeWithFiles, forwardAsAttachment, openCompose, openMailto, openReply } from "./state/compose";
@@ -462,9 +462,16 @@ export function runCommand(a: ShortcutAction | string) {
 
 function useShortcuts() {
   useEffect(() => {
-    const m = new ShortcutMatcher();
+    // Rebuilt when the custom keys change (Settings ▸ Keyboard Shortcuts).
+    let m = new ShortcutMatcher();
+    let keysFor = "";
     const down = (e: KeyboardEvent) => {
       const s = getState();
+      const want = s.settings.customShortcuts ? JSON.stringify(s.settings.shortcutKeys) : "";
+      if (want !== keysFor) {
+        keysFor = want;
+        m = new ShortcutMatcher(want ? withCustomKeys(s.settings.shortcutKeys) : undefined);
+      }
       if (e.key === "Escape") {
         if (s.ui.advancedSearch) return ui({ advancedSearch: false });
         if (s.ui.quickSettings) return ui({ quickSettings: false });

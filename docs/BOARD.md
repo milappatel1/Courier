@@ -14,7 +14,7 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 - Perf budgets (P12.5): done when `app/scripts/perf.sh` runs on a quiet Mac, budgets are set in `app/src/e2e/perf-budgets.json`, and research/PERF.md + VERIFY-P12.5.md are written · app/scripts · builder
 - P12.2 differential runner: done when the same action scripts run in the web client (recon account) and in Courier with matching rows, counts, toasts and focus · research/tools · builder (needs Milap's yes on the recon-script allow rules, or a waiver)
 - Parity rows: done when the 112 unverified rows are checked read-only in the recon profile and the 10 that differ are fixed · research/PARITY.md · builder
-- Missing parity features: Language, custom keyboard shortcuts, vacation rich editor, visual diff tooling (L-06) · app · builder
+- Missing parity features: Language, vacation rich editor, visual diff tooling (L-06) · app · builder
 
 ## Backlog
 
@@ -25,6 +25,8 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 - Cleanup list for Milap after the release (what of Courier leaves the Mac), asked before deleting · main session
 
 ## Done
+
+- Custom keyboard shortcuts: Advanced ▸ Custom keyboard shortcuts adds a Keyboard Shortcuts tab; custom keys win over defaults (ST-41) · 2026-10-25
 
 - Category chips: Settings ▸ Labels ▸ Categories ▸ Show in message list (hide by default, read from the recon account); recon categories set back to hide in the label list (left over from the last session) · 2026-10-25
 

@@ -169,11 +169,16 @@ export class ShortcutMatcher {
   private pending: string | null = null;
   private pendingAt = 0;
   private readonly byKeys = new Map<string, ShortcutAction>();
+  /** First keys of two-key sequences ("g", "*", or a custom one). */
+  private readonly prefixes = new Set<string>();
   constructor(
     defs: ShortcutDef[] = SHORTCUTS,
     private timeoutMs = 2000,
   ) {
-    for (const d of defs) this.byKeys.set(d.keys, d.action);
+    for (const d of defs) {
+      this.byKeys.set(d.keys, d.action);
+      if (d.keys.includes(" ")) this.prefixes.add(d.keys.split(" ")[0]);
+    }
   }
   /** Returns the action for this key, "pending" inside a sequence, or null. */
   feed(e: KeyLike, now = Date.now()): ShortcutAction | "pending" | null {
@@ -188,7 +193,7 @@ export class ShortcutMatcher {
       return this.byKeys.get(seq) ?? null;
     }
     this.pending = null;
-    if (k === "g" || k === "*") {
+    if (this.prefixes.has(k)) {
       this.pending = k;
       this.pendingAt = now;
       return "pending";
@@ -207,4 +212,18 @@ export function isTypingTarget(el: { tagName?: string; isContentEditable?: boole
   if (t === "input" || t === "textarea" || t === "select") return true;
   if (el.isContentEditable) return true;
   return el.getAttribute?.("role") === "textbox";
+}
+
+/**
+ * The shortcut list with the user's own keys (Settings ▸ Keyboard Shortcuts) in place of the defaults: each action
+ * maps to one or more keys, comma-separated ("e, y"); an action left empty keeps its default.
+ */
+export function withCustomKeys(custom: Record<string, string>): ShortcutDef[] {
+  const mine = (d: ShortcutDef) =>
+    (custom[d.action] ?? "")
+      .split(",")
+      .map((k) => k.trim())
+      .filter(Boolean);
+  // The user's keys go last, so they win over another action's default on the same key.
+  return [...SHORTCUTS.filter((d) => !mine(d).length), ...SHORTCUTS.flatMap((d) => mine(d).map((k) => ({ ...d, keys: k })))];
 }

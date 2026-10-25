@@ -37,6 +37,7 @@ import {
 import { themeById } from "../state/themes";
 import { Avatar, Icon } from "./common";
 import { FilterDialog } from "./FilterDialog";
+import { SHORTCUTS } from "../core/shortcuts";
 
 const TABS: [string, string][] = [
   ["general", "General"],
@@ -46,6 +47,7 @@ const TABS: [string, string][] = [
   ["filters", "Filters and Blocked Addresses"],
   ["fwdandpop", "Forwarding and POP/IMAP"],
   ["advanced", "Advanced"],
+  ["shortcuts", "Keyboard Shortcuts"],
   ["offline", "Offline"],
   ["themes", "Themes"],
 ];
@@ -55,6 +57,7 @@ export function SettingsPage() {
   const accountId = useMail((s) => s.accountId);
   const accounts = useMail((s) => s.accounts);
   const acctId = accountId === "all" ? (accounts[0]?.id ?? "") : accountId;
+  const custom = useMail((s) => s.settings.customShortcuts);
   return (
     <div className="settings" data-testid="settings">
       <div style={{ display: "flex", alignItems: "center" }}>
@@ -79,7 +82,7 @@ export function SettingsPage() {
         </button>
       </div>
       <div className="settings-tabs" role="tablist">
-        {TABS.map(([id, name]) => (
+        {TABS.filter(([id]) => id !== "shortcuts" || custom).map(([id, name]) => (
           <button
             key={id}
             role="tab"
@@ -100,6 +103,7 @@ export function SettingsPage() {
         {tab === "filters" && <FiltersTab accountId={acctId} />}
         {tab === "fwdandpop" && <ForwardingTab accountId={acctId} />}
         {tab === "advanced" && <AdvancedTab />}
+        {tab === "shortcuts" && custom && <ShortcutsTab />}
         {tab === "offline" && <OfflineTab />}
         {tab === "themes" && <ThemesTab />}
       </div>
@@ -1653,6 +1657,45 @@ function ForwardingTab({ accountId }: { accountId: string }) {
   );
 }
 
+// ---- Keyboard Shortcuts (with Advanced ▸ Custom keyboard shortcuts) ----
+
+function ShortcutsTab() {
+  const { d, set, dirty, save, reset } = useDraft();
+  return (
+    <>
+      <table className="stable" data-testid="shortcut-table">
+        <thead>
+          <tr>
+            <th>Action</th>
+            <th>Keys</th>
+          </tr>
+        </thead>
+        <tbody>
+          {SHORTCUTS.map((s) => (
+            <tr key={s.action + s.keys}>
+              <td>{s.label}</td>
+              <td>
+                <input
+                  value={d.shortcutKeys[s.action] ?? ""}
+                  placeholder={s.keys}
+                  aria-label={`Keys for ${s.label}`}
+                  data-testid={`keys-${s.action}`}
+                  onChange={(e) => set("shortcutKeys", { ...d.shortcutKeys, [s.action]: e.target.value })}
+                  style={{ width: 120 }}
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="muted" style={{ margin: "8px 0 16px" }}>
+        Separate several keys with commas; a sequence is two keys with a space (g i). Empty keeps the default.
+      </p>
+      <SaveBar dirty={dirty} save={save} reset={reset} />
+    </>
+  );
+}
+
 // ---- Advanced / Offline / Themes ----
 
 function AdvancedTab() {
@@ -1667,6 +1710,10 @@ function AdvancedTab() {
       <Row k="Templates:" small="Save frequent messages as templates (compose ▸ More options ▸ Templates).">
         <Radio name="tp" value={true} cur={d.templates} onPick={(v) => set("templates", v)} label="Enable" test="templates-on" />
         <Radio name="tp" value={false} cur={d.templates} onPick={(v) => set("templates", v)} label="Disable" />
+      </Row>
+      <Row k="Custom keyboard shortcuts:" small="Adds a Keyboard Shortcuts tab where you choose the keys for each action.">
+        <Radio name="cs" value={true} cur={d.customShortcuts} onPick={(v) => set("customShortcuts", v)} label="Enable" test="custom-shortcuts-on" />
+        <Radio name="cs" value={false} cur={d.customShortcuts} onPick={(v) => set("customShortcuts", v)} label="Disable" />
       </Row>
       <Row k="Unread message badge:" small="The count on Courier's Dock icon.">
         <Radio name="bd" value={true} cur={d.badge.enabled} onPick={(v) => set("badge", { ...d.badge, enabled: v })} label="Enable" />

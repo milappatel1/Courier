@@ -94,6 +94,9 @@ export interface Settings {
   multipleInboxes: { sections: MultiSection[]; position: "right" | "above" | "below"; max: number };
   autoAdvance: "newer" | "older" | "list";
   templates: boolean;
+  /** Settings ▸ Advanced ▸ Custom keyboard shortcuts, and the keys chosen per action (Settings ▸ Keyboard Shortcuts). */
+  customShortcuts: boolean;
+  shortcutKeys: Record<string, string>;
   badge: { enabled: boolean; primaryOnly: boolean };
   offline: { enabled: boolean; days: number };
   theme: string;
@@ -155,6 +158,8 @@ export const DEFAULTS: Settings = {
   },
   autoAdvance: "list",
   templates: false,
+  customShortcuts: false,
+  shortcutKeys: {},
   badge: { enabled: true, primaryOnly: true },
   offline: { enabled: true, days: 30 },
   theme: "default",

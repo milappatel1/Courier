@@ -15,7 +15,7 @@ import {
   rowChips,
   validateLabelName,
 } from "../src/core/labels";
-import { keyName, ShortcutMatcher, SHORTCUTS } from "../src/core/shortcuts";
+import { keyName, ShortcutMatcher, SHORTCUTS, withCustomKeys } from "../src/core/shortcuts";
 import { decodeEntities, htmlToText, snippetOf, textToHtml } from "../src/core/text";
 import { conversationLayout, normalizeSubject, participants, participantsText, threadMessages } from "../src/core/threading";
 import { parseListUnsubscribe, parseMailto } from "../src/core/unsubscribe";
@@ -214,6 +214,15 @@ describe("shortcuts", () => {
     expect(m.feed({ key: "g" }, 400)).toBe("pending");
     expect(m.feed({ key: "s" }, 5000)).toBe("star"); // too late: plain "s"
     expect(new Set(SHORTCUTS.map((s) => s.keys)).size).toBe(SHORTCUTS.length);
+  });
+  it("custom keys replace an action's default, several per action, sequences included", () => {
+    const m = new ShortcutMatcher(withCustomKeys({ archive: "a, y", "go-inbox": "q i" }));
+    expect(m.feed({ key: "a" })).toBe("archive");
+    expect(m.feed({ key: "y" })).toBe("archive");
+    expect(m.feed({ key: "e" })).toBeNull(); // the default no longer archives
+    expect(m.feed({ key: "q" }, 0)).toBe("pending");
+    expect(m.feed({ key: "i" }, 50)).toBe("go-inbox");
+    expect(m.feed({ key: "c" })).toBe("compose"); // untouched actions keep theirs
   });
 });
 

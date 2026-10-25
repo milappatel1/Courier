@@ -12,3 +12,4 @@ Only this repo's lessons; lessons for every project go in `~/.claude/workflow/LE
 - Rebuild the app before re-running e2e after a UI change; the UI is bundled into the app, so a reused build still runs the old code. (2026-10-22, 1.1.0)
 - Measure UI latency from frame timestamps, not from an `until` poll; a poll reported 997 ms for a pane that showed in 6 ms. (2026-10-22, 1.1.0)
 - Format only the lines you touched; `cargo fmt` on the whole crate reformats it at the default width, and this repo uses a wider one. (2026-10-21, 1.1.0)
+- In e2e checks, look for the expected item among all matches; a check that read the first chip, or assumed delivery order, failed on correct code. (2026-10-25, 1.1.0)

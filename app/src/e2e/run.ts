@@ -905,6 +905,28 @@ step("Settings ▸ Labels ▸ Categories ▸ Show in message list puts the categ
   await backToInbox();
 });
 
+step("Settings ▸ Advanced ▸ Custom keyboard shortcuts: a key chosen in the Keyboard Shortcuts tab archives", async () => {
+  click(await el("settings-gear"));
+  click(await el("see-all-settings"));
+  click(await el("settings-tab-advanced"));
+  check(!q("settings-tab-shortcuts"), "the Keyboard Shortcuts tab shows before it's enabled");
+  click(await el("custom-shortcuts-on"));
+  click(await el("settings-save"));
+  click(await el("settings-tab-shortcuts"));
+  type(await el("keys-archive"), "a, y");
+  click(await el("settings-save"));
+  await until("saved", async () => ((await api.settings()).shortcutKeys as Record<string, string> | undefined)?.archive === "a, y");
+  await backToInbox();
+  await api.e2eControl("deliver-gmail", { from: "Key Test <key@test.example>", subject: "Custom key", body: "x" });
+  await until("the row", () => row("Custom key"), 30_000);
+  setState({ cursor: visibleThreads().findIndex((t) => t.subject === "Custom key") });
+  (document.activeElement as HTMLElement | null)?.blur?.();
+  key(document.body, "y");
+  await until("archived by the custom key", async () => (await msgsWith("Custom key")).every((m) => !m.labels.includes("INBOX")) || null, 20_000);
+  await setSetting("customShortcuts", false);
+  await setSetting("shortcutKeys", {});
+});
+
 step("reading pane: right of inbox shows the conversation beside the list", async () => {
   click(await el("settings-gear"));
   click(await el("qs-pane-right"));

@@ -167,7 +167,7 @@ The web client's tabs and settings as harvested from the recon profile on 2026-1
 | ST-38 | Accounts | Mark conversation as read when opened by others | ✗ Google-only | Delegation | — |
 | ST-39 | Filters | Filters list, create, edit, delete, export, import; blocked addresses, unblock | matches | settings-filters.json + golden settings-filters.png (list, Select All/None, Export, Delete, Create a new filter, Import filters, blocked addresses, unblock) | app/src/ui/Settings.tsx:1259-1430; tests/filtersxml.test.ts; e2e run.ts:984 |
 | ST-40 | Forwarding | Forwarding address, POP download, IMAP access options | matches | settings-fwdandpop.json (forwarding, POP status/options, IMAP expunge, folder size limits) | app/src/ui/Settings.tsx:1453-1626 |
-| ST-41 | Advanced | Templates and other advanced settings | missing | Custom keyboard shortcuts (remap keys) is missing. Auto-advance differs in shape (three-way choice vs Enable/Disable). | app/src/ui/Settings.tsx:1631-1666 has Auto-advance, Templates, Dock badge; nothing for Custom keyboard shortcuts |
+| ST-41 | Advanced | Templates and other advanced settings | matches | goldens/web/settings-advanced.png: Auto-advance, Templates, Custom keyboard shortcuts (Enable adds a Keyboard Shortcuts tab), Unread icon and badge; Courier's Auto-advance keeps its 3-way choice (newer/older/list, list by default as the web's Disable) | e2e "Settings ▸ Advanced ▸ Custom keyboard shortcuts: …"; Vitest "custom keys replace an action's default…" |
 | ST-42 | Offline | Offline settings (days to keep) | unverified | | |
 | ST-43 | Themes | Themes picker, custom image | unverified | | |
 | ST-44 | Add-ons, Chat and Meet | Add-ons and Chat and Meet tabs | ✗ Google-only | | — |
