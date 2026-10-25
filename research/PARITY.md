@@ -19,7 +19,7 @@ and features the mail API doesn't expose).
 | C-03 | Menu | Category in the menu (when shown) counts every unread conversation in it, archived included, not Spam/Trash | matches | Recon: Updates 14 = labels.get threadsUnread 14, Updates label view 14 unread rows | e2e "counts mean what the web client's do" |
 | C-04 | Menu | Categories hidden from the menu by default; Settings ▸ Labels ▸ Categories show/hide; shown ones sit above More | matches | Recon: Social/Updates/Forums/Promotions "hide" by default; shown, they appear after Drafts | e2e "counts mean what the web client's do" |
 | C-05 | Tabs | "N new" under a tab: unread mail arrived since the tab was last opened, with senders; none for mail already there | matches | Recon: Promotions tab with 9 unread rows shows no number | e2e "counts mean what the web client's do" |
-| C-06 | Menu | User label counts: unread conversations in the label | unverified | | |
+| C-06 | Menu | User label counts: unread conversations in the label | matches | Recon 2026-10-25 (read-only): the menu item reads "Counts 6 unread" (aria-label); the label has 6 conversations, all unread; Courier shows threadsUnread | Rust label_counts_follow_actions_and_changes_made_elsewhere |
 | C-07 | Menu | Spam shows its unread count only with "show if unread" | unverified | | e2e "Settings ▸ Labels: show, hide and show if unread" |
 | C-08 | Menu | Drafts count | unverified | | |
 | C-09 | List | Page count "1–50 of N" for labels, tabs and searches ("many" when the server only estimates) | unverified | | |

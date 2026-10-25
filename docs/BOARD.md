@@ -6,6 +6,7 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 
 ## Doing
 
+- Visual diff tooling (L-06): done when research/tools/visual-diff.mjs compares Courier and web goldens under a LOOK-SPEC threshold with masks, and states over it are listed · research/tools · builder
 - Race fuzzer (P12.4): done when `app/src-tauri/tests/race_fuzz.rs` (WIP, 73 KB, kept out of git in .git/info/exclude) is reviewed, finished, green, and committed with the exclude line removed · app/src-tauri/tests · builder
 
 ## Next
@@ -13,8 +14,8 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 - Full e2e rerun on a quiet Mac: done when every step passes with nothing heavy running (new since the last green run: Move to tab, `] [ ; : \` ~` shortcuts, Spelling/Autocorrect, Sign out of all accounts) · app/src/e2e · verifier
 - Perf budgets (P12.5): done when `app/scripts/perf.sh` runs on a quiet Mac, budgets are set in `app/src/e2e/perf-budgets.json`, and research/PERF.md + VERIFY-P12.5.md are written · app/scripts · builder
 - P12.2 differential runner: done when the same action scripts run in the web client (recon account) and in Courier with matching rows, counts, toasts and focus · research/tools · builder (needs Milap's yes on the recon-script allow rules, or a waiver)
-- Parity rows: done when the 112 unverified rows are checked read-only in the recon profile and the 10 that differ are fixed · research/PARITY.md · builder
-- Missing parity features: Language, visual diff tooling (L-06) · app · builder
+- Parity rows (read-only sweep running in a researcher agent): done when the 112 unverified rows are checked read-only in the recon profile and the 10 that differ are fixed · research/PARITY.md · builder
+- Language (ST-01): needs Milap's call (the web client offers 60+ UI languages; Courier is English only) · app · main session
 
 ## Backlog
 
