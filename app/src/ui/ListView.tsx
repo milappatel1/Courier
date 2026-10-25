@@ -11,6 +11,7 @@ import { api } from "../ipc/api";
 import type { Label, ThreadSummary, ViewQuery, ViewResult } from "../ipc/types";
 import {
   act,
+  applyLabels,
   allExceptSelected,
   allMatchingTargets,
   BULK_KINDS,
@@ -1106,7 +1107,32 @@ function rowMenu(
   const sender = [...t.participants].reverse().find((p) => p.email) ?? t.participants[0];
   const inTrash = viewing === "TRASH";
   const inSpam = viewing === "SPAM";
+  // The Inbox with tabs: the category the conversation files under (the other categories come off).
+  const cats = getState().settings.categories;
+  const tabs = viewing === "INBOX" && hasTabs() ? CATEGORIES.filter((c) => c.key === "primary" || cats[c.key as keyof typeof cats]) : [];
+  const moveToTab: MenuEntry[] = tabs.length
+    ? [
+        {
+          label: "Move to tab",
+          icon: "drive_file_move",
+          testId: "ctx-move-tab",
+          submenu: tabs.map((c) => ({
+            label: c.name,
+            icon: c.icon,
+            testId: `ctx-tab-${c.key}`,
+            run: () =>
+              void applyLabels(
+                [c.id],
+                CATEGORIES.map((x) => x.id).filter((x) => x !== c.id),
+                { targets: targets() },
+              ),
+          })),
+        },
+        { sep: true },
+      ]
+    : [];
   return [
+    ...moveToTab,
     { label: "Reply", icon: "reply", run: () => reply("reply"), testId: "ctx-reply" },
     { label: "Reply all", icon: "reply_all", run: () => reply("reply-all") },
     { label: "Forward", icon: "forward", run: () => reply("forward"), testId: "ctx-forward" },
@@ -1135,7 +1161,6 @@ function rowMenu(
     ...(sender
       ? [{ label: `Find emails from ${sender.name || sender.email}`, icon: "search", run: () => search(`from:${sender.email}`), testId: "ctx-find-from" }]
       : []),
-    { label: "Find emails with this subject", icon: "manage_search", run: () => search(`subject:"${(t.subject || "").replace(/"/g, "")}"`) },
     { sep: true },
     { label: "Open in new window", icon: "open_in_new", run: () => void api.windowOpen("thread", { accountId: t.accountId, threadId: t.threadId }, t.subject) },
   ];

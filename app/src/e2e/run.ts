@@ -1532,6 +1532,18 @@ step("right-click a row: the menu acts on that conversation", async () => {
   click(await el("ctx-find-from"));
   await until("mail from the sender", () => getState().route.list.query === "from:jobs@example.net" && row("Your application"));
   await backToInbox();
+  // Move to tab: the conversation files under another category and leaves Primary.
+  await api.e2eControl("deliver-gmail", { from: "Tab Test <tab@test.example>", subject: "Tab move", body: "x" });
+  const r3 = await until("the test row", () => row("Tab move"), 30_000);
+  const b3 = r3.getBoundingClientRect();
+  r3.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: b3.left + 400, clientY: b3.top + 10 }));
+  click(await el("ctx-move-tab"));
+  click(await el("ctx-tab-promotions"));
+  await until("filed under Promotions on the server", async () => {
+    const l = (await msgsWith("Tab move"))[0]?.labels ?? [];
+    return (l.includes("CATEGORY_PROMOTIONS") && !l.includes("CATEGORY_PERSONAL")) || null;
+  });
+  await until("gone from Primary", () => !row("Tab move"));
 });
 
 /** Scrolls a box as a person would (and fires the event a covered background window holds back). */
