@@ -749,6 +749,8 @@ function Row({ t, index, open }: { t: ThreadSummary; index: number; open: boolea
     if (id === viewing) return false;
     // Search results and other labels show an Inbox chip; the Inbox itself does not.
     if (id === "INBOX") return viewing !== "INBOX";
+    // A category, when Settings ▸ Labels shows it in the message list (not on the Inbox's own tabs).
+    if (id.startsWith("CATEGORY_") && id !== "CATEGORY_PERSONAL") return settings.categoryChips[id] === "show" && !(viewing === "INBOX" && hasTabs());
     const l = byId.get(id);
     if (!l || isSystemLabel(id)) return false;
     return l.messageListVisibility !== "hide";
@@ -939,7 +941,7 @@ function Row({ t, index, open }: { t: ThreadSummary; index: number; open: boolea
         <span className="subject-line">
           {chips.map((id) => {
             const l = byId.get(id);
-            const name = id === "INBOX" ? "Inbox" : (l?.name ?? SYSTEM_DISPLAY[id] ?? id);
+            const name = id === "INBOX" ? "Inbox" : id.startsWith("CATEGORY_") ? (SYSTEM_DISPLAY[id] ?? id) : (l?.name ?? SYSTEM_DISPLAY[id] ?? id);
             return (
               <span key={id} className="chip-label" style={chipStyle(l?.bg ? { backgroundColor: l.bg, textColor: l.fg ?? "" } : null)} data-testid="row-label">
                 {name}

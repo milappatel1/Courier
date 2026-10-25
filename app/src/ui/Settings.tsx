@@ -648,6 +648,7 @@ function LabelsTab({ accountId }: { accountId: string }) {
   const user = labels.filter((l) => l.type === "user").sort((a, b) => a.name.localeCompare(b.name));
   const sys = ["INBOX", "STARRED", "SNOOZED", "IMPORTANT", "SENT", "SCHEDULED", "DRAFT", "ALL", "SPAM", "TRASH"];
   const vis = useMail((s) => s.settings.systemLabels);
+  const chipVis = useMail((s) => s.settings.categoryChips);
   const update = (l: Label, patch: Record<string, unknown>) =>
     void api
       .labelUpdate(accountId, l.id, patch)
@@ -702,6 +703,7 @@ function LabelsTab({ accountId }: { accountId: string }) {
             <tr>
               <th>Categories</th>
               <th>Show in label list</th>
+              <th>Show in message list</th>
             </tr>
           </thead>
           <tbody>
@@ -709,6 +711,23 @@ function LabelsTab({ accountId }: { accountId: string }) {
               <tr key={id}>
                 <td>{SYSTEM_DISPLAY[id]}</td>
                 <td>{choices(id, ["show", "hide"])}</td>
+                <td>
+                  {(["show", "hide"] as const).map((v) => {
+                    const on = (chipVis[id] ?? "hide") === v;
+                    return (
+                      <button
+                        key={v}
+                        className="linkbtn"
+                        aria-pressed={on}
+                        data-testid={`chip-${id}-${v}`}
+                        style={{ marginRight: 8, fontWeight: on ? 700 : 400, color: on ? "var(--text)" : undefined }}
+                        onClick={() => void setSetting("categoryChips", { ...chipVis, [id]: v })}
+                      >
+                        {v}
+                      </button>
+                    );
+                  })}
+                </td>
               </tr>
             ))}
           </tbody>

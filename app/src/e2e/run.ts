@@ -884,6 +884,27 @@ step("keyboard: Shift+R opens the reply in a window of its own", async () => {
   await backToInbox();
 });
 
+step("Settings ▸ Labels ▸ Categories ▸ Show in message list puts the category on rows outside its tab", async () => {
+  await backToInbox();
+  await api.e2eControl("deliver-gmail", {
+    from: "Chip Test <chip@test.example>",
+    subject: "Category chip",
+    body: "x",
+    labels: ["INBOX", "UNREAD", "CATEGORY_PROMOTIONS"],
+  });
+  const input = (await el("search-input")) as HTMLInputElement;
+  const chipOn = () => [...(row("Category chip")?.querySelectorAll('[data-testid="row-label"]') ?? [])].some((c) => c.textContent === "Promotions");
+  type(input, "subject:Category chip");
+  input.form!.requestSubmit();
+  await until("the result", () => row("Category chip"), 30_000);
+  check(!chipOn(), "a category chip shows by default");
+  await setSetting("categoryChips", { CATEGORY_PROMOTIONS: "show" });
+  await until("the Promotions chip", () => chipOn(), 3000);
+  await setSetting("categoryChips", {});
+  await until("no chip again", () => !chipOn(), 3000);
+  await backToInbox();
+});
+
 step("reading pane: right of inbox shows the conversation beside the list", async () => {
   click(await el("settings-gear"));
   click(await el("qs-pane-right"));

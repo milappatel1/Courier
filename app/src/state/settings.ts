@@ -54,6 +54,8 @@ export const SYSTEM_LABEL_DEFAULTS: Record<string, LabelVisibility> = {
 
 export interface Settings {
   systemLabels: Record<string, LabelVisibility>;
+  /** Categories shown as a chip on rows outside their own tab (Settings ▸ Labels ▸ Show in message list; hidden by default). */
+  categoryChips: Record<string, "show" | "hide">;
   language: string;
   pageSize: number;
   undoSendSeconds: number;
@@ -107,6 +109,7 @@ export interface Settings {
 
 export const DEFAULTS: Settings = {
   systemLabels: {},
+  categoryChips: {},
   language: "en",
   pageSize: 50,
   undoSendSeconds: 5,

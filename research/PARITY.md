@@ -92,7 +92,7 @@ and features the mail API doesn't expose).
 | T-12 | Actions | A conversation action changes every message of the conversation on the server, older ones included | differs | Rust repro: a 60-day-old message stays in the Inbox | Rust `deleting_or_archiving_a_conversation_takes_all_of_it_even_messages_older_than_this_mac_keeps` |
 | T-13 | Actions | Undo in the toast restores what was there | unverified | | |
 | T-14 | Density | Default, Comfortable, Compact | matches | LOOK-SPEC Layout (default 40, comfortable 40 without attachment chips, compact 28/24/40/48) + golden quick-settings.png | app/src/ui/ListView.tsx:770 showAttachments (density default only); e2e run.ts:739 (compact 28, default) |
-| T-15 | Category chips | Category label chips in the message list (Settings ▸ Labels ▸ Categories ▸ Show in message list) | missing | Add the column and the row chip. | app/src/ui/Settings.tsx:691-708 Categories table has only 'Show in label list'; app/src/ui/ListView.tsx:749-756 skips system labels so no category chip is ever drawn |
+| T-15 | Category chips | Category label chips in the message list (Settings ▸ Labels ▸ Categories ▸ Show in message list) | matches | Recon 2026-10-25 (read-only): Settings ▸ Labels ▸ Categories has Show in message list, hide by default for Social/Updates/Forums/Promotions; shown, rows carry the category chip | e2e "Settings ▸ Labels ▸ Categories ▸ Show in message list puts the category on rows outside its tab" |
 
 ## Conversation
 
@@ -153,7 +153,7 @@ The web client's tabs and settings as harvested from the recon profile on 2026-1
 | ST-24 | Labels | System labels show/hide/show if unread with the web client's defaults | matches | settings-labels.json and VERIFY-P10 finding 13 (web defaults observed) | e2e "Settings ▸ Labels: show, hide…" |
 | ST-25 | Labels | "Show in IMAP" per label | ✗ Google-only | Not exposed by the mail API | — |
 | ST-26 | Labels | Categories: show in label list (default hide) | matches | Recon defaults; C-04 | e2e "counts mean…" |
-| ST-27 | Labels | Categories: show in message list | missing | Same gap as T-15. | app/src/ui/Settings.tsx:691-708 (no such column) |
+| ST-27 | Labels | Categories: show in message list | matches | Recon 2026-10-25 (read-only): Settings ▸ Labels ▸ Categories has Show in message list, hide by default for Social/Updates/Forums/Promotions; shown, rows carry the category chip | e2e "Settings ▸ Labels ▸ Categories ▸ Show in message list puts the category on rows outside its tab" |
 | ST-28 | Labels | Labels table: conversation counts, show/hide/show if unread, show in message list, remove, edit | matches | settings-labels.json: Labels table (N conversations, show / hide / show if unread, show in message list, remove, edit, Create new label) | app/src/ui/Settings.tsx:709-790; e2e run.ts:1781 |
 | ST-29 | Inbox | Inbox type | matches | settings-inbox.json: Default, Important first, Unread first, Starred first, Priority Inbox, Multiple Inboxes | app/src/ui/Settings.tsx:815-825; e2e run.ts:826 |
 | ST-30 | Inbox | Categories (which tabs) | matches | settings-inbox.json: Primary, Promotions, Social, Updates, Forums tabs (Purchases not offered by the API) | app/src/ui/Settings.tsx:826-842; state/settings.ts categories (Forums off); e2e run.ts:1693 |
