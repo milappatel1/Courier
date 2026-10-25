@@ -807,6 +807,47 @@ step("keyboard: c composes, / searches, j/k move, s stars, e archives, z undoes"
   await until("undone by z", () => rows().some((r) => r.querySelector(".subj")?.textContent === subject));
 });
 
+step("keyboard: ] and [ archive and open the older or newer one; ; and : expand and collapse all; ` and ~ switch tabs", async () => {
+  await backToInbox();
+  await setSetting("autoAdvance", "list");
+  const blur = () => (document.activeElement as HTMLElement | null)?.blur?.();
+  for (const n of [1, 2, 3]) await api.e2eControl("deliver-gmail", { from: "Bracket Test <bracket@test.example>", subject: `Bracket ${n}`, body: "x" });
+  await until("the rows", () => row("Bracket 1") && row("Bracket 2") && row("Bracket 3"), 30_000);
+  click(row("Bracket 2")!);
+  await until("Bracket 2 open", () => q("conv-subject")?.textContent?.includes("Bracket 2"));
+  blur();
+  key(document.body, "]");
+  await until("] opened the older one", () => q("conv-subject")?.textContent?.includes("Bracket 1"), 5000);
+  check(!row("Bracket 2") || !getState().list.result?.threads.some((t) => t.subject === "Bracket 2"), "] didn't archive");
+  blur();
+  key(document.body, "[");
+  await until("[ opened the newer one", () => q("conv-subject")?.textContent?.includes("Bracket 3"), 5000);
+  await backToInbox();
+  check(!getState().list.result?.threads.some((t) => /Bracket [12]/.test(t.subject)), "[ or ] left a conversation in the Inbox");
+  click(await until("a two-message conversation", () => row("Lunch on Friday?")));
+  await until("the conversation", () => q("conversation"));
+  blur();
+  key(document.body, ";");
+  await until("; expanded every message", () => qa("message").length >= 2 && qa("message-collapsed").length === 0, 3000);
+  blur();
+  key(document.body, ":");
+  await until(": collapsed every message", () => qa("message").length === 0 && qa("message-collapsed").length >= 2, 3000);
+  blur();
+  key(document.body, ":");
+  await sleep(300);
+  check(qa("message").length === 0, ": twice expanded again");
+  await backToInbox();
+  if (getState().route.list.category) {
+    blur();
+    const first = getState().route.list.category;
+    key(document.body, "`");
+    await until("` opened the next tab", () => getState().route.list.category !== first, 3000);
+    blur();
+    key(document.body, "~");
+    await until("~ went back", () => getState().route.list.category === first, 3000);
+  }
+});
+
 step("reading pane: right of inbox shows the conversation beside the list", async () => {
   click(await el("settings-gear"));
   click(await el("qs-pane-right"));
