@@ -192,8 +192,8 @@ From `app/src/core/shortcuts.ts`; the web client's own list (its help sheet) is 
 | K-12 | Navigation | `u` Back to threadlist | unverified | | |
 | K-13 | Navigation | `n` Next message in open conversation | unverified | | |
 | K-14 | Navigation | `p` Previous message in open conversation | unverified | | |
-| K-15 | Navigation | ``` Go to next inbox section | missing | Backtick should move between Priority/Multiple Inbox sections. | app/src/core/shortcuts.ts defines next-section; app/src/App.tsx runCommand has no case for it (the key does nothing) |
-| K-16 | Navigation | `~` Go to previous inbox section | missing | Tilde, as K-15. | app/src/core/shortcuts.ts defines prev-section; app/src/App.tsx runCommand has no case for it |
+| K-15 | Navigation | ``` Go to next inbox section | unverified | Courier fixed in 45884aa (the key now acts as Google's published list says); confirm in the web client's ? sheet | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
+| K-16 | Navigation | `~` Go to previous inbox section | unverified | Courier fixed in 45884aa (the key now acts as Google's published list says); confirm in the web client's ? sheet | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
 | K-17 | Actions | `,` Move focus to toolbar | unverified | | |
 | K-18 | Actions | `x` Select conversation | unverified | | |
 | K-19 | Actions | `s` Toggle star / rotate among stars | unverified | | |
@@ -208,18 +208,18 @@ From `app/src/core/shortcuts.ts`; the web client's own list (its help sheet) is 
 | K-28 | Actions | `f` Forward | unverified | | |
 | K-29 | Actions | `Shift+F` Forward in a new window | differs | Opens no separate window. | app/src/App.tsx:332-333 'forward-window' = inline forward |
 | K-30 | Actions | `Shift+N` Update conversation | unverified | | |
-| K-31 | Actions | `]` Archive and go to older | differs | Direction ignored. | app/src/App.tsx:345-347 archive-older only calls act('archive'); where it goes follows Settings > Advanced auto-advance (default: list), state/actions.ts:186- |
-| K-32 | Actions | `[` Archive and go to newer | differs | Direction ignored. | app/src/App.tsx:348-350 archive-newer = act('archive') |
+| K-31 | Actions | `]` Archive and go to older | unverified | Courier fixed in 45884aa (the key now acts as Google's published list says); confirm in the web client's ? sheet | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
+| K-32 | Actions | `[` Archive and go to newer | unverified | Courier fixed in 45884aa (the key now acts as Google's published list says); confirm in the web client's ? sheet | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
 | K-33 | Actions | `z` Undo last action | unverified | | |
 | K-34 | Actions | `Shift+I` Mark as read | unverified | | |
 | K-35 | Actions | `Shift+U` Mark as unread | unverified | | |
-| K-36 | Actions | `_` Mark unread from the selected message | missing | Underscore does nothing. | app/src/core/shortcuts.ts defines mark-unread-from-here; app/src/App.tsx runCommand has no case (the menu item exists: state/actions.ts:377) |
+| K-36 | Actions | `_` Mark unread from the selected message | unverified | Courier fixed in 45884aa (the key now acts as Google's published list says); confirm in the web client's ? sheet | app/src/core/shortcuts.ts defines mark-unread-from-here; app/src/App.tsx runCommand has no case (the menu item exists: state/actions.ts:377) |
 | K-37 | Actions | `+` Mark as important | unverified | | |
 | K-38 | Actions | `=` Mark as important | unverified | | |
 | K-39 | Actions | `-` Mark as not important | unverified | | |
 | K-40 | Actions | `b` Snooze | unverified | | |
-| K-41 | Actions | `;` Expand entire conversation | differs | Idempotent on the web; here pressing ; twice collapses. | app/src/App.tsx:363-366 clicks the Expand all/Collapse all toggle |
-| K-42 | Actions | `:` Collapse entire conversation | differs | Pressing : when already collapsed expands. | app/src/App.tsx:363-366 same toggle as K-41 |
+| K-41 | Actions | `;` Expand entire conversation | unverified | Courier fixed in 45884aa (the key now acts as Google's published list says); confirm in the web client's ? sheet | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
+| K-42 | Actions | `:` Collapse entire conversation | unverified | Courier fixed in 45884aa (the key now acts as Google's published list says); confirm in the web client's ? sheet | e2e "keyboard: ] and [ archive and open the older or newer one; …" |
 | K-43 | Jumping | `g i` Go to Inbox | unverified | | |
 | K-44 | Jumping | `g s` Go to Starred conversations | unverified | | |
 | K-45 | Jumping | `g b` Go to Snoozed conversations | unverified | | |
