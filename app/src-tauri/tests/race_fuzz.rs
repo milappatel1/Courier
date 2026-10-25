@@ -1892,7 +1892,7 @@ fn replay_seed(seed: u64, steps: Vec<Step>) {
 }
 
 #[test]
-#[ignore = "engine bug: Undo of an offline conversation change, after it went out, queues the literal inverse for the whole conversation"]
+#[ignore = "engine bug (issue #7): Undo of an offline conversation change, after it went out, queues the literal inverse for the whole conversation"]
 fn undoing_a_conversation_change_made_offline_after_it_went_out_puts_back_what_each_message_had() {
     replay(vec![
         Step::Offline { a: 0 },
@@ -1905,7 +1905,7 @@ fn undoing_a_conversation_change_made_offline_after_it_went_out_puts_back_what_e
 }
 
 #[test]
-#[ignore = "engine bug: flush_queue sends conversation changes before message changes, whatever their order"]
+#[ignore = "engine bug (issue #6): flush_queue sends conversation changes before message changes, whatever their order"]
 fn a_conversation_change_made_offline_goes_out_after_the_undo_made_before_it_not_before() {
     replay(vec![
         Step::Change { a: 0, t: OLD_THREAD, op: Op::ToInbox },
@@ -1930,7 +1930,7 @@ fn a_server_listing_that_ingests_a_conversation_while_it_is_being_binned_does_no
 }
 
 #[test]
-#[ignore = "engine bug: Undo of a conversation change that waits offline, started as the connection comes back, is lost"]
+#[ignore = "engine bug (issue #8): Undo of a conversation change that waits offline, started as the connection comes back, is lost"]
 fn undo_of_a_waiting_change_as_the_connection_comes_back_is_not_lost() {
     replay_seed(
         17,
@@ -1944,7 +1944,7 @@ fn undo_of_a_waiting_change_as_the_connection_comes_back_is_not_lost() {
 }
 
 #[test]
-#[ignore = "engine bug: a change made elsewhere is lost from the cache when an Undo races the sync that brings it, and no later sync repairs it"]
+#[ignore = "engine bug (issue #9): a change made elsewhere is lost from the cache when an Undo races the sync that brings it, and no later sync repairs it"]
 fn a_remote_trash_is_not_lost_from_the_cache_when_an_undo_races_the_sync_that_brings_it() {
     replay_seed(
         20207,

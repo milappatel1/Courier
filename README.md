@@ -81,6 +81,9 @@ scheduled mail need Courier running (it can be in the background) at the chosen 
   sender's web page; it can take a sender a few days to stop.
 - A phone app can keep showing mail you've already deleted elsewhere until it refreshes; the server (and
   Courier) are the reference.
+- Rare races found by testing, not yet fixed: Undo of a change made offline can go out in the wrong order or
+  restore the wrong labels, an Undo made just as the connection returns can be lost, and another device's change
+  can be missed until a full resync (issues #6 to #9).
 - Builds are signed ad hoc, not notarised (see Install), so macOS may ask for your Keychain password once after
   each update.
 

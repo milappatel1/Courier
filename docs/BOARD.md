@@ -6,7 +6,6 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 
 ## Doing
 
-- Fix the fuzzer's engine bugs: done when each `#[ignore]` repro in app/src-tauri/tests/race_fuzz.rs passes un-ignored and the fuzzer's KNOWN list is empty. A: offline conversation change sent before an earlier Undo's rows (flush order). B: Undo after the offline change went out inserts the literal inverse. C: server listing that ingests a conversation while it's binned lists it in the old view. D: Undo of a waiting change racing the reconnect flush. E: remote change lost when an Undo's ack stamps a message newer than the sync's read · app/src-tauri/src · main session (debugger if one beats two attempts)
 - P12.2 differential runner (Milap allowed the recon scripts 2026-10-25): done when the same action scripts run in the web client (recon account) and in Courier with matching rows, counts, toasts and focus · research/tools · builder (web side waits until the read-only sweep frees the recon tab)
 - Visual diff tooling (L-06): done when research/tools/visual-diff.mjs compares Courier and web goldens under a LOOK-SPEC threshold with masks, and states over it are listed · research/tools · builder
 
@@ -18,6 +17,7 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 
 ## Backlog
 
+- Fuzzer engine bugs, deferred by Milap until there's budget ("a rainy day"): #6 offline conversation change sent before an earlier Undo (A), #7 Undo after an offline change went out puts wrong labels (B), #8 Undo racing the reconnect flush is lost (D), #9 another device's change lost when an Undo races the sync (E). Each has an `#[ignore]`d repro in app/src-tauri/tests/race_fuzz.rs naming its issue; done when the repro passes un-ignored and the issue is closed · app/src-tauri/src · debugger
 - Settings ▸ General ▸ Language selector stays (English US/UK) for languages Milap may add later; ST-01 stays a deliberate gap until then · app · main session
 - Security gate: `/claude-security` on the changes, `trivy fs`, supply-chain-risk-auditor, differential-review, rust-review · repo · reviewer
 - Ultracode gates: final parity sweep and release-gate audit (ask Milap to switch ultracode on, then off) · main session
@@ -26,6 +26,8 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 - Cleanup list for Milap after the release (what of Courier leaves the Mac), asked before deleting · main session
 
 ## Done
+
+- Fuzzer bug C fixed: a server listing no longer shows a conversation being binned in its old view · 1deab7c
 
 - Race fuzzer (P12.4): green in normal runs (60 seeds × 40 steps, 24 s); long run 710 seeds × 80 steps; each invariant shown able to fail; found engine bugs A–E (ignored repros in race_fuzz.rs) · 09dea06, cdefe75, 5e0b02c
 - Parity sweep fixes: Scheduled note, empty-view wording, search chips, label menu order, message/compose menu words and order, Switch to simple toolbar, Stars help text (V-08, V-14, H-02, N-05, CV-03, B-05, CP-01, CP-05, T-05, ST-14) · 2026-10-25
