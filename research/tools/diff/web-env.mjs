@@ -323,7 +323,7 @@ export async function createWebEnv({ s, known, mailbox }) {
     },
 
     async compose({ to, subject, body }) {
-      await click("Compose", `[...document.querySelectorAll("[role=button]")].find((e) => window.__d.vis(e) && e.textContent.trim() === "Compose")`);
+      await click("Compose", `[...document.querySelectorAll("div.T-I-KE[role=button]")].find((e) => e.getClientRects().length > 0 && e.textContent.trim() === "Compose")`);
       await until("the compose window", `[...document.querySelectorAll("div[role=dialog]")].some(window.__d.vis)`);
       await sleep(500);
       if (to) {
