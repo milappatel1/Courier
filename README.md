@@ -76,6 +76,7 @@ scheduled mail need Courier running (it can be in the background) at the chosen 
   then takes them back. Offline, acting on every conversation in a view changes the ones on your Mac only (older
   ones need a connection) and can't be undone; creating or editing labels needs a connection.
 - Gmail's Purchases category isn't available through the Gmail API, so it has no tab or label in Courier.
+- Courier is in English only; the web client's other interface languages aren't offered.
 - Unsubscribe uses the sender's one-click link (RFC 8058), else an unsubscribe email from your account, else the
   sender's web page; it can take a sender a few days to stop.
 - A phone app can keep showing mail you've already deleted elsewhere until it refreshes; the server (and

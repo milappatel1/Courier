@@ -8,7 +8,7 @@ and lists the open ones; that count plus the total pixel diff is the parity metr
 Status: **matches** (observed in both, with the test that proves it) · **differs** (both have it, behaviour or
 look differs) · **missing** (Courier lacks it) · **unverified** (not yet compared this round) · **✗ Google-only**
 (left out on purpose: Gemini, Chat, Meet, the side panel, Drive/Photos, confidential mode, add-ons, smart compose,
-and features the mail API doesn't expose).
+and features the mail API doesn't expose). **✗ left out** (Milap's call: deliberately not re-created).
 
 ## Counts
 
@@ -127,7 +127,7 @@ The web client's tabs and settings as harvested from the recon profile on 2026-1
 
 | ID | Area | Item | Status | Evidence | Test |
 | --- | --- | --- | --- | --- | --- |
-| ST-01 | General | Language | missing | The selector changes nothing: the UI is English only. | app/src/ui/Settings.tsx:184-190 offers English (US) and English (UK); state/settings.ts has language but no reader |
+| ST-01 | General | Language | ✗ left out | Milap decided 2026-10-25: Courier stays English only (the web client offers 60+ UI languages); listed in README Known limitations | app/src/ui/Settings.tsx:184-190 offers English (US) and English (UK); state/settings.ts has language but no reader |
 | ST-02 | General | Maximum page size (10, 15, 20, 25, 50, 100) | matches | settings-general.json: Show 10 15 20 25 50 100 conversations per page | app/src/ui/Settings.tsx:192-200; e2e run.ts:739 (25 -> 50) |
 | ST-03 | General | Undo Send (5, 10, 20, 30 s) | matches | settings-general.json: Send cancellation period 5 10 20 30 seconds | app/src/ui/Settings.tsx:201-208; state/compose.ts:350; e2e run.ts:289 |
 | ST-04 | General | Default reply behaviour | matches | settings-general.json: Reply / Reply all | app/src/ui/Settings.tsx:209-212; Conversation.tsx:464 |

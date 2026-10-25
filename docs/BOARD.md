@@ -15,7 +15,6 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 - Perf budgets (P12.5): done when `app/scripts/perf.sh` runs on a quiet Mac, budgets are set in `app/src/e2e/perf-budgets.json`, and research/PERF.md + VERIFY-P12.5.md are written · app/scripts · builder
 - P12.2 differential runner: done when the same action scripts run in the web client (recon account) and in Courier with matching rows, counts, toasts and focus · research/tools · builder (needs Milap's yes on the recon-script allow rules, or a waiver)
 - Parity rows (read-only sweep running in a researcher agent): done when the 112 unverified rows are checked read-only in the recon profile and the 10 that differ are fixed · research/PARITY.md · builder
-- Language (ST-01): needs Milap's call (the web client offers 60+ UI languages; Courier is English only) · app · main session
 
 ## Backlog
 
@@ -26,6 +25,8 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 - Cleanup list for Milap after the release (what of Courier leaves the Mac), asked before deleting · main session
 
 ## Done
+
+- Language (ST-01): Milap chose English only; PARITY.md marks it "✗ left out", README Known limitations says so · 2026-10-25
 
 - Vacation responder message is a rich editor (bold, italic, underline, link, lists, clear), saved as HTML plus plain text (ST-23) · 2026-10-25
 
