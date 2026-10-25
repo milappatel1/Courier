@@ -213,13 +213,11 @@ function ListToolbar() {
             toolbarSwitch,
           ]
       : [
+          // As in the web client: Empty Trash and Delete all spam are the banner's, the toolbar switch is in the
+          // selection menu.
           { label: "Mark all as read", icon: "drafts", disabled: !threads.some((t) => t.unread), run: () => (selectWhere("all"), void act("read")) },
-          ...(label === "TRASH" ? [{ label: "Empty Trash now", icon: "delete_forever", run: () => void emptyLabel(accountId, "TRASH") }] : []),
-          ...(label === "SPAM" ? [{ label: "Delete all spam messages now", icon: "delete_forever", run: () => void emptyLabel(accountId, "SPAM") }] : []),
           { sep: true },
           { label: "Select messages to see more actions", disabled: true },
-          { sep: true },
-          toolbarSwitch,
         ];
   const inTrash = label === "TRASH";
   const inSpam = label === "SPAM";

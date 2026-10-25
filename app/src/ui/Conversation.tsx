@@ -343,27 +343,28 @@ function Message({
     const names = [...m.to, ...m.cc].map((a) => (a.email.toLowerCase() === me ? "me" : a.name || a.email));
     return names.length ? `to ${names.slice(0, 3).join(", ")}${names.length > 3 ? ` +${names.length - 3}` : ""}` : "to undisclosed recipients";
   }, [m, acct]);
+  // In the web client's order and words (its Translate is a Google service); Share… is the Mac's own.
   const items = (): MenuEntry[] => [
     { label: "Reply", icon: "reply", run: () => onReply("reply") },
     ...(m.to.length + m.cc.length > 1 ? [{ label: "Reply all", icon: "reply_all", run: () => onReply("reply-all") }] : []),
     { label: "Forward", icon: "forward", run: () => onReply("forward") },
-    { label: "Forward as attachment", icon: "attach_email", run: () => void forwardAsAttachment(accountId, [m]) },
     { sep: true },
-    { label: "Filter messages like this", icon: "filter_alt", run: () => setFilter({ from: m.fromEmail }) },
-    { label: "Print", icon: "print", run: () => void api.windowOpen("print", { accountId, threadId: m.threadId, messageId: m.id }, "Print") },
     {
-      label: "Delete this message",
+      label: "Delete",
       icon: "delete",
       run: () => void api.modifyMessages(accountId, [m.id], ["TRASH"], []).then(() => loadThread({ accountId, threadId: m.threadId })),
     },
+    { label: "Mark as unread", icon: "mark_email_unread", run: () => void markUnreadFromHere({ accountId, threadId: m.threadId }, index) },
+    { sep: true },
     ...(!fromSelf ? [{ label: `Block "${name}"`, icon: "block", run: () => void blockSender(accountId, m.fromEmail, name) }] : []),
     { label: "Report spam", icon: "report", run: () => void act("spam", [{ accountId, threadIds: [m.threadId] }]) },
     { label: "Report phishing", icon: "phishing", run: () => void act("phishing", [{ accountId, threadIds: [m.threadId] }]) },
     { sep: true },
-    { label: "Show original", icon: "code", run: () => ui({ showOriginal: { accountId, messageId: m.id } }) },
+    { label: "Filter messages like this", icon: "filter_alt", run: () => setFilter({ from: m.fromEmail }) },
+    { label: "Print", icon: "print", run: () => void api.windowOpen("print", { accountId, threadId: m.threadId, messageId: m.id }, "Print") },
     { label: "Download message", icon: "download", run: () => void downloadEml(accountId, m) },
-    { label: "Mark unread from here", icon: "mark_email_unread", run: () => void markUnreadFromHere({ accountId, threadId: m.threadId }, index) },
-    ...(m.listUnsubscribe ? [{ label: "Unsubscribe", icon: "unsubscribe", run: () => doUnsubscribe(accountId, m) }] : []),
+    { label: "Show original", icon: "code", run: () => ui({ showOriginal: { accountId, messageId: m.id } }) },
+    { sep: true },
     { label: "Share…", icon: "ios_share", run: () => void shareMessage(accountId, m) },
   ];
   if (!expanded) {
