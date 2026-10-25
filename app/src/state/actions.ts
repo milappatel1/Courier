@@ -184,14 +184,14 @@ async function spamAndUnsubscribe(targets: Target[], offers: SpamOffer[]) {
 }
 
 /** After removing the open conversation from view: next one (auto-advance) or back to the list. */
-function advanceAfter(leaving: boolean) {
+function advanceAfter(leaving: boolean, toward?: "older" | "newer") {
   const s = getState();
   if (!leaving || !s.route.thread) return;
-  const mode = s.settings.autoAdvance;
+  const mode = toward ?? s.settings.autoAdvance;
   if (mode === "list" || !stepThread(mode === "older" ? 1 : -1)) closeThread();
 }
 
-export async function act(kind: ActionKind, targets: Target[] = currentTargets(), opts: { asked?: boolean; note?: string } = {}) {
+export async function act(kind: ActionKind, targets: Target[] = currentTargets(), opts: { asked?: boolean; note?: string; advance?: "older" | "newer" } = {}) {
   const count = targets.reduce((n, t) => n + t.threadIds.length, 0);
   if (!count) return;
   if (kind === "spam" && !opts.asked && (await askSpamOrUnsubscribe(targets, count))) return;
@@ -217,7 +217,7 @@ export async function act(kind: ActionKind, targets: Target[] = currentTargets()
   ]);
   hideThreads(moved);
   const wasOpen = s.route.thread;
-  advanceAfter(leaving && !!wasOpen && targets.some((t) => t.threadIds.includes(wasOpen.threadId)));
+  advanceAfter(leaving && !!wasOpen && targets.some((t) => t.threadIds.includes(wasOpen.threadId)), opts.advance);
   let ok = false;
   let queued = false;
   const changes: { accountId: string; change: number }[] = [];

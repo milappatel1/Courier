@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { isTypingTarget, ShortcutMatcher, type ShortcutAction } from "./core/shortcuts";
 import { api, on, type OpenItem } from "./ipc/api";
-import { act, currentTargets, emptyLabel, selectWhere, toggleStar } from "./state/actions";
+import { act, currentTargets, emptyLabel, markUnreadFromHere, selectWhere, toggleStar } from "./state/actions";
 import { composeWithFiles, forwardAsAttachment, openCompose, openMailto, openReply } from "./state/compose";
 import {
   closeThread,
@@ -25,7 +25,9 @@ import {
   useMail,
   visibleThreads,
   accountById,
+  hasTabs,
 } from "./state/store";
+import { CATEGORIES } from "./core/labels";
 import { Dialogs, Toasts } from "./ui/Dialogs";
 import { ComposeDock } from "./ui/Compose";
 import { Conversation, shareOpenConversation } from "./ui/Conversation";
@@ -343,11 +345,9 @@ export function runCommand(a: ShortcutAction | string) {
       void api.syncNow(s.accountId === "all" ? null : s.accountId);
       return void loadList();
     case "archive-older":
-      void act("archive");
-      return;
+      return void act("archive", currentTargets(), { advance: "older" });
     case "archive-newer":
-      void act("archive");
-      return;
+      return void act("archive", currentTargets(), { advance: "newer" });
     case "undo":
       return void runUndo();
     case "mark-read":
@@ -362,8 +362,27 @@ export function runCommand(a: ShortcutAction | string) {
       return snoozeOpener?.();
     case "expand-all":
     case "collapse-all":
-      document.querySelector<HTMLButtonElement>('[data-testid="expand-all"]')?.click();
+      window.dispatchEvent(new CustomEvent("courier:expand-all", { detail: a === "expand-all" }));
       return;
+    case "next-section":
+    case "prev-section": {
+      // With inbox tabs, the next or previous tab.
+      if (thread || s.route.list.label !== "INBOX" || s.route.list.query || !hasTabs()) return;
+      const cats = s.settings.categories;
+      const tabs: string[] = CATEGORIES.filter((c) => c.key === "primary" || cats[c.key as keyof typeof cats]).map((c) => c.key);
+      const at = tabs.indexOf(s.route.list.category ?? "primary");
+      return go({ label: "INBOX", category: tabs[(at + (a === "next-section" ? 1 : tabs.length - 1)) % tabs.length] });
+    }
+    case "mark-unread-from-here": {
+      // From the message at the top of the conversation's view.
+      const d = s.thread.detail;
+      if (!thread || !d) return;
+      const shown = [...document.querySelectorAll<HTMLElement>('[data-testid="message"]')];
+      const below = shown.findIndex((m) => m.getBoundingClientRect().top > 120);
+      const el = below === -1 ? shown.at(-1) : shown[Math.max(0, below - 1)];
+      const i = d.messages.findIndex((m) => m.id === el?.dataset.message);
+      return void markUnreadFromHere(thread, i === -1 ? d.messages.length - 1 : i);
+    }
     case "more-actions":
       document.querySelector<HTMLButtonElement>(thread ? '[data-testid="conv-more"]' : '[data-testid="tb-more"]')?.click();
       return;

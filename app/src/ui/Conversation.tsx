@@ -65,6 +65,12 @@ export function Conversation({ split }: { split?: boolean }) {
     setOpen({});
     setExpandAll(null);
   }, [ref?.threadId]);
+  useEffect(() => {
+    // The ; and : shortcuts.
+    const f = (e: Event) => (setExpandAll((e as CustomEvent<boolean>).detail), setOpen({}));
+    window.addEventListener("courier:expand-all", f);
+    return () => window.removeEventListener("courier:expand-all", f);
+  }, []);
   if (!ref) return null;
   const msgs = (detail?.messages ?? []).filter((m) => !m.labels.includes("TRASH") || (detail?.messages ?? []).every((x) => x.labels.includes("TRASH")));
   const layout = conversationLayout(
