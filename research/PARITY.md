@@ -149,7 +149,7 @@ The web client's tabs and settings as harvested from the recon profile on 2026-1
 | ST-20 | General | Signature (per address, defaults for new and replies) | unverified | | |
 | ST-21 | General | Personal level indicators | matches | settings-general.json: No indicators / Show indicators (> and >>) | app/src/ui/Settings.tsx:427-436; ListView.tsx:922; Rust engine.rs:731; e2e run.ts:1894 |
 | ST-22 | General | Snippets | matches | settings-general.json: Show snippets / No snippets | app/src/ui/Settings.tsx:438-447; ListView.tsx:952 |
-| ST-23 | General | Vacation responder | differs | Every field present; the Message is a plain textarea, the web has a rich-text editor. No test. | app/src/ui/Settings.tsx:570-632 (plain textarea for Message) |
+| ST-23 | General | Vacation responder | matches | captures/web/settings-general.json: on/off, First day, Last day, Subject, Message (rich editor), Only send to my Contacts | e2e "Settings ▸ General ▸ Vacation responder: the message is rich text…" |
 | ST-24 | Labels | System labels show/hide/show if unread with the web client's defaults | matches | settings-labels.json and VERIFY-P10 finding 13 (web defaults observed) | e2e "Settings ▸ Labels: show, hide…" |
 | ST-25 | Labels | "Show in IMAP" per label | ✗ Google-only | Not exposed by the mail API | — |
 | ST-26 | Labels | Categories: show in label list (default hide) | matches | Recon defaults; C-04 | e2e "counts mean…" |

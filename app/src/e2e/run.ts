@@ -36,6 +36,7 @@ interface ServerState {
   imapFolders: Record<string, number>;
   notifications: { title: string; body: string; accountId: string; threadId: string }[];
   opened: string[];
+  vacation?: { enableAutoReply?: boolean; responseBodyHtml?: string; responseBodyPlainText?: string };
 }
 
 const STEP_TIMEOUT = 45_000;
@@ -925,6 +926,31 @@ step("Settings ▸ Advanced ▸ Custom keyboard shortcuts: a key chosen in the K
   await until("archived by the custom key", async () => (await msgsWith("Custom key")).every((m) => !m.labels.includes("INBOX")) || null, 20_000);
   await setSetting("customShortcuts", false);
   await setSetting("shortcutKeys", {});
+});
+
+step("Settings ▸ General ▸ Vacation responder: the message is rich text and reaches the server as HTML and plain text", async () => {
+  click(await el("settings-gear"));
+  click(await el("see-all-settings"));
+  click(await el("vacation-on"));
+  type(await el("vacation-subject"), "Away");
+  const body = await el("vacation-body");
+  setHtml(body, "<div>Back on Monday</div>");
+  const range = document.createRange();
+  range.selectNodeContents(body);
+  getSelection()!.removeAllRanges();
+  getSelection()!.addRange(range);
+  click(await el("vacation-body-format_bold"));
+  check(!!body.querySelector("b, strong"), `not bold: ${body.innerHTML}`);
+  click(await el("settings-save"));
+  const v = await until("saved on the server", async () => {
+    const x = (await server()).vacation;
+    return x?.enableAutoReply && /<(b|strong)>/.test(x.responseBodyHtml ?? "") ? x : null;
+  });
+  check(v.responseBodyPlainText?.trim() === "Back on Monday", `plain text: ${v.responseBodyPlainText}`);
+  click(await until("off", () => document.querySelector<HTMLInputElement>('input[name="vr"]:not(:checked)')));
+  click(await el("settings-save"));
+  await until("off on the server", async () => (await server()).vacation?.enableAutoReply === false || null);
+  await backToInbox();
 });
 
 step("reading pane: right of inbox shows the conversation beside the list", async () => {

@@ -5,6 +5,7 @@ import { describeActions, describeCriteria, type FilterAction, type FilterCriter
 import { exportFiltersXml, importedAction, importFiltersXml, type FilterActionLike, type FilterCriteriaLike, type ImportedFilter } from "../core/filtersxml";
 import { download } from "../state/files";
 import { leafName } from "../core/labels";
+import { htmlToText, textToHtml } from "../core/text";
 import { api, errorText, failureText } from "../ipc/api";
 import type { Account, ImapAccountConfig, Label, Signature } from "../ipc/types";
 import {
@@ -566,6 +567,67 @@ function SignaturesRow({ account }: { account: Account }) {
   );
 }
 
+/** A rich text box with the web client's basic formatting bar (vacation message). */
+function RichBox({ html, onChange, testId, label }: { html: string; onChange: (html: string) => void; testId: string; label: string }) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (box.current && box.current.innerHTML !== html) box.current.innerHTML = html;
+    // Set once from outside: after that the box holds the text and reports each change.
+  }, []);
+  const cmd = (c: string, value?: string) => {
+    box.current?.focus();
+    document.execCommand(c, false, value);
+    onChange(box.current?.innerHTML ?? "");
+  };
+  const tools: [string, string, () => void][] = [
+    ["format_bold", "Bold", () => cmd("bold")],
+    ["format_italic", "Italic", () => cmd("italic")],
+    ["format_underlined", "Underline", () => cmd("underline")],
+    [
+      "link",
+      "Link",
+      () => {
+        const url = window.prompt("Web address");
+        if (url) cmd("createLink", url);
+      },
+    ],
+    ["format_list_numbered", "Numbered list", () => cmd("insertOrderedList")],
+    ["format_list_bulleted", "Bulleted list", () => cmd("insertUnorderedList")],
+    ["format_clear", "Remove formatting", () => cmd("removeFormat")],
+  ];
+  return (
+    <div style={{ border: "1px solid var(--input-border)", borderRadius: 4 }}>
+      <div style={{ display: "flex", gap: 2, padding: 2, borderBottom: "1px solid var(--input-border)" }} role="toolbar" aria-label={`${label} formatting`}>
+        {tools.map(([icon, name, run]) => (
+          <button
+            key={icon}
+            type="button"
+            className="icon-btn"
+            aria-label={name}
+            data-tip={name}
+            data-testid={`${testId}-${icon}`}
+            onMouseDown={(e) => (e.preventDefault(), run())}
+          >
+            <Icon name={icon} size={18} />
+          </button>
+        ))}
+      </div>
+      <div
+        ref={box}
+        className="editor selectable"
+        contentEditable
+        suppressContentEditableWarning
+        role="textbox"
+        aria-multiline="true"
+        aria-label={label}
+        style={{ minHeight: 100, padding: 8 }}
+        onInput={(e) => onChange(e.currentTarget.innerHTML)}
+        data-testid={testId}
+      />
+    </div>
+  );
+}
+
 interface Vacation {
   enableAutoReply: boolean;
   responseSubject: string;
@@ -628,11 +690,12 @@ function VacationRow({ account, ctl }: { account: Account; ctl: React.MutableRef
             />
             <span>Subject:</span>
             <input type="text" value={v.responseSubject} onChange={(e) => setV({ ...v, responseSubject: e.target.value })} data-testid="vacation-subject" />
-            <span>Message:</span>
-            <textarea
-              value={v.responseBodyPlainText ?? (v.responseBodyHtml ?? "").replace(/<[^>]+>/g, "")}
-              onChange={(e) => setV({ ...v, responseBodyPlainText: e.target.value, responseBodyHtml: undefined })}
-              data-testid="vacation-body"
+            <span style={{ alignSelf: "start", paddingTop: 6 }}>Message:</span>
+            <RichBox
+              html={v.responseBodyHtml ?? textToHtml(v.responseBodyPlainText ?? "")}
+              onChange={(h) => setV({ ...v, responseBodyHtml: h, responseBodyPlainText: htmlToText(h) })}
+              testId="vacation-body"
+              label="Vacation message"
             />
           </div>
           <label className="opt" style={{ marginTop: 6 }}>
