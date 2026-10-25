@@ -236,3 +236,58 @@ Filled variants (FILL 1) for the active nav item and starred stars.
   another 16 px inside it, so tabs are 244); the conversation keeps 32 px (message dividers stop at x = 1232,
   the message action buttons hang 10 px into the gutter).
 - Search box: 624 wide at 1280 (it is `flex: 1` with a 720 max and shares the row with the right-hand buttons).
+
+## Visual diff threshold
+
+Courier's look is compared with the web client's by image diff (`PARITY.md` L-06). The threshold is **10% of ink
+pixels**, at a per-channel tolerance of **24/255** and a **1 px** neighbourhood. A state over it is a finding to fix,
+never a number to raise. Never edit a web golden to make a state pass; if a golden looks wrong, recapture it.
+
+**What is compared.** `tools/visual-diff.mjs` reads `goldens/web/<name>-1x.png` and `goldens/courier/<name>-1x.png`
+(same state names, same viewport; Courier is captured with `tools/plans/courier.json`, which goes through the
+browser preview's mock mailbox). A pixel differs when no pixel within 1 px in the other image matches it within the
+tolerance, checked both ways, so a one-pixel shift or different antialiasing of the same glyph passes and a real
+displacement does not. Ink is a compared pixel that is not near-white in either image (text, icons, borders, fills).
+The score is differing / ink, so a mostly blank page cannot hide a misplaced icon: 0% means every ink pixel
+coincides, 100% means none does. "area %" (differing / all compared pixels) is printed for reference only.
+
+**Why 10%, 24 and 1 px (measured).**
+- 0 px and 1 px shifts of Courier's own captures score 0.0% on four different states; 2 px scores 19 to 46%, 4 px
+  vertical 36 to 68%. So anything between about 1% and 18% gives the same verdicts on displacement.
+- The noise floor between the web's Chrome and the capture Chrome is 4.4% on the one region where both sides place
+  identical glyphs on identical pixels (the toolbar's checkbox, refresh and more icons: 10 of 228 ink pixels). The
+  threshold sits above that floor and below the smallest visible displacement, so it is neither tuned to pass nor to fail.
+- Tolerance 24 absorbs the read-row tint (`#f2f6fc` against white is 13) and colour-managed rendering; it does not
+  absorb a `#444746` icon drawn as `#202124` (the header's search icon: 48 against 0 in the darkest pixel).
+
+**How masks are chosen.** A rectangle is masked when it is Google-only, depends on the mailbox, or is a layout of the
+web capture that Courier does not have, and for no other reason. Masks live in `STATES`/`BASE` in
+`tools/visual-diff.mjs` as rectangles in the web golden's coordinates, applied to both images:
+- Google-only: the logo, status pill, Help, Settings, Gemini spark, Upgrade, app grid and avatar (the whole header
+  except the left end of the search box), the Chat/Meet rail, the right side panel, the input-tools keyboard button.
+- Mailbox-dependent: every list row (sender, subject, snippet, date, chips, star state, row count, row heights), the
+  footer (storage bar, Terms/Privacy, last account activity), page counts and the newer/older arrows, nav counts and
+  the label and category entries below Drafts, the conversation's message header and label chips, the blocked
+  sender's name in the message menu. Overlays on top of rows (menus, compose, the advanced-search dialog, quick
+  settings) and the hovered or selected row's end cells are carved back out with `KEEP` so they are compared.
+- Capture geometry: the web goldens have the 68 px Chat/Meet rail and the 40 px side panel, Courier does not. The
+  Courier plan reserves the same gutters (12 px left with the nav collapsed, 68 px open, 40 px right) so the main
+  panels have equal boxes, and `visual-diff.mjs` shifts the header's search box (56 px with the nav collapsed) and
+  the two overlays named in `KEEP` by the measured offset. Every such shift is written next to its rectangle.
+- Not masked: anything Courier lacks or draws differently. Missing chips, tabs or buttons are findings.
+
+**What a pass does not prove.** The mock mailbox is not the recon mailbox, so row styling (tint, weight, chips,
+attachment chips) is not covered by L-06 until both sides hold the same mail; `research/look/` measurements and the
+e2e checks cover rows.
+
+**Run it.**
+```
+npm --prefix app run dev &                       # port 1430
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --remote-debugging-port=9224 \
+  --user-data-dir=<new scratch dir> http://localhost:1430/browser-preview.html &
+node research/tools/goldens.mjs courier research/tools/plans/courier.json   # about 5 min, 32 states
+node research/tools/visual-diff.mjs [--only <substring>] [--threshold 10] [--tolerance 24] [--radius 1] [--json]
+```
+It prints the table, writes `goldens/diff/<name>.png` (red = differs, blue = masked) and `<name>-side.png`
+(web | Courier | diff), and exits 1 when any state is over the threshold. Web goldens are recaptured with
+`goldens.mjs web tools/plans/web.json` against the recon profile on port 9222.

@@ -1,0 +1,38 @@
+{
+ "name": "delete-spam-undo",
+ "about": "Delete and Report spam with the toolbar, each followed by Undo.",
+ "cleanup": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "delete",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "undo"
+  },
+  {
+   "do": "spam",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "undo"
+  }
+ ]
+}

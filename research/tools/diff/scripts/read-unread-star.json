@@ -1,0 +1,60 @@
+{
+ "name": "read-unread-star",
+ "about": "Mark as read/unread from the toolbar and the hover button, and star from the row: unread counts, tab and nav badges.",
+ "cleanup": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "mark-unread",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "mark-read",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "mark-read",
+   "via": "hover",
+   "target": {
+    "subject": "Primary a:"
+   }
+  },
+  {
+   "do": "mark-unread",
+   "via": "hover",
+   "target": {
+    "subject": "Primary a:"
+   }
+  },
+  {
+   "do": "star",
+   "via": "row",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "unstar",
+   "via": "row",
+   "target": {
+    "subject": "Primary b:"
+   }
+  }
+ ]
+}

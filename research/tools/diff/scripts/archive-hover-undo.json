@@ -1,0 +1,28 @@
+{
+ "name": "archive-hover-undo",
+ "about": "Archive with the row's hover button, then Undo.",
+ "cleanup": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "archive",
+   "via": "hover",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "undo"
+  }
+ ]
+}

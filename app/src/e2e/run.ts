@@ -11,6 +11,7 @@ import { applyViewportSize, getState, loadLabels, setSetting, setState, visibleT
 import { flashes, recordFrames } from "./frames";
 import { layoutIssues } from "./layout";
 import "./perf"; // the "perf:" steps: they run after these when COURIER_E2E_ONLY names them, and join the report
+import "./diff"; // the "diff:" steps (differential runner against the web client): same way
 
 interface StepResult {
   name: string;

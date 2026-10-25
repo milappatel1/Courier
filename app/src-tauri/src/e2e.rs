@@ -380,11 +380,107 @@ impl E2e {
         Ok(json!({"accounts": out}))
     }
 
+    /// A mail-API account holding the recon account's seed mailbox (research/tools/diff/mailbox.json, which mirrors the plan in
+    /// recon.rs), for the differential runner: `threads` is a list of `{messages: [{subject, from, hoursAgo, category, flags}]}`, flags
+    /// `I` Inbox, `U` unread, `S` starred, `P` Important, `L` Recon/Counts, `X` Spam, `T` Trash. Signed in like the busy accounts.
+    #[cfg(debug_assertions)]
+    pub fn recon_account(&self, engine: &Arc<Engine>, args: &Value) -> Result<Value> {
+        let email = "recon@example.net";
+        // The control runs on a runtime worker, and starting a fake needs the runtime to bind its port.
+        let fake = tokio::task::block_in_place(|| tauri::async_runtime::block_on(FakeGmail::start(email, "Recon Test")));
+        let now = crate::error::now_ms();
+        let mut added = 0;
+        {
+            let mut s = fake.state.lock();
+            s.user_labels.push(json!({"id": "Label_201", "name": "Recon", "type": "user"}));
+            s.user_labels.push(json!({"id": "Label_202", "name": "Recon/Counts", "type": "user"}));
+            for (t, thread) in args["threads"].as_array().cloned().unwrap_or_default().iter().enumerate() {
+                let thread_id = crate::testsupport::fake_gmail::new_id(&mut s);
+                let first_id = format!("<diff-{t}-0@seed.example>");
+                for (k, m) in thread["messages"].as_array().cloned().unwrap_or_default().iter().enumerate() {
+                    let date = now - m["hoursAgo"].as_i64().unwrap_or(0) * 3_600_000;
+                    let mut labels = vec![m["category"].as_str().unwrap_or("CATEGORY_PERSONAL").to_string()];
+                    for f in m["flags"].as_str().unwrap_or("").chars() {
+                        labels.push(
+                            match f {
+                                'I' => "INBOX",
+                                'U' => "UNREAD",
+                                'S' => "STARRED",
+                                'P' => "IMPORTANT",
+                                'X' => "SPAM",
+                                'T' => "TRASH",
+                                'L' => "Label_202",
+                                _ => continue,
+                            }
+                            .to_string(),
+                        );
+                    }
+                    let subject = m["subject"].as_str().unwrap_or("");
+                    let subject = if k == 0 { subject.to_string() } else { format!("Re: {subject}") };
+                    let refs = if k == 0 { String::new() } else { format!("In-Reply-To: {first_id}\r\nReferences: {first_id}\r\n") };
+                    let raw = format!(
+                        "From: {}\r\nTo: Recon Test <{email}>\r\nSubject: {subject}\r\nDate: {}\r\nMessage-ID: <diff-{t}-{k}@seed.example>\r\n{refs}MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nInvented test message {} of this conversation, for checking counts.\r\n",
+                        m["from"].as_str().unwrap_or(""),
+                        chrono::DateTime::from_timestamp_millis(date).unwrap_or_default().to_rfc2822(),
+                        k + 1
+                    )
+                    .into_bytes();
+                    let id = if k == 0 { thread_id.clone() } else { crate::testsupport::fake_gmail::new_id(&mut s) };
+                    s.messages.insert(id.clone(), crate::testsupport::fake_gmail::FMsg { id, thread_id: thread_id.clone(), labels, raw, internal_date: date });
+                    added += 1;
+                }
+            }
+        }
+        let creds = engine.google_client()?;
+        let access = "recon-access".to_string();
+        fake.state.lock().access.insert(access.clone(), crate::error::now_ms() / 1000 + 86_400);
+        let id = "g-recon".to_string();
+        let ep = fake.endpoints();
+        let tokens = crate::oauth::Tokens { access_token: access, refresh_token: None, expires_at: crate::error::now_ms() / 1000 + 86_400, scope: String::new() };
+        crate::oauth::TokenManager::new(&id, ep.clone(), creds, engine.secrets.clone(), engine.http.clone()).save(&tokens)?;
+        let position = engine.db.accounts()?.len() as i64;
+        engine.db.insert_account(&crate::db::AccountRow {
+            id: id.clone(),
+            kind: "gmail".into(),
+            email: email.into(),
+            name: "Recon Test".into(),
+            color: "#1a73e8".into(),
+            position,
+            config: json!({"endpoints": ep}),
+            state: json!({}),
+            photo: None,
+            created_at: crate::error::now_ms(),
+            needs_reauth: false,
+        })?;
+        engine.start_account(&id);
+        self.extra.lock().push(fake);
+        engine.emit("accounts-changed", json!({}));
+        Ok(json!({"id": id, "email": email, "messages": added}))
+    }
+
     pub fn control(&self, engine: &Arc<Engine>, action: &str, args: &Value) -> Result<Value> {
         #[cfg(debug_assertions)]
         {
             let s = |k: &str| args[k].as_str().unwrap_or("").to_string();
             match action {
+                "recon-account" => self.recon_account(engine, args),
+                // What the recon account's fake server holds: each message's thread subject and labels (label ids named).
+                "recon-state" => {
+                    let fakes = self.extra.lock();
+                    let f = fakes.iter().find(|f| f.state.lock().email == "recon@example.net").ok_or_else(|| Error::msg("no recon account"))?;
+                    let st = f.state.lock();
+                    let names: std::collections::HashMap<String, String> = st.user_labels.iter().filter_map(|l| Some((l["id"].as_str()?.to_string(), l["name"].as_str()?.to_string()))).collect();
+                    let msgs: Vec<Value> = st
+                        .messages
+                        .values()
+                        .map(|m| {
+                            let subject = crate::mailmeta::parse_raw(&m.raw).row.subject;
+                            let labels: Vec<String> = m.labels.iter().map(|l| names.get(l).cloned().unwrap_or(l.clone())).collect();
+                            json!({"threadId": m.thread_id, "subject": subject.strip_prefix("Re: ").unwrap_or(&subject), "labels": labels})
+                        })
+                        .collect();
+                    Ok(json!({"messages": msgs}))
+                }
                 "deliver-gmail" => {
                     // "minutesAgo" dates it in the past (the newest of a sender's messages decides some things).
                     let when = chrono::Local::now() - chrono::Duration::minutes(args["minutesAgo"].as_i64().unwrap_or(0));

@@ -1,0 +1,35 @@
+{
+ "name": "search",
+ "about": "Searches: by sender, unread, a seeded subject; then back to the Inbox.",
+ "cleanup": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "search",
+   "q": "from:northwind"
+  },
+  {
+   "do": "search",
+   "q": "is:unread category:updates"
+  },
+  {
+   "do": "search",
+   "q": "Primary a"
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ]
+}

@@ -1,0 +1,46 @@
+{
+ "name": "select-all",
+ "about": "Select all on a page, then 'Select all N conversations' in All Mail; clear the selection. Nothing is changed.",
+ "cleanup": [
+  {
+   "do": "clear-selection"
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "ALL"
+  },
+  {
+   "do": "select-all"
+  },
+  {
+   "do": "select-all-matching"
+  },
+  {
+   "do": "clear-selection"
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "select",
+   "target": {
+    "subjects": [
+     "Primary a:",
+     "Primary b:"
+    ]
+   }
+  },
+  {
+   "do": "clear-selection"
+  }
+ ]
+}

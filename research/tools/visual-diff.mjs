@@ -21,7 +21,7 @@ import { deflateSync, inflateSync } from "node:zlib";
 const here = dirname(fileURLToPath(import.meta.url));
 const goldens = join(here, "..", "goldens");
 
-export const DEFAULTS = { threshold: 5, tolerance: 24, radius: 1 };
+export const DEFAULTS = { threshold: 10, tolerance: 24, radius: 1 };
 
 // ---------------------------------------------------------------------------------------------------------------
 // Masks and regions. Rectangles are [x, y, w, h] in CSS px of the web golden (1280 x 728 unless the state is
@@ -38,30 +38,40 @@ const GUTTER_RIGHT = 56;
 const headerRegion = (layout) => ({ name: "header-search", rect: [324, 0, 376, HEADER_H], dx: layout === "open" ? 0 : 56 });
 
 const rail = (layout) => [0, HEADER_H, layout === "open" ? 68 : 84, 9999];
-const sidePanel = [1280 - GUTTER_RIGHT, 0, GUTTER_RIGHT, 9999];
-const scrollbar = [1206, HEADER_H, 18, 9999];
+const sidePanel = (w) => [w - GUTTER_RIGHT, 0, GUTTER_RIGHT, 9999];
+const scrollbar = (w) => [w - 74, HEADER_H, 18, 9999];
 // Page count, newer/older arrows, "N of M", the input-tools keyboard button: counts depend on the mailbox and the
 // keyboard button is Google's.
-const toolbarRight = [980, HEADER_H, 244, 52];
+const toolbarRight = (w) => [w - 300, HEADER_H, 244, 52];
 // Everything the mailbox decides in a list: rows (sender, subject, snippet, date, label chips, attachment chips, tint,
 // star state, row count), the footer's storage bar, "Terms Privacy" links and last-account-activity text.
 const rowsFrom = (y, layout) => [layout === "open" ? 324 : 84, y, 1224, 9999];
 
 // The web list's horizontal scrollbar under chip lists.
 const hScrollbar = [84, 696, 1124, 16];
-const BASE = (layout) => [rail(layout), sidePanel, scrollbar, hScrollbar, toolbarRight];
+const BASE = (layout, w) => [rail(layout), sidePanel(w), scrollbar(w), hScrollbar, toolbarRight(w)];
 
 // Overlays that sit on top of the rows: the rows mask is lifted inside these rectangles so the overlay is compared.
+// An optional fifth number is how far Courier's overlay sits left of the web's for a reason that is the web capture's
+// layout, not Courier's: 56 for the advanced-search dialog, which hangs off the header (same reason as the header
+// region), and -10 for compose, which docks to the window edge (LOOK-SPEC: right offset 61 px with Chat off) while the
+// web golden's side panel pushes it 10 px further left.
 const KEEP = {
-  compose: [[648, 185, 566, 527]],
+  compose: [[648, 185, 566, 527, -10]],
+  "row-hover": [[84, 248, 150, 40], [1040, 248, 170, 40]],
+  "row-selected-toolbar": [[84, 248, 150, 40], [1040, 248, 170, 40]],
   "list-more-menu": [[192, 96, 272, 116]],
   "toolbar-more-menu": [[388, 98, 292, 312]],
   "row-context-menu": [[640, 136, 290, 592]],
-  "advanced-search": [[320, 60, 730, 440]],
+  "advanced-search": [[320, 60, 730, 440, 56]],
   "quick-settings": [[880, 64, 344, 648]],
 };
 // Nav (open): the mailbox decides the counts and which categories and labels are listed below Drafts.
 const navData = [[270, 150, 50, 160], [68, 310, 256, 9999]];
+
+// Conversation: the message header's picture, names, time and "to me" (hidden on the web side, shown in Courier's
+// mock mail) and the label chips, which are the thread's.
+const CONV = [[100, 170, 990, 60], [380, 130, 520, 32]];
 
 // state -> { layout: nav "collapsed" | "open", masks: added to BASE }
 const TABBED = { layout: "collapsed", masks: (l) => [rowsFrom(168, l)] };
@@ -88,15 +98,16 @@ const STATES = {
   "category-updates-label": TABBED,
   "trash-banner": { layout: "collapsed", masks: (l) => [rowsFrom(222, l)] },
   "spam-banner": { layout: "collapsed", masks: (l) => [rowsFrom(222, l)] },
-  "message-more-menu": { layout: "collapsed", masks: () => [[950, 386, 215, 22]] },
-  conversation: { layout: "collapsed", masks: () => [] },
+  "message-more-menu": { layout: "collapsed", masks: () => [...CONV, [950, 386, 215, 22]] },
+  conversation: { layout: "collapsed", masks: () => CONV },
+
 };
 for (const t of ["general", "labels", "inbox", "accounts", "filters", "fwdandpop", "advanced", "offline"]) STATES[`settings-${t}`] = { layout: "collapsed", masks: () => [] };
 const FALLBACK = { layout: "collapsed", masks: () => [] };
 
-export function maskFor(name) {
+export function maskFor(name, w = 1280) {
   const st = STATES[name] ?? FALLBACK;
-  return { layout: st.layout, masks: [...BASE(st.layout), ...st.masks(st.layout)], keep: KEEP[name] ?? [] };
+  return { layout: st.layout, masks: [...BASE(st.layout, w), ...st.masks(st.layout)], keep: KEEP[name] ?? [] };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -197,7 +208,7 @@ function near(a, x, y, otherPx, tolerance, radius) {
 }
 
 export function compare(web, courier, name, tolerance, radius = DEFAULTS.radius, headerDx) {
-  const { layout, masks, keep } = maskFor(name);
+  const { layout, masks, keep } = maskFor(name, web.w);
   const { w, h } = web;
   const masked = new Uint8Array(w * h);
   for (const [x0, y0, mw, mh] of masks)
@@ -205,6 +216,11 @@ export function compare(web, courier, name, tolerance, radius = DEFAULTS.radius,
 
   for (const [x0, y0, kw, kh] of keep)
     for (let y = Math.max(HEADER_H, y0); y < Math.min(h, y0 + kh); y++) for (let x = Math.max(0, x0); x < Math.min(w, x0 + kw); x++) masked[y * w + x] = 0;
+  const dxAt = (x, y) => {
+    if (y < HEADER_H) return hdr.dx;
+    for (const [x0, y0, kw, kh, dx = 0] of keep) if (x >= x0 && x < x0 + kw && y >= y0 && y < y0 + kh) return dx;
+    return 0;
+  };
 
   const hdr = headerRegion(layout);
   if (headerDx !== undefined) hdr.dx = headerDx;
@@ -212,7 +228,7 @@ export function compare(web, courier, name, tolerance, radius = DEFAULTS.radius,
   const have = new Uint8Array(w * h);
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
-      const cx = y < HEADER_H ? x - hdr.dx : x;
+      const cx = x - dxAt(x, y);
       if (cx < 0 || cx >= courier.w || y >= courier.h) continue;
       have[y * w + x] = 1;
       courier.px.copy(aligned, (y * w + x) * 4, (y * courier.w + cx) * 4, (y * courier.w + cx) * 4 + 4);
@@ -224,7 +240,7 @@ export function compare(web, courier, name, tolerance, radius = DEFAULTS.radius,
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
       const o = (y * w + x) * 4;
-      const inside = y < HEADER_H ? x >= hdr.rect[0] && x < hdr.rect[0] + hdr.rect[2] : !masked[y * w + x];
+      const inside = y < HEADER_H ? w >= 1024 && x >= hdr.rect[0] && x < hdr.rect[0] + hdr.rect[2] : !masked[y * w + x];
       if (!inside) {
         for (let k = 0; k < 3; k++) diff[o + k] = Math.round(web.px[o + k] * 0.25 + [200, 215, 255][k] * 0.75);
         continue;

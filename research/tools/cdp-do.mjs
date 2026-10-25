@@ -10,8 +10,13 @@
 //         {"eval": "read-only expression"}, {"go": url}, {"files": [selector, [paths]]},
 //         {"rightClick": [selector, dx?, dy?]}, {"clickContains": [selector, text]}, {"hoverContains": [selector, text]}]
 //         ← status/dump/eval print what they read
+//
+// Differential mode (research/tools/diff/): runs user-action scripts in the web client and writes what it observed after each step.
+//   node research/tools/cdp-do.mjs <targetId> --script <script.json>[,<script.json>...] --out <observations.json>
+//   node research/tools/cdp-do.mjs <targetId> --observe       (prints one observation, touches nothing)
 const [targetId, opsJson] = process.argv.slice(2);
-const ops = JSON.parse(opsJson);
+const diffMode = opsJson?.startsWith("--");
+const ops = diffMode ? [] : JSON.parse(opsJson);
 const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${process.env.CDP_PORT ?? 9222}/json/version`)).json();
 const ws = new WebSocket(webSocketDebuggerUrl);
 await new Promise((r) => ws.addEventListener("open", r));
@@ -78,6 +83,21 @@ async function key(name, mods = []) {
   }
 }
 
+if (diffMode) {
+  const { runDiff } = await import("./diff/run-web.mjs");
+  const arg = (name) => process.argv[process.argv.indexOf(name) + 1];
+  await runDiff({
+    s,
+    sleep,
+    observeOnly: process.argv.includes("--observe"),
+    scripts: process.argv.includes("--script") ? arg("--script").split(",") : [],
+    out: arg("--out"),
+  });
+  await call("Target.detachFromTarget", { sessionId });
+  ws.close();
+  process.exit(0);
+}
+
 for (const op of ops) {
   if (op.click) await mouse(op.click[0], op.click[1], op.click[2], true);
   else if (op.rightClick) await mouse(op.rightClick[0], op.rightClick[1], op.rightClick[2], true, false, "right");
@@ -97,8 +117,7 @@ for (const op of ops) {
     const { root } = await s("DOM.getDocument", { depth: 0 });
     const { nodeId } = await s("DOM.querySelector", { nodeId: root.nodeId, selector: op.files[0] });
     await s("DOM.setFileInputFiles", { nodeId, files: op.files[1] });
-  }
-  else if (op.wheel) await s("Input.dispatchMouseEvent", { type: "mouseWheel", x: 640, y: 400, deltaX: 0, deltaY: op.wheel });
+  } else if (op.wheel) await s("Input.dispatchMouseEvent", { type: "mouseWheel", x: 640, y: 400, deltaX: 0, deltaY: op.wheel });
   else if (op.dump) {
     const { result } = await s("Runtime.evaluate", {
       expression: `[...document.querySelectorAll(${JSON.stringify(op.dump)})].filter(e => e.getBoundingClientRect().width > 0).map(e => e.innerText).join(" // ").slice(0, 4000)`,

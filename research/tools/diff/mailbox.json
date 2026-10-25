@@ -1,0 +1,37 @@
+{
+ "note": "Mirrors the seed plan in app/src-tauri/src/recon.rs (CATEGORIES, CASES, EXTRAS); research/tools/diff/check-mailbox.mjs fails when they drift. Subject of a case: <category name> <key>: <what>; a message is [hours ago, flags] (I Inbox, U unread, S starred, P important, L Recon/Counts, X spam, T trash); every message of category i is also i hours older.",
+ "categories": [
+  ["CATEGORY_PERSONAL","Primary","Robin Reed <robin@reed.example>"],
+  ["CATEGORY_SOCIAL","Social","Pinboard Friends <notify@pinboard-friends.example>"],
+  ["CATEGORY_PROMOTIONS","Promotions","Lakeside Outfitters <deals@lakeside.example>"],
+  ["CATEGORY_UPDATES","Updates","Northwind Billing <billing@northwind.example>"],
+  ["CATEGORY_FORUMS","Forums","Hill Walkers List <list@hill-walkers.example>"]
+ ],
+ "cases": [
+  ["a","one message, unread, in the Inbox",[[2,"IU"]]],
+  ["b","one message, read, in the Inbox",[[5,"I"]]],
+  ["c","one message, unread, archived",[[8,"U"]]],
+  ["d","one message, read, archived",[[11,""]]],
+  ["e","three messages, all unread, in the Inbox",[[30,"IU"],[29,"IU"],[28,"IU"]]],
+  ["f","three messages, the last unread, in the Inbox",[[50,"I"],[49,"I"],[48,"IU"]]],
+  ["g","first unread and archived, reply read in the Inbox",[[70,"U"],[69,"I"]]],
+  ["h","first read in the Inbox, reply unread and archived",[[90,"I"],[89,"U"]]],
+  ["i","45 days old, unread, in the Inbox",[[1080,"IU"]]],
+  ["j","46 days old, unread, archived",[[1104,"U"]]],
+  ["k","47 days old, read, in the Inbox",[[1128,"I"]]],
+  ["l","starred and unread, in the Inbox",[[120,"IUS"]]],
+  ["m","unread in the Inbox and labelled Recon/Counts",[[140,"IUL"]]]
+ ],
+ "extras": [
+  ["x1","Mixed: Updates first, Promotions reply","Northwind Billing <billing@northwind.example>",[[160,"IU","CATEGORY_UPDATES"],[159,"I","CATEGORY_PROMOTIONS"]]],
+  ["x2","Important and unread","Robin Reed <robin@reed.example>",[[170,"IUP","CATEGORY_PERSONAL"]]],
+  ["x3","Unread in Spam","Prize Desk <winner@prize-desk.example>",[[180,"UX","CATEGORY_UPDATES"]]],
+  ["x4","Unread in Trash","Northwind Billing <billing@northwind.example>",[[190,"UT","CATEGORY_UPDATES"]]],
+  ["x5","Archived, unread and labelled Recon/Counts","Northwind Billing <billing@northwind.example>",[[200,"UL","CATEGORY_UPDATES"]]],
+  ["x6","Long thread: 60-day-old start, new reply","Robin Reed <robin@reed.example>",[[1440,"I","CATEGORY_PERSONAL"],[3,"IU","CATEGORY_PERSONAL"]]],
+  ["x7","Long thread in Updates: 50-day-old start, new reply","Northwind Billing <billing@northwind.example>",[[1200,"I","CATEGORY_UPDATES"],[4,"IU","CATEGORY_UPDATES"]]],
+  ["p1","Probe one","Robin Reed <robin@reed.example>",[[1,"I","CATEGORY_PERSONAL"]]],
+  ["p2","Probe two","Northwind Billing <billing@northwind.example>",[[1,"I","CATEGORY_UPDATES"]]]
+ ],
+ "others": ["Quarterly planning notes","Photos from the offsite","Lunch on Friday?","Weekly status: design review","Invoice #1042 for October","Reading list for next week"]
+}

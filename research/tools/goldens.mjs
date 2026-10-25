@@ -56,7 +56,7 @@ const HIDE = {
   ],
   courier: [
     '[data-testid="account-button"] img', '[data-testid="account-button"] .avatar', '[data-testid="thread-row"] .sender > span:not(.count):not(.pli)',
-    '[data-testid="thread-row"] .subj', '[data-testid="thread-row"] .snippet', '[data-testid="thread-row"] .avatar',
+    '[data-testid="thread-row"] .subject-line .text', '[data-testid="thread-row"] .subj', '[data-testid="thread-row"] .snippet', '[data-testid="thread-row"] .avatar',
     '[data-testid="conv-subject"]', ".msg-from", ".msg-email", ".msg-body", '[data-testid="message-frame"]',
   ],
 };

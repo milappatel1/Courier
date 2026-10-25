@@ -1,0 +1,28 @@
+{
+ "name": "archive-conversation-undo",
+ "about": "Open a conversation, archive it from the conversation toolbar, Undo.",
+ "cleanup": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "archive",
+   "via": "conversation",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "undo"
+  }
+ ]
+}

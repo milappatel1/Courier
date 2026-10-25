@@ -1,0 +1,42 @@
+{
+ "name": "toast-timing",
+ "about": "How long the Archive toast stays up, and where the conversation ends up after it goes (then put back from All Mail).",
+ "cleanup": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "archive",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   },
+   "measureToast": true
+  },
+  {
+   "do": "open",
+   "label": "ALL"
+  },
+  {
+   "do": "inbox",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ]
+}

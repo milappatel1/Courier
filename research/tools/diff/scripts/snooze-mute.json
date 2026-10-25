@@ -1,0 +1,39 @@
+{
+ "name": "snooze-mute",
+ "about": "Snooze until tomorrow and Mute from the toolbar, each followed by Undo.",
+ "cleanup": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "snooze",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   },
+   "until": "Tomorrow"
+  },
+  {
+   "do": "undo"
+  },
+  {
+   "do": "mute",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "undo"
+  }
+ ]
+}

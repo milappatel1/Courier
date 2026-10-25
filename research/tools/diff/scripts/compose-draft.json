@@ -1,0 +1,30 @@
+{
+ "name": "compose-draft",
+ "about": "Open Compose, fill To/Subject/Body, look at the draft, discard it. Never sent.",
+ "cleanup": [
+  {
+   "do": "discard-draft"
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "compose",
+   "to": "nobody@reed.example",
+   "subject": "Differential runner draft",
+   "body": "A draft for the differential runner; never sent."
+  },
+  {
+   "do": "discard-draft"
+  }
+ ]
+}

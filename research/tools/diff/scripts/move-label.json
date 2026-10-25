@@ -1,0 +1,65 @@
+{
+ "name": "move-label",
+ "about": "Move to a label, label as Recon/Counts and remove it again, each with Undo where the toast has one; ends with a look at the labels each conversation has.",
+ "cleanup": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "move",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   },
+   "to": "Recon"
+  },
+  {
+   "do": "undo"
+  },
+  {
+   "do": "labels",
+   "subjects": [
+    "Primary b:"
+   ]
+  },
+  {
+   "do": "label",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   },
+   "name": "Recon/Counts",
+   "on": true
+  },
+  {
+   "do": "labels",
+   "subjects": [
+    "Primary b:"
+   ]
+  },
+  {
+   "do": "label",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   },
+   "name": "Recon/Counts",
+   "on": false
+  },
+  {
+   "do": "labels",
+   "subjects": [
+    "Primary b:"
+   ]
+  }
+ ]
+}

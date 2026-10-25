@@ -1,0 +1,38 @@
+{
+ "name": "tabs-counts",
+ "about": "Visit each inbox tab and come back: the nav's unread counts and the tabs' 'N new' badges.",
+ "cleanup": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "promotions"
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "social"
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "updates"
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ]
+}

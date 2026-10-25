@@ -1,0 +1,28 @@
+{
+ "name": "archive-toolbar-undo",
+ "about": "Archive with the row checkbox and the toolbar, then Undo: rows, counts, toolbar, toast text.",
+ "cleanup": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "archive",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary a:"
+   }
+  },
+  {
+   "do": "undo"
+  }
+ ]
+}

@@ -1,0 +1,67 @@
+{
+ "name": "keyboard-actions",
+ "about": "Cursor with j/k and single-key actions (e # ! Shift+I Shift+U s m) each with z to undo. Needs keyboard shortcuts; skipped where they are off.",
+ "keyboard": true,
+ "cleanup": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "archive",
+   "via": "key",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "undo"
+  },
+  {
+   "do": "mark-unread",
+   "via": "key",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "mark-read",
+   "via": "key",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "star",
+   "via": "key",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "star",
+   "via": "key",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "delete",
+   "via": "key",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "undo"
+  }
+ ]
+}

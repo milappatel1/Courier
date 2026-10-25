@@ -158,6 +158,22 @@
     "wait": 500
    },
    {
+    "click": [
+     "[data-testid=select-all]"
+    ]
+   },
+   {
+    "wait": 400
+   },
+   {
+    "click": [
+     "[data-testid=tb-archive]"
+    ]
+   },
+   {
+    "wait": 800
+   },
+   {
     "hover": [
      "[data-testid=search-input]"
     ]
@@ -876,6 +892,22 @@
     "wait": 500
    },
    {
+    "click": [
+     "[data-testid=select-all]"
+    ]
+   },
+   {
+    "wait": 400
+   },
+   {
+    "click": [
+     "[data-testid=tb-delete]"
+    ]
+   },
+   {
+    "wait": 800
+   },
+   {
     "hover": [
      "[data-testid=search-input]"
     ]
@@ -967,7 +999,7 @@
     "wait": 300
    },
    {
-    "go": "http://localhost:1430/browser-preview.html#u/0/label/Projects"
+    "go": "http://localhost:1430/browser-preview.html#u/0/label/Label_1"
    },
    {
     "wait": 1500
@@ -1120,14 +1152,6 @@
    },
    {
     "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
-   },
-   {
-    "click": [
-     "[data-testid=main-menu]"
-    ]
-   },
-   {
-    "wait": 500
    },
    {
     "hover": [
