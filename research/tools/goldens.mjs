@@ -55,8 +55,8 @@ const HIDE = {
     "tr.zA .afn", "tr.zA .bq3", "tr.zA img", ".hP", ".gD", ".go", ".g2", ".a3s", ".ii", "img.ajn", ".aCi img", ".ajy img", ".iw", ".g3",
   ],
   courier: [
-    '[data-testid="account-button"] img', '[data-testid="account-button"] .avatar', '[data-testid="thread-row"] .row-from',
-    '[data-testid="thread-row"] .row-subject', '[data-testid="thread-row"] .row-snippet', '[data-testid="thread-row"] .avatar',
+    '[data-testid="account-button"] img', '[data-testid="account-button"] .avatar', '[data-testid="thread-row"] .sender > span:not(.count):not(.pli)',
+    '[data-testid="thread-row"] .subj', '[data-testid="thread-row"] .snippet', '[data-testid="thread-row"] .avatar',
     '[data-testid="conv-subject"]', ".msg-from", ".msg-email", ".msg-body", '[data-testid="message-frame"]',
   ],
 };

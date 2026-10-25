@@ -1,0 +1,1142 @@
+[
+ {
+  "name": "inbox-primary",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "hover": [
+     "[data-testid=search-input]"
+    ]
+   },
+   {
+    "wait": 300
+   }
+  ]
+ },
+ {
+  "name": "inbox-promotions",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "click": [
+     "[data-testid=tab-promotions]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "hover": [
+     "[data-testid=search-input]"
+    ]
+   },
+   {
+    "wait": 300
+   }
+  ]
+ },
+ {
+  "name": "inbox-social",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "click": [
+     "[data-testid=tab-social]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "hover": [
+     "[data-testid=search-input]"
+    ]
+   },
+   {
+    "wait": 300
+   }
+  ]
+ },
+ {
+  "name": "inbox-updates-empty",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "click": [
+     "[data-testid=tab-updates]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "hover": [
+     "[data-testid=search-input]"
+    ]
+   },
+   {
+    "wait": 300
+   }
+  ]
+ },
+ {
+  "name": "row-hover",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "hover": [
+     "[data-testid=thread-row]@@2"
+    ]
+   },
+   {
+    "wait": 500
+   }
+  ]
+ },
+ {
+  "name": "row-selected-toolbar",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "click": [
+     "[data-testid=row-checkbox]@@2"
+    ]
+   },
+   {
+    "wait": 700
+   },
+   {
+    "hover": [
+     "[data-testid=search-input]"
+    ]
+   },
+   {
+    "wait": 300
+   }
+  ]
+ },
+ {
+  "name": "toolbar-more-menu",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "click": [
+     "[data-testid=row-checkbox]@@2"
+    ]
+   },
+   {
+    "wait": 600
+   },
+   {
+    "click": [
+     "[data-testid=tb-more]"
+    ]
+   },
+   {
+    "wait": 800
+   }
+  ]
+ },
+ {
+  "name": "list-more-menu",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "click": [
+     "[data-testid=tb-more]"
+    ]
+   },
+   {
+    "wait": 800
+   }
+  ]
+ },
+ {
+  "name": "row-context-menu",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "rightClick": [
+     "[data-testid=thread-row]@@3",
+     570,
+     20
+    ]
+   },
+   {
+    "wait": 800
+   }
+  ]
+ },
+ {
+  "name": "conversation",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "click": [
+     "[data-testid=thread-row]@@1"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "hover": [
+     "[data-testid=search-input]"
+    ]
+   },
+   {
+    "wait": 300
+   }
+  ]
+ },
+ {
+  "name": "message-more-menu",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "click": [
+     "[data-testid=thread-row]@@1"
+    ]
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "click": [
+     "[data-testid=msg-more]"
+    ]
+   },
+   {
+    "wait": 800
+   }
+  ]
+ },
+ {
+  "name": "compose",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:68px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=compose]"
+    ]
+   },
+   {
+    "wait": 1500
+   }
+  ]
+ },
+ {
+  "name": "search-results",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/search/from%3Anorthwind"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "hover": [
+     "[data-testid=search-input]"
+    ]
+   },
+   {
+    "wait": 300
+   }
+  ]
+ },
+ {
+  "name": "advanced-search",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "click": [
+     "[data-testid=search-options]"
+    ]
+   },
+   {
+    "wait": 1000
+   }
+  ]
+ },
+ {
+  "name": "quick-settings",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "click": [
+     "[data-testid=settings-gear]"
+    ]
+   },
+   {
+    "wait": 1000
+   }
+  ]
+ },
+ {
+  "name": "settings-general",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/settings/general"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   }
+  ]
+ },
+ {
+  "name": "settings-labels",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/settings/labels"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   }
+  ]
+ },
+ {
+  "name": "settings-inbox",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/settings/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   }
+  ]
+ },
+ {
+  "name": "settings-accounts",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/settings/accounts"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   }
+  ]
+ },
+ {
+  "name": "settings-filters",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/settings/filters"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   }
+  ]
+ },
+ {
+  "name": "settings-fwdandpop",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/settings/fwdandpop"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   }
+  ]
+ },
+ {
+  "name": "settings-advanced",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/settings/advanced"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   }
+  ]
+ },
+ {
+  "name": "settings-offline",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/settings/offline"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   }
+  ]
+ },
+ {
+  "name": "starred",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/starred"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "hover": [
+     "[data-testid=search-input]"
+    ]
+   },
+   {
+    "wait": 300
+   }
+  ]
+ },
+ {
+  "name": "sent-empty",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/sent"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "hover": [
+     "[data-testid=search-input]"
+    ]
+   },
+   {
+    "wait": 300
+   }
+  ]
+ },
+ {
+  "name": "trash-banner",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/trash"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "hover": [
+     "[data-testid=search-input]"
+    ]
+   },
+   {
+    "wait": 300
+   }
+  ]
+ },
+ {
+  "name": "spam-banner",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/spam"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "hover": [
+     "[data-testid=search-input]"
+    ]
+   },
+   {
+    "wait": 300
+   }
+  ]
+ },
+ {
+  "name": "label-view",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/label/Projects"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "hover": [
+     "[data-testid=search-input]"
+    ]
+   },
+   {
+    "wait": 300
+   }
+  ]
+ },
+ {
+  "name": "category-updates-label",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/search/category%3Aupdates"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "hover": [
+     "[data-testid=search-input]"
+    ]
+   },
+   {
+    "wait": 300
+   }
+  ]
+ },
+ {
+  "name": "all-mail",
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/all"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "hover": [
+     "[data-testid=search-input]"
+    ]
+   },
+   {
+    "wait": 300
+   }
+  ]
+ },
+ {
+  "name": "inbox-primary-1024",
+  "width": 1024,
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "hover": [
+     "[data-testid=search-input]"
+    ]
+   },
+   {
+    "wait": 300
+   }
+  ]
+ },
+ {
+  "name": "inbox-primary-800",
+  "width": 800,
+  "ops": [
+   {
+    "go": "about:blank"
+   },
+   {
+    "wait": 300
+   },
+   {
+    "go": "http://localhost:1430/browser-preview.html#u/0/inbox"
+   },
+   {
+    "wait": 1500
+   },
+   {
+    "eval": "(() => { const st = document.createElement(\"style\"); st.textContent = \"[data-testid=toasts]{display:none!important}\"; document.head.appendChild(st); document.documentElement.style.cssText = \"padding-left:12px;padding-right:40px\"; return 1; })()"
+   },
+   {
+    "click": [
+     "[data-testid=main-menu]"
+    ]
+   },
+   {
+    "wait": 500
+   },
+   {
+    "hover": [
+     "[data-testid=search-input]"
+    ]
+   },
+   {
+    "wait": 300
+   }
+  ]
+ }
+]
