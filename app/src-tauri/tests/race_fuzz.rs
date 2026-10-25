@@ -1740,7 +1740,6 @@ fn fault_script(fault: Fault) -> Vec<Step> {
 /// generator: change `gen_steps` and they stop meaning anything.
 const KNOWN: &[(u64, &str)] = &[
     (17, "undo_of_a_waiting_change_as_the_connection_comes_back_is_not_lost"),
-    (28, "a_server_listing_that_ingests_a_conversation_while_it_is_being_binned_does_not_list_it_in_the_old_view"),
 ];
 
 fn default_run() -> bool {
@@ -1920,7 +1919,6 @@ fn a_conversation_change_made_offline_goes_out_after_the_undo_made_before_it_not
 }
 
 #[test]
-#[ignore = "engine bug: a server listing racing a change to a conversation this Mac doesn't hold shows it in its old view"]
 fn a_server_listing_that_ingests_a_conversation_while_it_is_being_binned_does_not_list_it_in_the_old_view() {
     replay_seed(
         28,

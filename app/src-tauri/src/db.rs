@@ -1651,8 +1651,12 @@ impl Db {
     /// from a later read or acknowledgement, or a change made here is still on its way.
     pub fn threads_known_after(&self, account: &str, stamp: i64) -> Result<HashSet<String>> {
         let pending: Vec<String> = self.pending.lock().keys().filter(|(a, _)| a == account).map(|(_, id)| id.clone()).collect();
+        // Conversation changes on their way or waiting count too: their messages may reach this Mac only now, in the
+        // very listing being checked.
+        let conversations: Vec<String> = self.thread_pending.lock().keys().filter(|(a, _)| a == account).map(|(_, t)| t.clone()).collect();
         self.with(|c| {
             let mut out: HashSet<String> = c.prepare("SELECT DISTINCT thread_id FROM messages WHERE account_id=? AND server_stamp > ?")?.query_map(params![account, stamp], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+            out.extend(conversations);
             for id in pending {
                 if let Some(t) = c.query_row("SELECT thread_id FROM messages WHERE account_id=? AND id=?", [account, &id], |r| r.get::<_, String>(0)).optional()? {
                     out.insert(t);
