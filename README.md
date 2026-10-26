@@ -77,13 +77,16 @@ scheduled mail need Courier running (it can be in the background) at the chosen 
   ones need a connection) and can't be undone; creating or editing labels needs a connection.
 - Gmail's Purchases category isn't available through the Gmail API, so it has no tab or label in Courier.
 - Courier is in English only; the web client's other interface languages aren't offered.
+- Not every behaviour of the web client is matched yet: `research/PARITY.md` lists what was checked, what differs
+  and what is still to check (keyboard shortcuts, inbox types and some dialogs among them).
 - Unsubscribe uses the sender's one-click link (RFC 8058), else an unsubscribe email from your account, else the
   sender's web page; it can take a sender a few days to stop.
 - A phone app can keep showing mail you've already deleted elsewhere until it refreshes; the server (and
   Courier) are the reference.
 - Rare races found by testing, not yet fixed: Undo of a change made offline can go out in the wrong order or
   restore the wrong labels, an Undo made just as the connection returns can be lost, and another device's change
-  can be missed until a full resync (issues #6 to #9).
+  can be missed until a full resync (issues #6 to #9). Undo of an action on every conversation in a view puts the
+  label back on all of them, including ones that didn't have it (#11).
 - Builds are signed ad hoc, not notarised (see Install), so macOS may ask for your Keychain password once after
   each update.
 

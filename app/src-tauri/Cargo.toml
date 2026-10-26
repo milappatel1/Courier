@@ -1,6 +1,6 @@
 [package]
 name = "courier"
-version = "1.0.7"
+version = "1.1.0"
 description = "A mail client"
 authors = ["Milap Patel"]
 edition = "2024"

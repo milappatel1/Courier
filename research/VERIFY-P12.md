@@ -54,3 +54,22 @@ Machine shared with two other sessions' builds.
 - End to end: 73 passed, 0 failed in 499 s (71 steps + 2 run-wide checks); "app reported never active; frontmost-app
   watch never saw the test app in front".
 - Whole `npm run test:all`: exit 0.
+
+## Result (2026-10-26, 1.1.0)
+
+Phase notes: `VERIFY-P12.0.md` (the bugs), `VERIFY-P12.1-visual.md` (visual diff), `VERIFY-P12.4.md` (model and
+fuzzer), `VERIFY-P12.5.md` (performance), `VERIFY-P12.6.md` (offline gaps), `VERIFY-P12-GATES.md` (parity sweep and
+release-gate audit). P12.2 (differential runner) and the settings-based part of the parity sweep were moved to the
+board's Backlog when Milap chose the release path first (usage budget).
+
+Exit predicate, item by item:
+
+1. Both bugs fixed and confirmed in the frame recorder under the user's conditions and on seeded web-client mail;
+   confirmation in the user's own use after install is pending (#2, #5 stay open until then). **Partly met.**
+2. Every PARITY.md row matches or is ✗: 81 match, 17 ✗, 104 open. **Not met.**
+3. Every suite green: Vitest 104, Rust 81 (formal model depth 6, race fuzzer), e2e 86/86 never in front; the
+   differential runner isn't finished. **Met for the suites that exist.**
+4. Visual diffs under threshold: 0 of 32 (rows masked, layout differs by design). Performance budgets: met.
+   **Partly met.**
+5. 1.1.0 published and checked: see the release.
+

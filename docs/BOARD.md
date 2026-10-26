@@ -6,10 +6,10 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 
 ## Doing
 
+- Release 1.1.0 per DEVELOPING.md: GitHub release, hashes, install after Milap quits Courier, numbers-only real-account check · main session (packaged, tagged; publishing)
 
 ## Next
 
-- Release 1.1.0 per DEVELOPING.md: GitHub release, hashes, install after Milap quits Courier, numbers-only real-account check · main session
 
 ## Backlog
 
