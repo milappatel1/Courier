@@ -16,3 +16,4 @@ Only this repo's lessons; lessons for every project go in `~/.claude/workflow/LE
 - Run at most two subagents at once on the Pro plan; four in parallel (fuzzer, visual diff, parity sweep, P12.2 runner) used up the 5-hour window and all stopped mid-task. (2026-10-25, 1.1.0)
 - When a change shows at once and saves later, re-apply it after the save: a reload of the saved list in between dropped an unsubscribe the user had just confirmed. (2026-10-25, 1.1.0)
 - Don't drive a CDP tab from a second script while a capture run is using it; it killed a goldens run. (2026-10-25, 1.1.0)
+- A new e2e step that adds or moves unread mail into an Inbox tab must open that tab before it ends; twice a new step made the later counts step see "1 new". (2026-10-25, 1.1.0)
