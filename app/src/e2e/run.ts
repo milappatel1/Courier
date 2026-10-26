@@ -1698,6 +1698,10 @@ step("right-click a row: the menu acts on that conversation", async () => {
     return (l.includes("CATEGORY_PROMOTIONS") && !l.includes("CATEGORY_PERSONAL")) || null;
   });
   await until("gone from Primary", () => !row("Tab move"));
+  // Seen there, so later steps don't count it as new in Promotions.
+  click(await el("tab-promotions"));
+  await until("in Promotions", () => row("Tab move"), 10_000);
+  await backToInbox();
 });
 
 /** Scrolls a box as a person would (and fires the event a covered background window holds back). */
