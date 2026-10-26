@@ -212,6 +212,8 @@ pub struct Db {
     /// of those messages gets the change on top; a mark goes once no read older than it is out.
     reads_out: Mutex<BTreeMap<i64, usize>>,
     marks: Mutex<HashMap<(String, String), (i64, Vec<String>, Vec<String>)>>,
+    /// Messages deleted forever on the server, and when: an answer read before then doesn't bring them back.
+    gone: Mutex<HashMap<(String, String), i64>>,
     /// Conversation changes still on their way or waiting, by (account, conversation).
     thread_pending: Mutex<HashMap<(String, String), Vec<ThreadChange>>>,
 }
@@ -239,6 +241,7 @@ impl Drop for Read<'_> {
         let oldest = out.keys().next().copied().unwrap_or(i64::MAX);
         drop(out);
         self.db.marks.lock().retain(|_, (at, _, _)| *at > oldest);
+        self.db.gone.lock().retain(|_, at| *at > oldest);
     }
 }
 
@@ -399,7 +402,13 @@ fn fold_pending(p: &HashMap<(String, String), Vec<PendingChange>>, tp: &HashMap<
     // Oldest first, whichever kind (the waiting change, QUEUED, is older than any on its way): a newer change to the
     // message itself wins over an older one to its conversation.
     let own = p.get(&(account.to_string(), id.to_string())).into_iter().flatten().map(|c| (c.token, &c.add, &c.remove, false));
-    let conv = tp.get(&(account.to_string(), thread.to_string())).into_iter().flatten().filter(|c| !c.known.contains(id)).map(|c| (c.token, &c.add, &c.remove, true));
+    let own_waiting = p.get(&(account.to_string(), id.to_string())).is_some_and(|l| l.iter().any(|c| c.token == QUEUED));
+    let conv = tp
+        .get(&(account.to_string(), thread.to_string()))
+        .into_iter()
+        .flatten()
+        .filter(|c| !c.known.contains(id) && !(c.token == QUEUED && own_waiting))
+        .map(|c| (c.token, &c.add, &c.remove, true));
     let mut all: Vec<_> = own.chain(conv).collect();
     all.sort_by_key(|c| c.0);
     all.into_iter().fold(labels, |l, (_, add, remove, conv)| {
@@ -637,18 +646,21 @@ impl Db {
             clock: std::sync::atomic::AtomicU64::new((generation as u64) << 32),
             reads_out: Mutex::new(BTreeMap::new()),
             marks: Mutex::new(HashMap::new()),
+            gone: Mutex::new(HashMap::new()),
             thread_pending: Mutex::new(HashMap::new()),
         };
-        if let Ok(rows) = db.with(|c| c.prepare("SELECT account_id, thread_id FROM thread_queue")?.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()) {
-            for (account, thread) in rows {
-                let _ = db.sync_thread_queue(&account, &thread);
-            }
-        }
         // Changes queued before a quit still hold over whatever the server says until they've gone out.
         if let Ok(rows) = db.with(|c| c.prepare("SELECT account_id, message_id, add_labels, remove_labels FROM change_queue")?.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()) {
             let mut p = db.pending.lock();
             for (account, id, add, remove) in rows {
                 p.entry((account, id)).or_default().push(PendingChange { token: QUEUED, add: pj(&add), remove: pj(&remove) });
+            }
+        }
+        // Then the conversations' waiting changes, over the messages' own (loaded first, so each conversation knows
+        // which of its messages carry it already).
+        if let Ok(rows) = db.with(|c| c.prepare("SELECT account_id, thread_id FROM thread_queue")?.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()) {
+            for (account, thread) in rows {
+                let _ = db.sync_thread_queue(&account, &thread);
             }
         }
         db
@@ -721,6 +733,9 @@ impl Db {
             Ok(())
         })?;
         self.pending.lock().retain(|(a, _), _| a != id);
+        self.thread_pending.lock().retain(|(a, _), _| a != id);
+        self.marks.lock().retain(|(a, _), _| a != id);
+        self.gone.lock().retain(|(a, _), _| a != id);
         Ok(())
     }
 
@@ -955,8 +970,11 @@ impl Db {
     }
 
     pub fn begin_read(&self, account: &str) -> Read<'_> {
+        // Stamped and registered as one step, so a read ending meanwhile can't prune a mark this one still needs.
+        let mut out = self.reads_out.lock();
         let stamp = self.tick();
-        *self.reads_out.lock().entry(stamp).or_default() += 1;
+        *out.entry(stamp).or_default() += 1;
+        drop(out);
         Read { db: self, account: account.to_string(), stamp }
     }
 
@@ -1003,8 +1021,12 @@ impl Db {
     fn upsert_from_server(&self, m: &MessageRow, raw: Option<&[u8]>, stamp: i64) -> Result<()> {
         let p = self.pending.lock();
         let c = self.conn.lock();
-        // Deleted forever here and waiting to go out: whatever the server says meanwhile doesn't bring it back.
+        // Deleted forever here and waiting to go out, or deleted on the server after this read began: whatever the
+        // server said doesn't bring it back.
         if c.query_row("SELECT 1 FROM delete_queue WHERE account_id=? AND message_id=?", [&m.account_id, &m.id], |_| Ok(())).optional()?.is_some() {
+            return Ok(());
+        }
+        if self.gone.lock().get(&(m.account_id.clone(), m.id.clone())).is_some_and(|at| *at > stamp) {
             return Ok(());
         }
         let held: Option<(String, i64)> = c.query_row("SELECT server_labels, server_stamp FROM messages WHERE account_id=? AND id=?", [&m.account_id, &m.id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
@@ -1172,14 +1194,18 @@ impl Db {
         Ok(())
     }
 
-    fn drop_thread_change(&self, account: &str, token: u64) {
+    /// Drops the conversation change `token`; returns the conversations it covered.
+    fn drop_thread_change(&self, account: &str, token: u64) -> Vec<String> {
         let mut tp = self.thread_pending.lock();
-        for ((a, _), list) in tp.iter_mut() {
-            if a == account {
+        let mut covered = Vec::new();
+        for ((a, t), list) in tp.iter_mut() {
+            if a == account && list.iter().any(|c| c.token == token) {
                 list.retain(|c| c.token != token);
+                covered.push(t.clone());
             }
         }
         tp.retain(|_, list| !list.is_empty());
+        covered
     }
 
     /// The conversation's waiting change in memory follows its `thread_queue` row (made, changed, cancelled, sent).
@@ -1212,7 +1238,7 @@ impl Db {
     /// longer shown, so the labels are the server's with any other change still on its way, exactly.
     pub fn end_change(&self, account: &str, ids: &[String], token: u64, ok: bool) -> Result<()> {
         let mut p = self.pending.lock();
-        self.drop_thread_change(account, token);
+        let covered = self.drop_thread_change(account, token);
         let mut sent: Option<(Vec<String>, Vec<String>)> = None;
         for id in ids {
             let key = (account.to_string(), id.clone());
@@ -1234,6 +1260,15 @@ impl Db {
         }
         for id in ids {
             self.rederive(&p, account, id)?;
+        }
+        // Messages of those conversations that reached this Mac while the change was out took it on top: they show
+        // their own server labels again.
+        for t in covered {
+            for m in self.thread_messages(account, &t)? {
+                if !ids.contains(&m.id) {
+                    self.rederive(&p, account, &m.id)?;
+                }
+            }
         }
         Ok(())
     }
@@ -1329,7 +1364,7 @@ impl Db {
 
     /// A conversation change that was on its way waits offline instead: it holds as the conversation's waiting change.
     pub fn thread_change_queued(&self, account: &str, token: u64) {
-        self.drop_thread_change(account, token);
+        let _ = self.drop_thread_change(account, token);
     }
 
     /// An account's conversation changes waiting for the connection, oldest first: (conversation, add, remove).
@@ -1371,12 +1406,28 @@ impl Db {
         self.with(|c| c.prepare("SELECT account_id FROM change_queue UNION SELECT account_id FROM thread_queue UNION SELECT account_id FROM delete_queue")?.query_map([], |r| r.get(0))?.collect())
     }
 
+    /// Deleted forever on the server: gone from the cache, and answers read before now don't bring them back.
+    pub fn deleted_on_server(&self, account: &str, ids: &[String]) -> Result<()> {
+        let at = self.tick();
+        {
+            let mut g = self.gone.lock();
+            for id in ids {
+                g.insert((account.to_string(), id.clone()), at);
+            }
+        }
+        for id in ids {
+            self.delete_message(account, id)?;
+        }
+        Ok(())
+    }
+
     /// Delete forever with no connection: the messages leave the cache now and wait (over a restart) to be deleted
     /// on the server, after any label change still waiting.
     pub fn queue_delete(&self, account: &str, ids: &[String]) -> Result<()> {
         for id in ids {
-            self.delete_message(account, id)?;
+            // The tombstone first, so no answer arriving in between brings the row back.
             self.with(|c| c.execute("INSERT OR IGNORE INTO delete_queue (account_id, message_id, seq) VALUES (?1, ?2, (SELECT COALESCE(MAX(seq), 0) + 1 FROM delete_queue))", [account, id]))?;
+            self.delete_message(account, id)?;
         }
         Ok(())
     }

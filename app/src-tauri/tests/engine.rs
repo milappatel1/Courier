@@ -365,6 +365,113 @@ async fn an_imap_delete_forever_that_waited_is_dropped_when_the_folder_was_reset
 }
 
 #[tokio::test]
+async fn undo_of_a_change_that_changed_nothing_succeeds_and_does_nothing() {
+    let w = world().await;
+    let r = w.engine.change_threads("g1", &[], &["TRASH".into()], &[]).await.unwrap();
+    assert_eq!(w.engine.undo_change("g1", r.change).await.unwrap(), Changed::Done);
+}
+
+#[tokio::test]
+async fn undo_puts_imap_mail_back_where_it_was_after_archive_and_delete() {
+    let w = world().await;
+    w.imap.deliver("INBOX", &sample_mail("Cy <cy@x.io>", "pat@example.org", "Trip", "train", ""), &[]);
+    w.engine.sync_account("i1").await.unwrap();
+    let t = w.engine.list(&view("i1", "INBOX")).await.unwrap().threads[0].thread_id.clone();
+    for (add, remove, folder) in [(vec![], vec!["INBOX".to_string()], "Archive"), (vec!["TRASH".to_string()], vec![], "Trash")] {
+        let r = w.engine.change_threads("i1", std::slice::from_ref(&t), &add, &remove).await.unwrap();
+        assert_eq!(w.imap.folder(folder).unwrap().msgs.len(), 1, "moved to {folder}");
+        assert_eq!(w.engine.undo_change("i1", r.change).await.unwrap(), Changed::Done);
+        assert_eq!(w.imap.folder("INBOX").unwrap().msgs.len(), 1, "Undo put it back from {folder}");
+        assert!(w.imap.folder(folder).unwrap().msgs.is_empty());
+        assert!(w.engine.undo_change("i1", r.change).await.is_err(), "an Undo is used up");
+    }
+}
+
+#[test]
+fn a_reply_that_arrives_while_its_conversation_is_archived_shows_its_own_labels_once_the_archive_ends() {
+    let db = Db::open_in_memory().unwrap();
+    let row = |id: &str, labels: &[&str]| courier_lib::db::MessageRow {
+        account_id: "a".into(),
+        id: id.into(),
+        thread_id: "t".into(),
+        labels: labels.iter().map(|l| l.to_string()).collect(),
+        ..Default::default()
+    };
+    db.begin_read("a").upsert_message(&row("m1", &["INBOX"]), None).unwrap();
+    let (add, remove): (Vec<String>, Vec<String>) = (vec![], vec!["INBOX".into()]);
+    let token = db.begin_change("a", &["m1".to_string()], &add, &remove).unwrap();
+    db.begin_thread_change("a", &["t".to_string()], &add, &remove, token).unwrap();
+    // A new reply reaches the server (in the Inbox) and this Mac while the archive is on its way; the server's
+    // conversation had only m1 when the archive went out.
+    db.begin_read("a").upsert_message(&row("m6", &["INBOX", "UNREAD"]), None).unwrap();
+    assert!(!db.message("a", "m6").unwrap().unwrap().labels.contains(&"INBOX".to_string()), "held by the change while it's out");
+    db.end_change("a", &["m1".to_string()], token, true).unwrap();
+    assert_eq!(db.message("a", "m6").unwrap().unwrap().labels, vec!["INBOX".to_string(), "UNREAD".to_string()], "the reply shows what the server has");
+    assert!(!db.message("a", "m1").unwrap().unwrap().labels.contains(&"INBOX".to_string()));
+}
+
+#[tokio::test]
+async fn a_message_change_made_offline_after_its_conversation_was_archived_survives_a_restart() {
+    let dir = std::env::temp_dir().join(format!("courier-restart-{}", courier_lib::error::random_token(6)));
+    let path = dir.join("courier.db");
+    let w = world_on(Db::open(&path).unwrap()).await;
+    let id = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Plans", "x", ""), &["INBOX"]);
+    w.engine.sync_account("g1").await.unwrap();
+    let t = w.engine.db.message("g1", &id).unwrap().unwrap().thread_id;
+    w.gmail.state.lock().offline = true;
+    w.engine.change_threads("g1", std::slice::from_ref(&t), &[], &["INBOX".into()]).await.unwrap();
+    w.engine.modify_messages("g1", std::slice::from_ref(&id), &["STARRED".into()], &[]).await.unwrap();
+    let labels = |e: &Engine| e.db.message("g1", &id).unwrap().unwrap().labels;
+    assert!(labels(&w.engine).contains(&"STARRED".to_string()) && !labels(&w.engine).contains(&"INBOX".to_string()));
+    let e2 = relaunch(&w, &path);
+    let after = labels(&e2);
+    assert!(after.contains(&"STARRED".to_string()) && !after.contains(&"INBOX".to_string()), "after a restart: {after:?}");
+    // A server answer read meanwhile doesn't undo either.
+    e2.db.begin_read("g1").set_labels(&id, &["INBOX".into()]).unwrap();
+    let after = labels(&e2);
+    assert!(after.contains(&"STARRED".to_string()) && !after.contains(&"INBOX".to_string()), "after a read: {after:?}");
+}
+
+#[tokio::test]
+async fn a_change_that_cant_get_the_sign_in_leaves_nothing_shown() {
+    let dir = std::env::temp_dir().join(format!("courier-signin-{}", courier_lib::error::random_token(6)));
+    let path = dir.join("courier.db");
+    let w = world_on(Db::open(&path).unwrap()).await;
+    let id = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Keep me", "x", ""), &["INBOX"]);
+    w.engine.sync_account("g1").await.unwrap();
+    let t = w.engine.db.message("g1", &id).unwrap().unwrap().thread_id;
+    // A fresh start whose Keychain read fails (the client's credentials can't be read).
+    let e2 = relaunch(&w, &path);
+    w.engine.secrets.delete(secrets::GOOGLE_CLIENT_KEY).unwrap();
+    assert!(e2.change_threads("g1", std::slice::from_ref(&t), &[], &["INBOX".into()]).await.is_err());
+    assert!(e2.db.message("g1", &id).unwrap().unwrap().labels.contains(&"INBOX".to_string()), "the failed archive still shows");
+    assert!(e2.db.pending_labels("g1").is_empty(), "the change still counts as on its way");
+}
+
+#[test]
+fn a_message_deleted_forever_isnt_brought_back_by_an_answer_read_before_the_delete() {
+    let db = Db::open_in_memory().unwrap();
+    let row = courier_lib::db::MessageRow { account_id: "a".into(), id: "m".into(), thread_id: "t".into(), labels: vec!["SPAM".into()], ..Default::default() };
+    db.begin_read("a").upsert_message(&row, None).unwrap();
+    let slow = db.begin_read("a"); // a slow fetch already on its way
+    db.deleted_on_server("a", &["m".to_string()]).unwrap();
+    slow.upsert_message(&row, None).unwrap();
+    assert!(db.message("a", "m").unwrap().is_none(), "the slow answer brought the deleted message back");
+}
+
+#[tokio::test]
+async fn marking_a_conversation_read_in_trash_marks_it_read() {
+    let w = world().await;
+    let id = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Binned", "x", ""), &["TRASH", "UNREAD"]);
+    w.engine.sync_account("g1").await.unwrap();
+    w.engine.list(&ViewQuery { mode: Some("server".into()), ..view("g1", "TRASH") }).await.unwrap();
+    let t = w.engine.db.message("g1", &id).unwrap().unwrap().thread_id;
+    w.engine.change_threads("g1", std::slice::from_ref(&t), &[], &["UNREAD".into()]).await.unwrap();
+    assert!(!w.gmail.message(&id).unwrap().labels.contains(&"UNREAD".to_string()), "still unread on the server");
+    assert!(!w.engine.db.message("g1", &id).unwrap().unwrap().labels.contains(&"UNREAD".to_string()));
+}
+
+#[tokio::test]
 async fn snoozing_and_unsnoozing_offline_wait_and_reach_the_server_once_back() {
     let w = world().await;
     let id = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Later", "x", ""), &["INBOX", "UNREAD"]);
