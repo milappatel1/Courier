@@ -69,3 +69,10 @@ README; the parity predicate is not met and the release notes say so.
 The formal model's acknowledgement step was updated to the engine's new order (beyond messages first, then the
 overlay) and rerun: 83,254 paths to depth 6, green. Full e2e after the fixes: 86 passed, 0 failed, never active,
 never in front.
+
+## After the release: real accounts, numbers only (2026-10-25 23:38, Courier 1.1.0 had run at 23:08)
+
+Read-only aggregate queries on Courier's cache and the server label counts it stores (from labels.get); no message
+content read, account ids hashed. Inbox unread conversations, server vs Courier: 16/16, 0/0, 34/34, 0/0, equal on
+all four accounts. Updates unread: the menu shows the server's whole-label count by design (9, 113, 12, 32); the
+cache holds 9, 21, 12, 32 of them (one account's older Updates mail is beyond the 30-day cache, as expected).
