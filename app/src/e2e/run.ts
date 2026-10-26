@@ -1008,6 +1008,29 @@ step("the web client's words and order: search chips, Scheduled note, label, mes
   await backToInbox();
 });
 
+step("switching views while an archive is on its way never draws the archived row again", async () => {
+  await backToInbox();
+  await api.e2eControl("deliver-gmail", { from: "Switch Test <switch@test.example>", subject: "Archived then away", body: "x" });
+  const r = await until("the row", () => row("Archived then away"), 30_000);
+  const id = r.dataset.thread!;
+  await api.e2eControl("gmail-behaviour", { latency: { batchModify: 1500, modify: 1500 } });
+  try {
+    const rec = recordFrames();
+    click(await el("hover-archive", r));
+    await sleep(100);
+    await openList("STARRED");
+    await backToInbox();
+    await until("archived on the server", async () => (await msgsWith("Archived then away")).every((m) => !m.labels.includes("INBOX")) || null, 20_000);
+    await sleep(1500);
+    const frames = rec.stop().frames;
+    const left = frames.findIndex((f) => !f.rows.includes(id));
+    const back = frames.slice(Math.max(0, left)).find((f) => f.rows.includes(id));
+    check(!back, `the archived row was drawn again at +${back?.t} ms`);
+  } finally {
+    await api.e2eControl("gmail-behaviour", { latency: {} });
+  }
+});
+
 step("reading pane: right of inbox shows the conversation beside the list", async () => {
   click(await el("settings-gear"));
   click(await el("qs-pane-right"));
@@ -1692,7 +1715,16 @@ step("right-click a row: the menu acts on that conversation", async () => {
   const b3 = r3.getBoundingClientRect();
   r3.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: b3.left + 400, clientY: b3.top + 10 }));
   click(await el("ctx-move-tab"));
+  // A slow server: the row leaves the tab at once all the same.
+  await api.e2eControl("gmail-behaviour", { latency: { batchModify: 2500, modify: 2500 } });
+  const movedAt = performance.now();
   click(await el("ctx-tab-promotions"));
+  try {
+    await until("leaves Primary at once", () => !row("Tab move"), 1500);
+    check(performance.now() - movedAt < 1500, "the moved row stayed until the server answered");
+  } finally {
+    await api.e2eControl("gmail-behaviour", { latency: {} });
+  }
   await until("filed under Promotions on the server", async () => {
     const l = (await msgsWith("Tab move"))[0]?.labels ?? [];
     return (l.includes("CATEGORY_PROMOTIONS") && !l.includes("CATEGORY_PERSONAL")) || null;

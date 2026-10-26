@@ -386,7 +386,7 @@ export function go(list: Partial<ListRoute>, opts: { keepThread?: boolean } = {}
     selectAllMatching: false,
     keepThreads: [],
     cursor: 0,
-    hiddenThreads: [],
+    hiddenThreads: stillLeaving(),
   });
   set((s) => ({ list: { ...s.list, tokens: [null] } }));
   pushHash();
@@ -419,7 +419,7 @@ export async function setAccount(id: string) {
     accountId: id,
     route: { list: { ...INBOX_ROUTE, category: null }, thread: null, settings: null },
     selected: [],
-    hiddenThreads: [],
+    hiddenThreads: stillLeaving(),
     thread: { detail: null, loading: false, error: null },
   });
   set((s) => ({ route: { ...s.route, list: { ...s.route.list, category: hasTabs() ? "primary" : null } } }));
@@ -484,6 +484,14 @@ export function settleThreads(threadIds: string[], ok: boolean, change?: number)
     for (const id of threadIds) leaving.delete(id);
     set((s) => ({ hiddenThreads: s.hiddenThreads.filter((x) => !threadIds.includes(x)) }));
   }
+}
+
+/**
+ * Rows an action is still removing stay hidden when the view changes: the old page stays on screen until the new
+ * one arrives, and the new view may not have caught up with the change either.
+ */
+export function stillLeaving(): string[] {
+  return get().hiddenThreads.filter((id) => leaving.has(id));
 }
 
 /** The rows still hidden once listing number `seq`, reflecting changes up to `ledger`, arrives. */

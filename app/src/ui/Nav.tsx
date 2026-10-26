@@ -204,7 +204,7 @@ export function Nav() {
                   icon={c.icon}
                   name={c.name}
                   count={c.key === "primary" ? count("INBOX") : 0}
-                  newCount={c.key === "primary" ? 0 : (news?.[c.key]?.count ?? 0)}
+                  newCount={c.key === "primary" || (current === "INBOX" && route.list.category === c.key) ? 0 : (news?.[c.key]?.count ?? 0)}
                   active={current === "INBOX" && (route.list.category ?? "primary") === c.key}
                   bold={(c.key === "primary" ? count("INBOX") : (news?.[c.key]?.count ?? 0)) > 0}
                   depth={0}

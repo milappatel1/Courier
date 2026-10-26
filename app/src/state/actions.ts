@@ -1,5 +1,6 @@
 // Actions on conversations, with the toast + Undo the web client shows.
 import { parseListUnsubscribe, unsubscribeDialog, type UnsubscribeMethod } from "../core/unsubscribe";
+import { CATEGORIES } from "../core/labels";
 import { api, errorText, failureText, on, type BulkOutcome } from "../ipc/api";
 import type { ThreadSummary, ViewQuery } from "../ipc/types";
 import { nextStar } from "./settings";
@@ -15,6 +16,7 @@ import {
   loadList,
   setState,
   settleThreads,
+  stillLeaving,
   stepThread,
   toast,
   ui,
@@ -218,11 +220,14 @@ export async function act(kind: ActionKind, targets: Target[] = currentTargets()
   hideThreads(moved);
   const wasOpen = s.route.thread;
   advanceAfter(leaving && !!wasOpen && targets.some((t) => t.threadIds.includes(wasOpen.threadId)), opts.advance);
-  let ok = false;
   let queued = false;
   const changes: { accountId: string; change: number }[] = [];
-  try {
-    for (const t of targets) {
+  // Account by account: one that fails (signed out, say) doesn't take back what the others did.
+  const done: Target[] = [];
+  const failed: Target[] = [];
+  let error: unknown = null;
+  for (const t of targets) {
+    try {
       if (kind === "mute" || kind === "unmute") await api.mute(t.accountId, t.threadIds, kind === "mute");
       else if (kind === "unsnooze") await api.unsnooze(t.accountId, t.threadIds);
       else {
@@ -230,28 +235,40 @@ export async function act(kind: ActionKind, targets: Target[] = currentTargets()
         if (r.result === "queued") queued = true;
         changes.push({ accountId: t.accountId, change: r.change });
       }
+      done.push(t);
+    } catch (e) {
+      failed.push(t);
+      error ??= e;
     }
-    // Muting archives what was in the Inbox, so undoing it puts those back.
-    const undo = async () => {
-      for (const t of targets) {
-        if (kind === "mute" || kind === "unmute") {
-          await api.mute(t.accountId, t.threadIds, kind !== "mute");
-          const back = t.threadIds.filter((id) => wasInInbox.has(id));
-          if (kind === "mute" && back.length) await api.modifyThreads(t.accountId, back, ["INBOX"], []);
-        }
-      }
-      // Label changes: each message gets back exactly what it had (the server's older messages included).
-      for (const c of changes) await api.undoChange(c.accountId, c.change);
-    };
-    withUndo(rule.text(count) + (opts.note ?? "") + (queued ? WHEN_ONLINE : ""), undo);
-    ok = true;
-  } catch (e) {
-    toast(failureText(doing(kind, count), e), { action: { label: "Try again", run: () => void act(kind, targets) } });
-  } finally {
-    settleThreads(moved, ok, changes.length ? Math.max(...changes.map((c) => c.change)) : undefined);
-    void loadList({ quiet: true });
-    setState({ selected: [], selectAllMatching: false, keepThreads: [] });
   }
+  const n = (ts: Target[]) => ts.reduce((k, t) => k + t.threadIds.length, 0);
+  // Muting archives what was in the Inbox, so undoing it puts those back.
+  const undo = async () => {
+    for (const t of done) {
+      if (kind === "mute" || kind === "unmute") {
+        await api.mute(t.accountId, t.threadIds, kind !== "mute");
+        const back = t.threadIds.filter((id) => wasInInbox.has(id));
+        if (kind === "mute" && back.length) await api.modifyThreads(t.accountId, back, ["INBOX"], []);
+      }
+    }
+    // Label changes: each message gets back exactly what it had (the server's older messages included).
+    for (const c of changes) await api.undoChange(c.accountId, c.change);
+  };
+  const retry = { label: "Try again", run: () => void act(kind, failed) };
+  if (!failed.length) withUndo(rule.text(count) + (opts.note ?? "") + (queued ? WHEN_ONLINE : ""), undo);
+  else if (!done.length) toast(failureText(doing(kind, count), error), { action: retry });
+  else
+    toast(`${rule.text(n(done))} ${failureText(doing(kind, n(failed)), error)}`, {
+      sticky: true,
+      action: retry,
+      secondary: { label: "Undo", run: () => void undo() },
+    });
+  const doneRows = done.flatMap((t) => t.threadIds).filter((id) => moved.includes(id));
+  const failedRows = failed.flatMap((t) => t.threadIds).filter((id) => moved.includes(id));
+  settleThreads(doneRows, true, changes.length ? Math.max(...changes.map((c) => c.change)) : undefined);
+  if (failedRows.length) settleThreads(failedRows, false);
+  void loadList({ quiet: true });
+  setState({ selected: [], selectAllMatching: false, keepThreads: [] });
 }
 
 async function deleteForever(targets: Target[], count: number) {
@@ -281,35 +298,54 @@ export async function applyLabels(add: string[], remove: string[], opts: { move?
   const removeAll = [...remove];
   if (opts.move && here && here !== add[0] && !["STARRED", "IMPORTANT", "SNOOZED", "ALL", "SENT", "DRAFT"].includes(here)) removeAll.push(here);
   if (opts.move && !here) removeAll.push("INBOX");
-  const leaving = !!here && removeAll.includes(here);
+  // On an Inbox tab, filing under another tab's category leaves this one too.
+  const tab = here === "INBOX" ? CATEGORIES.find((c) => c.key === (s.route.list.category ?? "primary"))?.id : undefined;
+  const otherTab = !!tab && add.some((l) => l.startsWith("CATEGORY_") && l !== tab);
+  const leaving = (!!here && removeAll.includes(here)) || otherTab;
   const moved = leaving ? targets.flatMap((t) => t.threadIds) : [];
   hideThreads(moved);
-  let ok = false;
   const changes: { accountId: string; change: number }[] = [];
-  try {
-    let queued = false;
-    for (const t of targets) {
+  // Account by account, as in `act`: one that fails doesn't take back what the others did.
+  let queued = false;
+  const done: Target[] = [];
+  const failed: Target[] = [];
+  let error: unknown = null;
+  for (const t of targets) {
+    try {
       const r = await api.changeThreads(t.accountId, t.threadIds, add, removeAll);
       if (r.result === "queued") queued = true;
       changes.push({ accountId: t.accountId, change: r.change });
+      done.push(t);
+    } catch (e) {
+      failed.push(t);
+      error ??= e;
     }
-    const acct = targets[0].accountId;
-    const names = add.map((l) => labelName(acct, l));
-    const text = opts.move
-      ? `${plural(count, "Conversation", "conversations")} moved to "${names[0]}".`
-      : add.length
-        ? `${plural(count, "Conversation", "conversations")} added to "${names.join('", "')}".`
-        : `${plural(count, "Conversation", "conversations")} removed from "${remove.map((l) => labelName(acct, l)).join('", "')}".`;
-    withUndo(text + (queued ? WHEN_ONLINE : ""), async () => {
-      for (const c of changes) await api.undoChange(c.accountId, c.change);
-    });
-    ok = true;
-  } catch (e) {
-    toast(failureText(`change the labels on ${count === 1 ? "the conversation" : `${count} conversations`}`, e), {
-      action: { label: "Try again", run: () => void applyLabels(add, remove, { ...opts, targets }) },
-    });
   }
-  settleThreads(moved, ok, changes.length ? Math.max(...changes.map((c) => c.change)) : undefined);
+  const n = (ts: Target[]) => ts.reduce((k, t) => k + t.threadIds.length, 0);
+  const acct = targets[0].accountId;
+  const names = add.map((l) => labelName(acct, l));
+  const say = (k: number) =>
+    opts.move
+      ? `${plural(k, "Conversation", "conversations")} moved to "${names[0]}".`
+      : add.length
+        ? `${plural(k, "Conversation", "conversations")} added to "${names.join('", "')}".`
+        : `${plural(k, "Conversation", "conversations")} removed from "${remove.map((l) => labelName(acct, l)).join('", "')}".`;
+  const undo = async () => {
+    for (const c of changes) await api.undoChange(c.accountId, c.change);
+  };
+  const failedCount = n(failed);
+  const failure = () => failureText(`change the labels on ${failedCount === 1 ? "the conversation" : `${failedCount} conversations`}`, error);
+  const retry = { label: "Try again", run: () => void applyLabels(add, remove, { ...opts, targets: failed }) };
+  if (!failed.length) withUndo(say(count) + (queued ? WHEN_ONLINE : ""), undo);
+  else if (!done.length) toast(failure(), { action: retry });
+  else toast(`${say(n(done))} ${failure()}`, { sticky: true, action: retry, secondary: { label: "Undo", run: () => void undo() } });
+  settleThreads(
+    done.flatMap((t) => t.threadIds).filter((id) => moved.includes(id)),
+    true,
+    changes.length ? Math.max(...changes.map((c) => c.change)) : undefined,
+  );
+  const back = failed.flatMap((t) => t.threadIds).filter((id) => moved.includes(id));
+  if (back.length) settleThreads(back, false);
   void loadList({ quiet: true });
 }
 
@@ -452,7 +488,14 @@ export async function unsubscribe(o: {
         // Shown as done at once; the requests (one per mailing list) go out together in the background.
         noteUnsubscribed(o.accountId, o.sender.email);
         o.onDone?.();
-        void Promise.all(direct.map((m) => (m.kind === "one-click" ? api.unsubscribeOneClick(m.url) : o.sendMail(m.to, m.subject || "unsubscribe", m.body))))
+        // Every request settles before a second click can send them again; one that got through is a success.
+        void Promise.allSettled(
+          direct.map((m) => (m.kind === "one-click" ? api.unsubscribeOneClick(m.url) : o.sendMail(m.to, m.subject || "unsubscribe", m.body))),
+        )
+          .then((all) => {
+            const failed = all.find((r): r is PromiseRejectedResult => r.status === "rejected");
+            if (failed && all.every((r) => r.status === "rejected")) throw failed.reason;
+          })
           .then(async () => {
             await api.markUnsubscribed(o.accountId, o.sender.email).catch(() => {});
             // Again: a reload of the saved list between the click and here would have dropped it.
@@ -638,7 +681,7 @@ async function runBulk(kind: ActionKind, keep: string[], currentView: (page?: nu
     dismissToast(progress);
     toast(failureText(DOING[kind].replace("{c}", "the conversations"), e), { action: { label: "Try again", run: again } });
   } finally {
-    setState({ selected: [], selectAllMatching: false, keepThreads: [], hiddenThreads: [] });
+    setState({ selected: [], selectAllMatching: false, keepThreads: [], hiddenThreads: stillLeaving() });
     void loadList({ quiet: true });
   }
 }
