@@ -1,0 +1,39 @@
+{
+ "name": "hover-delete-snooze",
+ "about": "Delete and Snooze from the row's hover buttons (Snooze until tomorrow), each followed by Undo.",
+ "cleanup": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "delete",
+   "via": "hover",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "undo"
+  },
+  {
+   "do": "snooze",
+   "via": "hover",
+   "target": {
+    "subject": "Primary b:"
+   },
+   "until": "Tomorrow"
+  },
+  {
+   "do": "undo"
+  }
+ ]
+}

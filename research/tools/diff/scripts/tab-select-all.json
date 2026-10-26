@@ -1,0 +1,32 @@
+{
+ "name": "tab-select-all",
+ "about": "Select all on the Promotions tab and clear it; nothing is changed.",
+ "cleanup": [
+  {
+   "do": "clear-selection"
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "promotions"
+  },
+  {
+   "do": "select-all"
+  },
+  {
+   "do": "clear-selection"
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ]
+}

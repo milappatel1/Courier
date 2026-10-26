@@ -243,6 +243,10 @@ function makeEnv(): Env {
       await sleep(250);
     },
 
+    async unsnooze() {
+      return env.more("Unsnooze");
+    },
+
     async hover(subject: string, label: string) {
       const r = await until(`row ${subject}`, () => row(subject));
       const b = [...r.querySelectorAll<HTMLButtonElement>(".hover-actions button[aria-label]")].find((x) => x.getAttribute("aria-label") === label);

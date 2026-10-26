@@ -1,0 +1,52 @@
+{
+ "name": "spam-view",
+ "about": "Report spam from the Inbox, find it under Spam, Not spam from there (back in the Inbox).",
+ "cleanup": [
+  {
+   "do": "open",
+   "label": "SPAM"
+  },
+  {
+   "do": "not-spam",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "spam",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "open",
+   "label": "SPAM"
+  },
+  {
+   "do": "not-spam",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ]
+}

@@ -1,0 +1,51 @@
+{
+ "name": "snooze-unsnooze",
+ "about": "Snooze until tomorrow, see it under Snoozed, unsnooze it from the conversation, back in the Inbox.",
+ "cleanup": [
+  {
+   "do": "open",
+   "label": "SNOOZED"
+  },
+  {
+   "do": "unsnooze",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "snooze",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   },
+   "until": "Tomorrow"
+  },
+  {
+   "do": "open",
+   "label": "SNOOZED"
+  },
+  {
+   "do": "unsnooze",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ]
+}

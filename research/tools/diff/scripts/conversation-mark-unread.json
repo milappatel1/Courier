@@ -1,0 +1,35 @@
+{
+ "name": "conversation-mark-unread",
+ "about": "Open a conversation, mark it unread from its toolbar (back to the list), then mark it read again.",
+ "cleanup": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "mark-unread",
+   "via": "conversation",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "mark-read",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "clear-selection"
+  }
+ ]
+}

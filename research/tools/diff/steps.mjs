@@ -16,6 +16,7 @@
 //       {target, via: "toolbar" (default) | "hover" | "conversation" | "row" (the star) | "key"}
 //   move {target, to}        label {target, name, on: true | false}           snooze {target, until, via?}
 //   select {target}          select-all   select-all-matching   clear-selection
+//   unsnooze {target} (opens the conversation, from the Snoozed view)
 //   open-conversation {target}   back     labels {subjects}      compose {to, subject, body}   discard-draft
 // Any step may carry "measureToast": true (waits for the toast to go and records how long it was up) and "expectToast".
 
@@ -109,6 +110,10 @@ async function exec(st, env, known, ctx) {
       return env.compose(st);
     case "discard-draft":
       return env.discardDraft();
+    case "unsnooze":
+      await env.openConversation(subs[0]);
+      ctx.how = await env.unsnooze();
+      return;
     case "labels":
       ctx.labels = {};
       for (const s of st.subjects) ctx.labels[resolveSubject(known, s)] = await env.labelsOf(resolveSubject(known, s), ctx.where);

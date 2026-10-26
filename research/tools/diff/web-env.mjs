@@ -14,7 +14,7 @@ const PAGE = String.raw`(() => {
   D.subject = (tr) => txt(tr.querySelector(".bog"));
   D.row = (s) => D.rows().find((r) => D.subject(r) === s);
   D.mask = (s) => (D.known.includes(s) ? s : "(other)");
-  D.checked = (tr) => tr.querySelector("[role=checkbox]")?.getAttribute("aria-checked") === "true";
+  D.checked = (tr) => tr?.querySelector("[role=checkbox]")?.getAttribute("aria-checked") === "true";
   D.starred = (tr) => /^Starred/.test(tr.querySelector(".T-KT")?.getAttribute("aria-label") ?? "");
   D.chips = (tr) => [...tr.querySelectorAll(".ar .at, .ar .av")].filter((e) => e.classList.contains("at")).map((e) => e.getAttribute("title") || txt(e)).filter(Boolean).sort();
   D.toolbar = () => document.querySelector("[gh=tm]");
@@ -279,6 +279,15 @@ export async function createWebEnv({ s, known, mailbox }) {
       if (await until("Apply", apply, 800).catch(() => null)) await click("Apply", apply);
       await sleep(300);
       if (await ev(`[...document.querySelectorAll("[role=menu]")].some(window.__d.vis)`)) await key("Escape");
+    },
+
+    async unsnooze() {
+      await click(
+        "Unsnooze",
+        `[...document.querySelectorAll("span")].find((e) => e.getClientRects().length > 0 && e.children.length === 0 && e.textContent.trim() === "Unsnooze")`,
+      );
+      await sleep(400);
+      return "conversation banner";
     },
 
     async hover(subject, label) {

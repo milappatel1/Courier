@@ -1,0 +1,54 @@
+{
+ "name": "trash-view",
+ "about": "Delete from the Inbox, find it under Trash, Move to Inbox from there.",
+ "cleanup": [
+  {
+   "do": "open",
+   "label": "TRASH"
+  },
+  {
+   "do": "move",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   },
+   "to": "Inbox"
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ],
+ "steps": [
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  },
+  {
+   "do": "delete",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   }
+  },
+  {
+   "do": "open",
+   "label": "TRASH"
+  },
+  {
+   "do": "move",
+   "via": "toolbar",
+   "target": {
+    "subject": "Primary b:"
+   },
+   "to": "Inbox"
+  },
+  {
+   "do": "open",
+   "label": "INBOX",
+   "tab": "primary"
+  }
+ ]
+}
