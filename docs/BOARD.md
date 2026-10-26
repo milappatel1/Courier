@@ -6,7 +6,6 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 
 ## Doing
 
-- Security gate: `/claude-security` on the changes, `trivy fs`, supply-chain-risk-auditor, differential-review, rust-review · repo · reviewer
 
 ## Next
 
@@ -15,6 +14,8 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 
 ## Backlog
 
+- Security lows left from the review: server text in a few log lines (sync failed, send failed, one-click errors), tab_seen/tab_news key validation, window_open kind validation, e2e_* commands still registered in release builds (inert), IMAP expunge without UIDPLUS removes other \\Deleted mail · app/src-tauri/src · builder
+- e2e focus: in the busy-accounts flash step macOS made the test app active once with no test action (handed back at once; frontmost watch never saw it); seen in 2 runs across sessions · app/src/e2e · debugger
 - Parity rows (Milap allows temporary recon setting changes, restored after; resume the sweep once P12.2 frees the recon tab): 96 unverified need a setting change in the recon account (59 shortcut rows need Keyboard shortcuts on), a mail write, or network emulation; 10 differ (custom date range, compose formatting bar overflow, label palette, star tooltips, search-as-you-type …) · research/PARITY.md · builder (moved to Backlog: Milap chose the release path first, 2026-10-25)
 - Visual diff that can pass: seed the Courier preview with the recon mailbox and mask by-design layout (no Chat/Meet rail, side panel, chip row), then hillclimb the 32 states under 10% · research/tools · builder
 - P12.2 differential runner: resume its builder (stopped at the usage limit; work so far is committed) · research/tools · builder
@@ -25,6 +26,8 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 - Cleanup list for Milap after the release (what of Courier leaves the Mac), asked before deleting · main session
 
 ## Done
+
+- Security gate: trivy and npm audit clean; /claude-security unavailable (no Workflow tool), a security-auditor review instead: 0 critical/high; fixed both mediums (vacation HTML sanitised, IMAP delete checks UIDVALIDITY) and lows 3–4 (unsubscribe address and host checks) · 9f3c0b9
 
 - Visual parity first pass: search icon, tab widths, outline checkbox, field underline, Create filter disabled until set (0657599); the diff metric can't score these (rows masked, by-design layout), recorded in VERIFY-P12.1-visual.md · 2026-10-25
 
