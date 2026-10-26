@@ -6,10 +6,11 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 
 ## Doing
 
-- Release 1.1.0 per DEVELOPING.md: GitHub release, hashes, install after Milap quits Courier, numbers-only real-account check · main session (packaged, tagged; publishing)
 
 ## Next
 
+- Milap opens Courier 1.1.0 (one Keychain prompt), then a read-only, numbers-only check of the real accounts' counts against the server: done when each account's Inbox and category counts match labels.get · main session
+- Cleanup after the release: the list of Courier's build caches, work copy and recon data, deleted only on Milap's yes · main session
 
 ## Backlog
 
@@ -26,6 +27,8 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 - Cleanup list for Milap after the release (what of Courier leaves the Mac), asked before deleting · main session
 
 ## Done
+
+- 1.1.0 released: https://github.com/milappatel1/Courier/releases/tag/v1.1.0; dmg dc549931…5df2, zip 7d3746a5…4d48; both downloaded back and matched; installed in /Applications from the public zip (1.0.7 kept in ~/Library/Caches/app-backups) · 2026-10-26
 
 - Ultracode gates (research/VERIFY-P12-GATES.md): parity sweep (81/81 matches rows cite live tests; stale rows fixed; predicate not met: 96 unverified, 8 differ) and interrogate (2 Opus reviewers; 14 act-on findings fixed with tests in f5eadde, 2479f48; 7 filed as #11–#17); e2e 86/86, Rust 81, model 83,254 paths · 2026-10-25
 
