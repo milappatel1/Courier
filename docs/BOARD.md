@@ -9,11 +9,11 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 
 ## Next
 
-- Ultracode gates: both (Milap chose both, 2026-10-25): final parity sweep and release-gate audit (ask Milap to switch ultracode on, then off) · main session
 - Release 1.1.0 per DEVELOPING.md: GitHub release, hashes, install after Milap quits Courier, numbers-only real-account check · main session
 
 ## Backlog
 
+- Interrogate findings filed for later: #11 bulk Undo, #12 IMAP ids across accounts, #13 lagging-listing re-read, #14 search FTS for in-flight conversations, #15 offline bulk flush speed, #16 tab news clock, #17 one overlay / ledger module · app · builder
 - Security lows left from the review: server text in a few log lines (sync failed, send failed, one-click errors), tab_seen/tab_news key validation, window_open kind validation, e2e_* commands still registered in release builds (inert), IMAP expunge without UIDPLUS removes other \\Deleted mail · app/src-tauri/src · builder
 - e2e focus: in the busy-accounts flash step macOS made the test app active once with no test action (handed back at once; frontmost watch never saw it); seen in 2 runs across sessions · app/src/e2e · debugger
 - Parity rows (Milap allows temporary recon setting changes, restored after; resume the sweep once P12.2 frees the recon tab): 96 unverified need a setting change in the recon account (59 shortcut rows need Keyboard shortcuts on), a mail write, or network emulation; 10 differ (custom date range, compose formatting bar overflow, label palette, star tooltips, search-as-you-type …) · research/PARITY.md · builder (moved to Backlog: Milap chose the release path first, 2026-10-25)
@@ -26,6 +26,8 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 - Cleanup list for Milap after the release (what of Courier leaves the Mac), asked before deleting · main session
 
 ## Done
+
+- Ultracode gates (research/VERIFY-P12-GATES.md): parity sweep (81/81 matches rows cite live tests; stale rows fixed; predicate not met: 96 unverified, 8 differ) and interrogate (2 Opus reviewers; 14 act-on findings fixed with tests in f5eadde, 2479f48; 7 filed as #11–#17); e2e 86/86, Rust 81, model 83,254 paths · 2026-10-25
 
 - Security gate: trivy and npm audit clean; /claude-security unavailable (no Workflow tool), a security-auditor review instead: 0 critical/high; fixed both mediums (vacation HTML sanitised, IMAP delete checks UIDVALIDITY) and lows 3–4 (unsubscribe address and host checks) · 9f3c0b9
 

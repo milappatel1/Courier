@@ -37,7 +37,7 @@ hand; exploring the real `Db` keeps the check true to the code, at the cost of a
 cd app/src-tauri && CARGO_TARGET_DIR=$PWD/target/tests cargo test --test ledger_model -- --nocapture
 ```
 
-About 5 minutes at depth 6 on an M-series Mac (71,575+ paths), and it prints `ledger model: N paths checked to depth 6`.
+About 5 minutes at depth 6 on an M-series Mac (83,254 paths at 2479f48), and it prints `ledger model: N paths checked to depth 6`.
 Long run: `COURIER_MODEL_DEPTH=8` (hours; run in the background). It is also part of `tools/precommit.sh`.
 
 ## Reading a failure
@@ -66,7 +66,9 @@ offline), label counts, IMAP, more than one conversation change per conversation
 local changes, and listings (`Engine::list`; the race fuzzer `tests/race_fuzz.rs` and the e2e frame recorder
 cover those).
 
-**Sync commit: 720592b** (2026-10-24). Every function above was read against the model at this commit. When any
+**Sync commit: 2479f48** (2026-10-25, re-read after the release-gate fixes: `end_change` now recomputes a
+conversation's other cached messages, `fold_pending` skips a waiting conversation change for messages with their own,
+`Engine::change` folds into beyond messages before `end_change`, and the model's Ack mirrors that order). Every function above was read against the model at this commit. When any
 of them changes, re-read the matching rows of the table, rerun the check, and move this commit forward only after
 confirming the model still mirrors the code.
 

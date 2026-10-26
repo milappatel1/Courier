@@ -168,9 +168,10 @@ impl<'a> World<'a> {
                 self.changes[i].state = State::Done;
                 let (add, remove) = op.add_remove();
                 let ids = self.changes[i].ids.clone();
-                self.db.end_change(A, &ids, token, true).unwrap();
+                // As Engine::change: the messages beyond the cached ones take it first, then the overlay goes.
                 let beyond: Vec<String> = covers(t).iter().filter(|m| !ids.iter().any(|x| x == *m)).map(|s| s.to_string()).collect();
                 self.db.mark_landed(A, &beyond, &add, &remove);
+                self.db.end_change(A, &ids, token, true).unwrap();
             }
             Ev::Refuse(i) => {
                 let (t, op, token) = (self.changes[i].target, self.changes[i].op, self.changes[i].token);
