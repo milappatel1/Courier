@@ -10,3 +10,4 @@ Ideas for doing better next time: in this project, in the prompt, in the workflo
 | 2026-10-25 | Run heavy jobs (fuzzer, perf) in a slot of their own, never beside e2e | workflow |
 - Measure All Mail and the Inbox as separate perf numbers (label.firstRowsMs mixes them), so the slow view shows on its own. (2026-10-25)
 - Check at the start of a round that /claude-security can run (it needs the Workflow tool, the 'Dynamic workflows' setting); on 2026-10-25 it couldn't, and a security-auditor agent stood in. (2026-10-25)
+- Measure a release round's budget before the gates: two ultracode gates plus four parallel agents took the Pro week from 41% to ~80%. (2026-10-26)
