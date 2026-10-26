@@ -185,3 +185,17 @@ All of them are over; the repeated items above apply to each and are not restate
   `label-view` used a name where Courier routes by id.
 - Not checked: dark theme, other densities, the Courier shell (`tauri`) itself; the browser preview's mock mailbox
   is not the recon mailbox, so rows are masked and row styling is not compared.
+
+## Hillclimb attempt (2026-10-25, main session)
+
+Fixed from the measurements above: the header search icon (no left margin, 48 px tall, `#444746` like the
+placeholder; dark themes keep their light text), equal Inbox tabs up to 256 px (253 px pitch with the menu
+closed), a selected row's checkbox as an outline with a tick, the advanced-search field underline `#9f9f9f`, and
+"Create filter" disabled until a criterion is set. The visual diff didn't move for any of them: list rows are
+masked (the two sides hold different mail), and the remaining percentages come from layout that differs by design
+(no Chat/Meet rail or side panel, no chip row on non-search views, the settings pages' own design). A six-dot hover
+grip was tried and dropped: its look couldn't be checked against the reference.
+
+Known gap: the 10% threshold can't be met state by state until both sides show the same mailbox (seed the Courier
+preview with the recon mailbox) and the by-design layout differences are masked; until then the per-state list
+above is the record of what differs.

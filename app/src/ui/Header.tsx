@@ -336,7 +336,7 @@ export function AdvancedSearch({ initial, onClose, onSearch }: { initial: Advanc
         Has attachment
       </label>
       <div className="adv-actions">
-        <button type="button" className="btn text" onClick={() => setFilter(true)} data-testid="adv-create-filter">
+        <button type="button" className="btn text" disabled={!fromAdvanced(f).trim()} onClick={() => setFilter(true)} data-testid="adv-create-filter">
           Create filter
         </button>
         <button type="button" className="btn filled" onClick={() => onSearch(fromAdvanced(f))} data-testid="adv-search">

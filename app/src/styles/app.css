@@ -28,6 +28,8 @@
   --search-bg: #e9eef6;
   --search-bg-focus: #ffffff;
   --search-text: #1f1f1f;
+  /* the magnifier, buttons and placeholder: lighter than typed text, as in the reference */
+  --search-muted: #444746;
   --compose-bg: #c2e7ff;
   --compose-text: #001d35;
   --compose-icon: #001d35;
@@ -94,6 +96,7 @@
   --surface: rgba(255, 255, 255, 0.85);
   --search-bg: rgba(241, 243, 244, 0.24);
   --search-text: rgba(255, 255, 255, 0.87);
+  --search-muted: rgba(255, 255, 255, 0.87);
   --header-icon: #e3e3e3;
   --compose-bg: #ffffff;
   --compose-text: #5f6368;
@@ -119,6 +122,7 @@
   --search-bg: rgba(241, 243, 244, 0.24);
   --search-bg-focus: #f1f3f4;
   --search-text: rgba(255, 255, 255, 0.87);
+  --search-muted: rgba(255, 255, 255, 0.87);
   --compose-bg: #ffffff;
   --compose-text: #5f6368;
   --compose-icon: #5f6368;
@@ -443,12 +447,15 @@ a {
 }
 .search .icon-btn {
   width: 48px;
-  height: 46px;
+  height: 48px;
   margin: 0 4px;
-  color: inherit;
+  color: var(--search-muted, inherit);
+}
+.search > .icon-btn:first-child {
+  margin-left: 0;
 }
 .search .ic {
-  color: inherit;
+  color: var(--search-muted, inherit);
 }
 .search > input {
   flex: 1;
@@ -462,7 +469,7 @@ a {
   min-width: 0;
 }
 .search > input::placeholder {
-  color: inherit;
+  color: var(--search-muted, inherit);
   opacity: 0.85;
 }
 .search-suggest {
@@ -548,7 +555,7 @@ a {
 .adv-row input[type="number"],
 .adv-row input[type="date"] {
   border: 0;
-  border-bottom: 1px solid var(--settings-border);
+  border-bottom: 1px solid #9f9f9f; /* the reference's field underline, darker than the settings dividers */
   background: transparent;
   height: 28px;
   outline: none;
@@ -936,7 +943,8 @@ a {
 }
 .tab {
   flex: 1 1 0;
-  max-width: 244px;
+  /* equal widths: 244 with the menu open at 1280, 253 with it closed */
+  max-width: 256px;
   min-width: 0;
   display: flex;
   align-items: center;

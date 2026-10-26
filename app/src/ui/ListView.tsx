@@ -245,7 +245,7 @@ function ListToolbar() {
           onClick={() => selectWhere(any ? "none" : "all")}
           data-testid="select-all"
         >
-          <Icon name={box} fill={any} />
+          <Icon name={box} />
         </button>
         <MenuButton
           className="icon-btn"
@@ -892,7 +892,7 @@ function Row({ t, index, open }: { t: ThreadSummary; index: number; open: boolea
             toggleSelect(t.threadId, e.shiftKey);
           }}
         >
-          <Icon name={selected ? "check_box" : "check_box_outline_blank"} fill={selected} />
+          <Icon name={selected ? "check_box" : "check_box_outline_blank"} />
         </button>
       </span>
       <span className="star">
