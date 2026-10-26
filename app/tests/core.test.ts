@@ -302,6 +302,10 @@ describe("unsubscribe and mailto", () => {
       url: "https://x.io/u",
     });
     expect(parseListUnsubscribe("<mailto:u@x.io?subject=stop>, <https://x.io/u>", null)).toEqual({ kind: "mailto", to: "u@x.io", subject: "stop", body: "" });
+    // A line break or a second address in the sender's header never reaches the email Courier sends.
+    expect(parseListUnsubscribe("<mailto:u@x.io%0D%0ABcc:%20evil@x.io>, <https://x.io/u>", null)).toEqual({ kind: "website", url: "https://x.io/u" });
+    expect(parseListUnsubscribe("<mailto:u@x.io,evil@x.io>", null)).toBeNull();
+    expect(parseListUnsubscribe("<mailto:u@x.io?subject=stop%0D%0ABcc:%20evil@x.io>", null)).toEqual({ kind: "mailto", to: "u@x.io", subject: "stop Bcc: evil@x.io", body: "" });
     expect(parseListUnsubscribe("<https://x.io/u>", null)).toEqual({ kind: "website", url: "https://x.io/u" });
     expect(parseListUnsubscribe(null, null)).toBeNull();
   });

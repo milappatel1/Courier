@@ -1623,14 +1623,14 @@ impl Engine {
         {
             let acc = self.imap_account(&account)?;
             let mut g = acc.session().await?;
-            let mut by_folder: HashMap<String, Vec<u32>> = HashMap::new();
+            let mut by_folder: HashMap<(String, u32), Vec<u32>> = HashMap::new();
             for id in &ids {
-                if let Some((path, _, uid)) = imap::parse_message_id(id) {
-                    by_folder.entry(path).or_default().push(uid);
+                if let Some((path, uv, uid)) = imap::parse_message_id(id) {
+                    by_folder.entry((path, uv)).or_default().push(uid);
                 }
             }
-            for (folder, uids) in by_folder {
-                if let Err(e) = imap::expunge_uids(g.as_mut().unwrap(), &folder, &uids).await {
+            for ((folder, uv), uids) in by_folder {
+                if let Err(e) = imap::expunge_uids_checked(g.as_mut().unwrap(), &folder, uv, &uids).await {
                     *g = None;
                     return Err(e);
                 }
@@ -1804,15 +1804,15 @@ impl Engine {
         }
         let acc = self.imap_account(account)?;
         let mut g = acc.session().await?;
-        let mut by_folder: HashMap<String, Vec<(u32, String)>> = HashMap::new();
+        let mut by_folder: HashMap<(String, u32), Vec<(u32, String)>> = HashMap::new();
         for id in ids {
-            if let Some((path, _, uid)) = imap::parse_message_id(id) {
-                by_folder.entry(path).or_default().push((uid, id.clone()));
+            if let Some((path, uv, uid)) = imap::parse_message_id(id) {
+                by_folder.entry((path, uv)).or_default().push((uid, id.clone()));
             }
         }
-        for (folder, msgs) in by_folder {
+        for ((folder, uv), msgs) in by_folder {
             let uids: Vec<u32> = msgs.iter().map(|m| m.0).collect();
-            if let Err(e) = imap::expunge_uids(g.as_mut().unwrap(), &folder, &uids).await {
+            if let Err(e) = imap::expunge_uids_checked(g.as_mut().unwrap(), &folder, uv, &uids).await {
                 *g = None;
                 return Err(e);
             }
@@ -2412,13 +2412,27 @@ pub fn one_click_allowed(url: &str, local_fake: bool) -> bool {
     if u.scheme() != "https" {
         return false;
     }
+    let v4_public = |ip: std::net::Ipv4Addr| {
+        let o = ip.octets();
+        // Also shared address space (100.64/10) and the benchmarking range (198.18/15).
+        !(ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast() || o[0] == 100 && o[1] & 0xc0 == 64 || o[0] == 198 && o[1] & 0xfe == 18)
+    };
     match u.host() {
         Some(url::Host::Domain(d)) => {
-            let d = d.to_ascii_lowercase();
+            // "localhost." is localhost.
+            let d = d.trim_end_matches('.').to_ascii_lowercase();
             !(d == "localhost" || d.ends_with(".localhost") || d.ends_with(".local") || d.ends_with(".internal") || !d.contains('.'))
         }
-        Some(url::Host::Ipv4(ip)) => !(ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast() || ip.octets()[0] == 100 && ip.octets()[1] & 0xc0 == 64),
-        Some(url::Host::Ipv6(ip)) => !(ip.is_loopback() || ip.is_unspecified() || (ip.segments()[0] & 0xfe00) == 0xfc00 || (ip.segments()[0] & 0xffc0) == 0xfe80),
+        Some(url::Host::Ipv4(ip)) => v4_public(ip),
+        Some(url::Host::Ipv6(ip)) => {
+            let seg = ip.segments();
+            // An IPv4 address written as IPv6 (::ffff:a.b.c.d, or NAT64's 64:ff9b::/96) is judged as that address.
+            let embedded = (seg[..5] == [0; 5] && seg[5] == 0xffff || seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0]).then(|| std::net::Ipv4Addr::new((seg[6] >> 8) as u8, seg[6] as u8, (seg[7] >> 8) as u8, seg[7] as u8));
+            match embedded {
+                Some(v4) => v4_public(v4),
+                None => !(ip.is_loopback() || ip.is_unspecified() || (seg[0] & 0xfe00) == 0xfc00 || (seg[0] & 0xffc0) == 0xfe80),
+            }
+        }
         None => false,
     }
 }

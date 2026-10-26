@@ -6,6 +6,7 @@ import { exportFiltersXml, importedAction, importFiltersXml, type FilterActionLi
 import { download } from "../state/files";
 import { leafName } from "../core/labels";
 import { htmlToText, textToHtml } from "../core/text";
+import { sanitizeHtml } from "../core/sanitize";
 import { api, errorText, failureText } from "../ipc/api";
 import type { Account, ImapAccountConfig, Label, Signature } from "../ipc/types";
 import {
@@ -574,7 +575,9 @@ function SignaturesRow({ account }: { account: Account }) {
 function RichBox({ html, onChange, testId, label }: { html: string; onChange: (html: string) => void; testId: string; label: string }) {
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (box.current && box.current.innerHTML !== html) box.current.innerHTML = html;
+    // The server's copy can hold anything another client wrote: cleaned like a message before it's shown here.
+    const clean = sanitizeHtml(html, { allowRemote: true }, new DOMParser()).html;
+    if (box.current && box.current.innerHTML !== clean) box.current.innerHTML = clean;
     // Set once from outside: after that the box holds the text and reports each change.
   }, []);
   const cmd = (c: string, value?: string) => {
@@ -590,8 +593,8 @@ function RichBox({ html, onChange, testId, label }: { html: string; onChange: (h
       "link",
       "Link",
       () => {
-        const url = window.prompt("Web address");
-        if (url) cmd("createLink", url);
+        const url = window.prompt("Web address")?.trim();
+        if (url && /^(https?:|mailto:)/i.test(url)) cmd("createLink", url);
       },
     ],
     ["format_list_numbered", "Numbered list", () => cmd("insertOrderedList")],

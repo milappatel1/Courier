@@ -18,10 +18,14 @@ export function parseListUnsubscribe(header: string | null, post: string | null,
   const http = urls.find((u) => /^http:\/\//i.test(u));
   const mailto = urls.find((u) => /^mailto:/i.test(u));
   if (https && post && /List-Unsubscribe\s*=\s*One-Click/i.test(post)) return { kind: "one-click", url: https };
-  if (mailto) {
-    const [addr, query = ""] = mailto.slice(7).split("?");
-    const params = new URLSearchParams(query);
-    return { kind: "mailto", to: decodeURIComponent(addr), subject: params.get("subject") ?? "", body: params.get("body") ?? "" };
+  // Only one plain address, and a subject on one line: the header comes from the sender, and a line break or a
+  // second address would add recipients or headers to the email sent from the account.
+  const plain = (to: string) => /^[^\s,;<>"\x00-\x1f\x7f]+@[^\s,;<>"\x00-\x1f\x7f]+$/.test(to);
+  const to = mailto ? safeDecode(mailto.slice(7).split("?")[0]) : null;
+  if (mailto && to && plain(to)) {
+    const params = new URLSearchParams(mailto.slice(7).split("?")[1] ?? "");
+    const subject = (params.get("subject") ?? "").replace(/[\x00-\x1f\x7f]+/g, " ").trim();
+    return { kind: "mailto", to, subject, body: params.get("body") ?? "" };
   }
   const page = https ?? http;
   return page ? { kind: "website", url: page } : null;
@@ -70,4 +74,12 @@ export function parseMailto(url: string): { to: string[]; cc: string[]; bcc: str
     return null;
   };
   return { to: list(addr).concat(list(get("to"))), cc: list(get("cc")), bcc: list(get("bcc")), subject: get("subject") ?? "", body: get("body") ?? "" };
+}
+
+function safeDecode(s: string): string | null {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return null;
+  }
 }

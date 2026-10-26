@@ -566,6 +566,16 @@ pub async fn expunge_uids(s: &mut Session, folder: &str, uids: &[u32]) -> Result
     Ok(())
 }
 
+/// Delete forever by UID, only while the folder still has the UIDVALIDITY the UIDs were read under: after a reset
+/// the same numbers name other messages (a delete that waited offline could be days old).
+pub async fn expunge_uids_checked(s: &mut Session, folder: &str, uid_validity: u32, uids: &[u32]) -> Result<()> {
+    let mb = s.select(folder).await?;
+    if mb.uid_validity.is_some_and(|v| v != uid_validity) {
+        return Err(Error::msg("The folder changed on the server since these messages were read; nothing was deleted."));
+    }
+    expunge_uids(s, folder, uids).await
+}
+
 pub async fn append(s: &mut Session, folder: &str, flags: &str, raw: &[u8]) -> Result<()> {
     s.append(folder, Some(flags), None, raw).await?;
     Ok(())

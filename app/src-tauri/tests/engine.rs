@@ -340,6 +340,31 @@ async fn acting_on_a_whole_view_offline_changes_the_conversations_here_and_they_
 }
 
 #[tokio::test]
+async fn an_imap_delete_forever_that_waited_is_dropped_when_the_folder_was_reset_meanwhile() {
+    let w = world().await;
+    w.imap.deliver("Trash", &sample_mail("Cy <cy@x.io>", "pat@example.org", "Old trip", "x", ""), &[]);
+    w.engine.sync_account("i1").await.unwrap();
+    w.engine.list(&ViewQuery { mode: Some("server".into()), ..view("i1", "TRASH") }).await.unwrap();
+    let trip = w.engine.list(&view("i1", "TRASH")).await.unwrap().threads[0].thread_id.clone();
+    w.imap.state.lock().offline = true;
+    assert_eq!(w.engine.delete_forever("i1", std::slice::from_ref(&trip)).await.unwrap(), Changed::Queued);
+    // The server resets the folder: the same UID now names another message.
+    {
+        let mut st = w.imap.state.lock();
+        let f = st.folders.get_mut("Trash").unwrap();
+        f.uidvalidity += 1;
+        f.uidnext = 1;
+        f.msgs.clear();
+        st.offline = false;
+    }
+    w.imap.deliver("Trash", &sample_mail("Di <di@x.io>", "pat@example.org", "Someone else's", "y", ""), &[]);
+    let _ = w.engine.sync_account("i1").await;
+    let left = w.imap.folder("Trash").unwrap().msgs;
+    assert_eq!(left.len(), 1, "a message the user never deleted was expunged");
+    assert!(!w.engine.db.has_queued("i1").unwrap(), "the stale delete still waits");
+}
+
+#[tokio::test]
 async fn snoozing_and_unsnoozing_offline_wait_and_reach_the_server_once_back() {
     let w = world().await;
     let id = w.gmail.deliver(&sample_mail("Ana <ana@x.io>", "pat@example.com", "Later", "x", ""), &["INBOX", "UNREAD"]);
@@ -448,10 +473,14 @@ async fn one_click_unsubscribe_follows_a_redirect_says_plainly_when_the_sender_f
     assert!(w.engine.unsubscribe_one_click(&format!("{}/unsubscribe/slow", w.gmail.base())).await.is_err());
     assert!(t.elapsed() < Duration::from_millis(2500));
     // Links into the local network or this Mac are never posted to, https or not.
-    for url in ["https://192.168.1.1/u", "https://10.0.0.8/u", "https://localhost/u", "https://printer.local/u", "https://[::1]/u", "https://169.254.1.1/u"] {
+    for url in [
+        "https://192.168.1.1/u", "https://10.0.0.8/u", "https://localhost/u", "https://printer.local/u", "https://[::1]/u", "https://169.254.1.1/u",
+        "https://localhost./u", "https://printer.local./u", "https://[::ffff:10.0.0.1]/u", "https://[64:ff9b::c0a8:101]/u", "https://198.18.0.1/u",
+    ] {
         assert!(!courier_lib::engine::one_click_allowed(url, false), "{url}");
     }
     assert!(courier_lib::engine::one_click_allowed("https://news.example/u?x=1", false));
+    assert!(courier_lib::engine::one_click_allowed("https://[::ffff:8.8.8.8]/u", false), "a public address written as IPv6");
     assert!(!courier_lib::engine::one_click_allowed("http://news.example/u", false));
 }
 
