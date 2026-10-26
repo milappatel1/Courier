@@ -6,22 +6,21 @@ Card: `- <title>: done when <check> · <area> · <owner>`.
 
 ## Doing
 
-- P12.2 differential runner (Milap allowed the recon scripts 2026-10-25): done when the same action scripts run in the web client (recon account) and in Courier with matching rows, counts, toasts and focus · research/tools · builder (web side waits until the read-only sweep frees the recon tab)
+- Security gate: `/claude-security` on the changes, `trivy fs`, supply-chain-risk-auditor, differential-review, rust-review · repo · reviewer
 
 ## Next
 
-- Parity rows (Milap allows temporary recon setting changes, restored after; resume the sweep once P12.2 frees the recon tab): 96 unverified need a setting change in the recon account (59 shortcut rows need Keyboard shortcuts on), a mail write, or network emulation; 10 differ (custom date range, compose formatting bar overflow, label palette, star tooltips, search-as-you-type …) · research/PARITY.md · builder
+- Ultracode gates: both (Milap chose both, 2026-10-25): final parity sweep and release-gate audit (ask Milap to switch ultracode on, then off) · main session
+- Release 1.1.0 per DEVELOPING.md: GitHub release, hashes, install after Milap quits Courier, numbers-only real-account check · main session
 
 ## Backlog
 
+- Parity rows (Milap allows temporary recon setting changes, restored after; resume the sweep once P12.2 frees the recon tab): 96 unverified need a setting change in the recon account (59 shortcut rows need Keyboard shortcuts on), a mail write, or network emulation; 10 differ (custom date range, compose formatting bar overflow, label palette, star tooltips, search-as-you-type …) · research/PARITY.md · builder (moved to Backlog: Milap chose the release path first, 2026-10-25)
 - Visual diff that can pass: seed the Courier preview with the recon mailbox and mask by-design layout (no Chat/Meet rail, side panel, chip row), then hillclimb the 32 states under 10% · research/tools · builder
 - P12.2 differential runner: resume its builder (stopped at the usage limit; work so far is committed) · research/tools · builder
 - Faster All Mail on big mailboxes (#10): done when label.firstRowsMs drops well under budget with list order unchanged · app/src-tauri/src/db.rs · builder
 - Fuzzer engine bugs, deferred by Milap until there's budget ("a rainy day"): #6 offline conversation change sent before an earlier Undo (A), #7 Undo after an offline change went out puts wrong labels (B), #8 Undo racing the reconnect flush is lost (D), #9 another device's change lost when an Undo races the sync (E). Each has an `#[ignore]`d repro in app/src-tauri/tests/race_fuzz.rs naming its issue; done when the repro passes un-ignored and the issue is closed · app/src-tauri/src · debugger
 - Settings ▸ General ▸ Language selector stays (English US/UK) for languages Milap may add later; ST-01 stays a deliberate gap until then · app · main session
-- Security gate: `/claude-security` on the changes, `trivy fs`, supply-chain-risk-auditor, differential-review, rust-review · repo · reviewer
-- Ultracode gates: both (Milap chose both, 2026-10-25): final parity sweep and release-gate audit (ask Milap to switch ultracode on, then off) · main session
-- Release 1.1.0 per DEVELOPING.md: GitHub release, hashes, install after Milap quits Courier, numbers-only real-account check · main session
 - Confirm #2 (flash) and #5 (subscription count) in Milap's own use after 1.1.0 is installed, then close them · Milap + main session
 - Cleanup list for Milap after the release (what of Courier leaves the Mac), asked before deleting · main session
 
